@@ -255,6 +255,7 @@ const listmodel = os
     })
 
 const version = os
+    .input(z.void())
     .output(z.string())
     .handler(async () => {
         return __APP_VERSION__
@@ -353,6 +354,8 @@ const streamLogs = os
     });
 
 const bootstrapped = os
+    .input(z.void())
+    .output(z.void())
     .handler(async () => {
         await appLife.bootstrapped.promise;
     })

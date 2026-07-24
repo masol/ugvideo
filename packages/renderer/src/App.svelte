@@ -76,7 +76,7 @@
 
       // 等待系统自举完成。
       await pTimeout(safeApi().system.bootstrapped(), {
-        milliseconds: 10000, // 10秒超时
+        milliseconds: 3000, // 3秒超时
         fallback: () => {
           // 超时后不抛异常，直接返回 void (undefined)
           return undefined as void;
