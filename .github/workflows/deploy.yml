@@ -37,7 +37,21 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: List downloaded files
+      - name: List downloaded files (Before)
+        run: ls -la dist/
+
+      - name: Compress directories to zip
+        run: |
+          for item in dist/*; do
+            if [ -d "$item" ]; then
+              dir_name=$(basename "$item")
+              echo "Compressing $dir_name to $dir_name.zip..."
+              7z a -tzip "dist/$dir_name.zip" "$item"
+              rm -rf "$item"
+            fi
+          done
+
+      - name: List final release assets (After)
         run: ls -la dist/
 
       - name: Create Release
