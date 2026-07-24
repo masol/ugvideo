@@ -25,6 +25,8 @@
 - [[🧵 过渡规划器 Loom|loom]]
 - [[⚙️ 符号规划器|planner]]
 - [[🧮 逻辑向 AI|Logic-Oriented-AI]]
+- [[📏 自改进的边界|self-improvement-boundary]]
+
 
 **📈 项目**
 
