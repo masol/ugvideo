@@ -1,9 +1,9 @@
-import { defineConfig } from 'vite'
-import { svelte } from '@sveltejs/vite-plugin-svelte'
-import tailwind from '@tailwindcss/vite'
 import { paraglideVitePlugin } from '@inlang/paraglide-js';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+import tailwind from '@tailwindcss/vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { defineConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,31 +49,23 @@ export default defineConfig({
         assetFileNames: 'assets/[name]-[hash].[ext]',
 
         manualChunks(id) {
-          // 1. 从vite-bundle-visualizer分析图里看到的大块依赖，逐个拆分
-          if (id.includes('bits-ui/dist')) return 'bits-ui';
+          // 1. 核心框架拆分
           if (id.includes('svelte/src')) return 'svelte-core';
-          if (id.includes('svelte-motion/src')) return 'svelte-motion';
+          if (id.includes('bits-ui/dist')) return 'bits-ui';
+
+          // 2. 重型依赖独立拆分（避免单文件过大导致 V8 内存峰值）
+          if (id.includes('monaco-editor')) return 'monaco-editor';
+          if (id.includes('shiki')) return 'shiki';
+          if (id.includes('@iconify-json/twemoji')) return 'iconify-twemoji';
           if (id.includes('@tabler/icons-svelte')) return 'tabler-icons';
+
+          // 3. 其他大型依赖独立拆分
+          if (id.includes('svelte-motion/src')) return 'svelte-motion';
           if (id.includes('@floating-ui')) return 'floating-ui';
-          if (id.includes('@orpc')) return 'orpc';
           if (id.includes('paneforge')) return 'paneforge';
-          if (id.includes('svelte-sonner')) return 'svelte-sonner';
-          if (id.includes('runed/dist')) return 'runed';
-          if (id.includes('formkit/auto-animate')) return 'formkit-auto-animate';
-          if (id.includes('electron-log')) return 'electron-log';
-          if (id.includes('popmotion')) return 'popmotion';
-          if (id.includes('tailwind-variants')) return 'tailwind-variants';
-          if (id.includes('tailwind-merge')) return 'tailwind-merge';
-          if (id.includes('tabbable')) return 'tabbable';
-          if (id.includes('awilix')) return 'awilix';
-          if (id.includes('systemjs')) return 'systemjs';
 
-          // 2. 其他所有 node_modules 打包到 vendor
-          if (id.includes('node_modules')) {
-            return 'vendor';
-          }
-
-          // 3. 业务代码留在主包 index-xxx.js
+          // 4. 移除兜底的 vendor 策略！
+          // 零散的小依赖直接留在业务代码的 chunk 中，不要强行聚合成一个大文件
         }
       }
     },

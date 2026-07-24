@@ -14,40 +14,40 @@ import { createWindowManagerModule } from './modules/WindowManager.js';
 import type { AppInitConfig } from './types/AppInitConfig.js';
 
 export async function initApp(initConfig: AppInitConfig) {
-  registerSchemes();
+  try {
+    registerSchemes();
 
-  const moduleRunner = createModuleRunner()
-    .init(disallowMultipleAppInstance())
-    .init(createWindowManagerModule({ initConfig, openDevTools: import.meta.env.DEV }))
-    .init(terminateAppOnLastWindowClose())
-    .init(loggerModule())
-    .init(orpcModule())
-    .init(protocalModule())
-    .init(hardwareAccelerationMode())
-    .init(autoUpdater())
-    // Install DevTools extension if needed
-    // .init(chromeDevToolsExtension({extension: 'VUEJS3_DEVTOOLS'}))
-    // Security
-    .init(allowInternalOrigins(
-      new Set(initConfig.renderer instanceof URL ? [initConfig.renderer.origin] : []),
-    ))
-    .init(allowExternalUrls(
-      new Set(
-        initConfig.renderer instanceof URL
-          ? [
-            'https://lizt.top',
-            'https://unigen.cc',
-            'https://www.lizt.top',
-            'https://www.unigen.cc',
-          ]
-          : [],
+    const moduleRunner = createModuleRunner()
+      .init(disallowMultipleAppInstance())
+      .init(createWindowManagerModule({ initConfig, openDevTools: import.meta.env.DEV }))
+      .init(terminateAppOnLastWindowClose())
+      .init(loggerModule())
+      .init(orpcModule())
+      .init(protocalModule())
+      .init(hardwareAccelerationMode())
+      .init(autoUpdater())
+      // Install DevTools extension if needed
+      // .init(chromeDevToolsExtension({extension: 'VUEJS3_DEVTOOLS'}))
+      // Security
+      .init(allowInternalOrigins(
+        new Set(initConfig.renderer instanceof URL ? [initConfig.renderer.origin] : []),
       ))
-    )
-    .init(unigenModule());
+      .init(allowExternalUrls(
+        new Set(
+          initConfig.renderer instanceof URL
+            ? [
+              'https://lizt.top',
+              'https://unigen.cc',
+              'https://www.lizt.top',
+              'https://www.unigen.cc',
+            ]
+            : [],
+        ))
+      )
+      .init(unigenModule());
 
-  await moduleRunner;
-
-  // @TODO: system inited,notify browser here!!
-  // Logger.debug("todo: system inited,notify browser here!!")
-  appLife.bootstrapped.resolve();
+    await moduleRunner;
+  } finally {
+    appLife.bootstrapped.resolve();
+  }
 }

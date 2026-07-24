@@ -13,6 +13,7 @@
   import { recentProjectsStore } from "$lib/store/recent-projects.svelte";
   import { windowStore } from "$lib/store/window.svelte";
   import { ModeWatcher } from "mode-watcher";
+  import pTimeout from "p-timeout";
   import { onDestroy, onMount } from "svelte";
   import { AnimatePresence, Motion } from "svelte-motion";
   import { api, safeApi, setupEvt } from "./lib/utils/api";
@@ -74,7 +75,13 @@
       // await new Promise((r) => setTimeout(r, 600));
 
       // 等待系统自举完成。
-      await safeApi().system.bootstrapped();
+      await pTimeout(safeApi().system.bootstrapped(), {
+        milliseconds: 10000, // 10秒超时
+        fallback: () => {
+          // 超时后不抛异常，直接返回 void (undefined)
+          return undefined as void;
+        },
+      });
 
       await windowStore.maximize();
 
