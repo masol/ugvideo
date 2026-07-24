@@ -18,14 +18,18 @@ import { codeGen } from './steps/p3-codegen/index.js';
 
 export async function runCmd(ctx: IRunnerContext): Promise<void> {
     const pctx = createPlanContext(ctx);
+    const args = ctx.cmd.args ?? {}
+
+    const nocodegen = (args['no-codegen'] ?? "").toLocaleLowerCase();
 
     for (let iter = 1; iter <= MAX_ITERATIONS; iter++) {
         try {
             await designTop(pctx);        // P1: 双层 reAct 设计顶层 DAG
             await logicalExpand(pctx);    // P2: 递归展开
             // const flatId = await flatten(pctx); // 展平
-            await codeGen(pctx);          // P3: 占位
-
+            if (!(nocodegen === 'on' || nocodegen === 'true')) {
+                await codeGen(pctx);          // P3: 代码生成
+            }
             ctx.notify("", "```json\n" +
                 JSON.stringify(pctx.gdag.getGraph(pctx.gdag.rootId!)?.export(), null, 2) + "\n```");
             return;

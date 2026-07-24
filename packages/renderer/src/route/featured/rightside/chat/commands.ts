@@ -22,7 +22,7 @@ export const chatCommands: ChatCommand[] = [
 --expand-depth: 最大展开的层级，默认6.
 --detail-levels: 当模型规划失败时，会在减少节点数量后重试，这里指示分几次减少，5次意味着每次压缩20%数量的节点。
 --think-depth: 当前节点终止条件是无人类明确定工作流，本参数打开随后模拟人类思维树的层级，默认0不开启。
---no-codegen: 规划完毕即退出，不执行代码生成。
+--no-codegen: 规划完毕即退出，不执行代码生成。可设置为true或on,默认off。
 ` },
     {
         id: "run", label: "/run", desc: `执行指定ID的capa，默认直接执行当前任务的入口：

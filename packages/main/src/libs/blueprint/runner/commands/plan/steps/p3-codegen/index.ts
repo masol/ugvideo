@@ -30,7 +30,7 @@ export async function codeGenForNode(node: PNode, pctx: PlanContext): Promise<vo
     persistArtifact(artifact, pctx);
 }
 
-const DEBUG = true;
+const DEBUG = false;
 
 export async function codeGen(pctx: PlanContext): Promise<void> {
     const gdag = pctx.gdag;

@@ -271,6 +271,16 @@ class KnowledgeCenter {
         );
     }
 
+    private tryWriteJSON(key: string, value: string, prjDB: PrjDB) {
+        try {
+            const jsonVal = JSON.parse(value);
+            prjDB.set(key, jsonVal);
+        } catch (e) {
+            Logger.warn(`读取${key}时，其值不是一个合法的JSON,当作字符串存入kv-store:${getErrorMessage(e)}`)
+            prjDB.set(key, value);
+        }
+    }
+
     /** 第三类：.kv —— 文件名(去 .kv 后缀)为 key，文件内容为 value */
     private async processKv(prj: IProjectContext, files: CollectedFile[]): Promise<void> {
         const prjDB = PrjDB.ensure(prj);
@@ -280,7 +290,12 @@ class KnowledgeCenter {
             async (file) => {
                 const key = basename(file.fullPath, extname(file.fullPath));
                 const value = await this.readText(file);
-                prjDB.set(key, value);
+                if (key.startsWith("_") || key.startsWith("entry_")) {
+                    // 明确是字符串类型的，直接写入。
+                    prjDB.set(key, value);
+                } else {
+                    this.tryWriteJSON(key, value, prjDB);
+                }
             },
             { concurrency: this.concurrency },
         );

@@ -1,6 +1,13 @@
 <script lang="ts">
+  import ChatMessage from "$lib/components/markdown/Message.svelte";
+  import type { Message } from "$lib/components/markdown/type";
   import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
   import { confirmStore } from "$lib/store/ui/confirm.svelte";
+  import {
+    DIALOG_SIZE_CLASSES,
+    type DialogSize,
+  } from "$lib/store/ui/dialog.svelte";
+  import { cn } from "$lib/utils/index";
   import {
     IconAlertCircle,
     IconAlertTriangle,
@@ -8,6 +15,17 @@
     IconHelp,
     IconInfoCircle,
   } from "@tabler/icons-svelte";
+  import { RuntimeIcon } from "./runtimeicon";
+
+  const message: Message = $derived.by(() => {
+    return {
+      role: "assistant",
+      id: crypto.randomUUID(),
+      content: confirmStore.message,
+      isError: confirmStore.variant === "error",
+      timestamp: new Date(),
+    };
+  });
 </script>
 
 <!-- ════════════════════════════════════════════════════════════
@@ -17,7 +35,13 @@
   open={confirmStore.open}
   onOpenChange={(v) => confirmStore.handleOpenChange(v)}
 >
-  <AlertDialog.Content class="z-100 max-w-md gap-0 overflow-hidden p-0">
+  <AlertDialog.Content
+    class={cn(
+      "z-100 gap-0 overflow-hidden p-0 transition-all duration-200",
+      DIALOG_SIZE_CLASSES[confirmStore.size as DialogSize] ||
+        DIALOG_SIZE_CLASSES.md,
+    )}
+  >
     <!-- 顶部装饰条 -->
     <div
       class={[
@@ -67,13 +91,36 @@
         ]}
       >
         {#if confirmStore.destructive}
-          <IconAlertCircle size={24} stroke={2.5} />
+          {#if confirmStore.icon}
+            <RuntimeIcon name={confirmStore.icon} size={24} stroke={2.5}
+            ></RuntimeIcon>
+          {:else}
+            <IconAlertCircle size={24} stroke={2.5} />
+          {/if}
         {:else if confirmStore.variant === "warning" || confirmStore.variant === "error"}
-          <IconAlertTriangle size={24} stroke={2} />
+          {#if confirmStore.icon}
+            <RuntimeIcon name={confirmStore.icon} size={24} stroke={2}
+            ></RuntimeIcon>
+          {:else}
+            <IconAlertTriangle size={24} stroke={2} />
+          {/if}
         {:else if confirmStore.variant === "info"}
-          <IconInfoCircle size={24} stroke={2} />
+          {#if confirmStore.icon}
+            <RuntimeIcon name={confirmStore.icon} size={24} stroke={2}
+            ></RuntimeIcon>
+          {:else}
+            <IconInfoCircle size={24} stroke={2} />
+          {/if}
         {:else if confirmStore.variant === "success"}
-          <IconCircleCheck size={24} stroke={2} />
+          {#if confirmStore.icon}
+            <RuntimeIcon name={confirmStore.icon} size={24} stroke={2}
+            ></RuntimeIcon>
+          {:else}
+            <IconCircleCheck size={24} stroke={2} />
+          {/if}
+        {:else if confirmStore.icon}
+          <RuntimeIcon name={confirmStore.icon} size={24} stroke={2}
+          ></RuntimeIcon>
         {:else}
           <IconHelp size={24} stroke={2} />
         {/if}
@@ -94,7 +141,11 @@
             <AlertDialog.Description
               class="text-sm leading-relaxed text-muted-foreground"
             >
-              {confirmStore.message}
+              {#if confirmStore.markdown}
+                <ChatMessage {message} />
+              {:else}
+                {confirmStore.message}
+              {/if}
             </AlertDialog.Description>
           {/if}
         </AlertDialog.Header>
@@ -110,12 +161,14 @@
           : "border-border/50 bg-muted/30",
       ]}
     >
-      <AlertDialog.Cancel
-        class="rounded-xl px-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm"
-        onclick={() => confirmStore.cancel()}
-      >
-        {confirmStore.cancelLabel || "取消"}
-      </AlertDialog.Cancel>
+      {#if !confirmStore.hideCancel}
+        <AlertDialog.Cancel
+          class="rounded-xl px-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-sm"
+          onclick={() => confirmStore.cancel()}
+        >
+          {confirmStore.cancelLabel || "取消"}
+        </AlertDialog.Cancel>
+      {/if}
       <AlertDialog.Action
         class={[
           "rounded-xl px-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md",

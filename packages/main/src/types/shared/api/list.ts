@@ -41,6 +41,7 @@ export type GetListResponse = z.infer<typeof GetListResponseSchema>;
 export const GetItemInputSchema = z.object({
     kind: BlueprintKindSchema,
     id: z.string(),
+    noThrow: z.boolean().optional(), // 是否抛出异常。
     content: z.boolean(),  // 指示获取对象自身，还是获取对象的内容(部分格式无内容)
 });
 // 从 Zod 推衍类型

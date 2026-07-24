@@ -1,0 +1,2264 @@
+{
+  "gdag": {
+    "rootId": "73240bb4-123c-4929-8ab0-d3295536da80",
+    "graphs": [
+      {
+        "id": "73240bb4-123c-4929-8ab0-d3295536da80",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "2445c67d-ee59-465a-a68a-29060ed85754",
+              "attributes": {
+                "name": "解析剧本场景结构",
+                "kind": "extract",
+                "intent": "从连续文本中提取按叙事情境划分的场景单元列表",
+                "inputs": [
+                  "原始剧本全文"
+                ],
+                "outputs": [
+                  "场景结构划分表"
+                ],
+                "id": "2445c67d-ee59-465a-a68a-29060ed85754",
+                "status": "expanded",
+                "dag": "893befde-28f1-4bf0-a3fa-584fb44f63f1",
+                "error": null,
+                "facets": {}
+              }
+            },
+            {
+              "key": "0e572f44-f28f-4968-8b81-306523c619e4",
+              "attributes": {
+                "name": "制定视觉风格规范",
+                "kind": "generate",
+                "intent": "归纳剧本整体美学倾向并输出统一风格规范文档",
+                "inputs": [
+                  "场景结构划分表",
+                  "原始剧本全文"
+                ],
+                "outputs": [
+                  "视觉风格说明书"
+                ],
+                "id": "0e572f44-f28f-4968-8b81-306523c619e4",
+                "status": "expanded",
+                "dag": "22afabd9-d782-488c-ae70-74b6e24a9c3c",
+                "error": null,
+                "facets": {}
+              }
+            },
+            {
+              "key": "d26bb748-062a-4a28-be14-ed0daf1a319b",
+              "attributes": {
+                "name": "构建分镜头执行脚本",
+                "kind": "transform",
+                "intent": "基于场景与风格规范生成镜头分解描述",
+                "inputs": [
+                  "场景结构划分表",
+                  "视觉风格说明书",
+                  "原始剧本全文"
+                ],
+                "outputs": [
+                  "分镜头执行脚本"
+                ],
+                "id": "d26bb748-062a-4a28-be14-ed0daf1a319b",
+                "status": "expanded",
+                "dag": "2d82843b-1f17-49ea-b149-4642be9798da",
+                "error": null,
+                "facets": {}
+              }
+            },
+            {
+              "key": "fe9086bf-6ebd-4613-a685-db300d085f8e",
+              "attributes": {
+                "name": "配置画面技术参数",
+                "kind": "plan",
+                "intent": "综合平台和风格需求确定全片统一技术参数",
+                "inputs": [
+                  "场景结构划分表",
+                  "视觉风格说明书"
+                ],
+                "outputs": [
+                  "画面参数配置表"
+                ],
+                "id": "fe9086bf-6ebd-4613-a685-db300d085f8e",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "54b047f2-79d0-4469-96a6-7fb7cb304f3a",
+              "attributes": {
+                "name": "生成视觉提示词集合",
+                "kind": "transform",
+                "intent": "逐条将分镜头文字转换为 AI 图像生成可用的提示词文本",
+                "inputs": [
+                  "分镜头执行脚本",
+                  "场景结构划分表",
+                  "视觉风格说明书"
+                ],
+                "outputs": [
+                  "标准化视觉提示词包"
+                ],
+                "id": "54b047f2-79d0-4469-96a6-7fb7cb304f3a",
+                "status": "expanded",
+                "dag": "daa08b2c-5cf3-4e0c-8a04-2a6457cb08d5",
+                "error": null,
+                "facets": {}
+              }
+            },
+            {
+              "key": "f8303b9f-ec2d-4c3d-9ed3-3d8827dd66e8",
+              "attributes": {
+                "name": "构建视觉素材资源库",
+                "kind": "generate",
+                "intent": "调用外部引擎将提示词转化为实际图像资源并建立资源索引",
+                "inputs": [
+                  "标准化视觉提示词包"
+                ],
+                "outputs": [
+                  "已生成视觉素材集"
+                ],
+                "id": "f8303b9f-ec2d-4c3d-9ed3-3d8827dd66e8",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "fd5b2334-bad4-4263-8d3c-06b4b0abb32f",
+              "attributes": {
+                "name": "标记声音触发时机",
+                "kind": "transform",
+                "intent": "将分镜头中的叙事元素映射为带时间位置的音频触发指令",
+                "inputs": [
+                  "分镜头执行脚本"
+                ],
+                "outputs": [
+                  "声音 cues 定位表"
+                ],
+                "id": "fd5b2334-bad4-4263-8d3c-06b4b0abb32f",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "c488dd7e-82a4-4118-8871-9b70c070ac91",
+              "attributes": {
+                "name": "构建音频素材资源库",
+                "kind": "generate",
+                "intent": "调用外部引擎将 cues 文本转化为实际音频资源并建立资源索引",
+                "inputs": [
+                  "声音 cues 定位表"
+                ],
+                "outputs": [
+                  "已生成音频素材集"
+                ],
+                "id": "c488dd7e-82a4-4118-8871-9b70c070ac91",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "95bd6be9-8212-4e63-8daa-136b476d177d",
+              "attributes": {
+                "name": "规划剪辑时间线结构",
+                "kind": "merge",
+                "intent": "依据场景叙事和镜头信息编排成线性时间线结构",
+                "inputs": [
+                  "场景结构划分表",
+                  "分镜头执行脚本"
+                ],
+                "outputs": [
+                  "剪辑时间线规划表"
+                ],
+                "id": "95bd6be9-8212-4e63-8daa-136b476d177d",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "d5ccf7a0-add1-494b-9fea-fe5cd623dcf6",
+              "attributes": {
+                "name": "编译视频剪辑工程",
+                "kind": "merge",
+                "intent": "聚合音视频素材与编辑规则生成标准化的剪辑工程文件",
+                "inputs": [
+                  "已生成视觉素材集",
+                  "已生成音频素材集",
+                  "剪辑时间线规划表",
+                  "画面参数配置表"
+                ],
+                "outputs": [
+                  "视频剪辑工程文件"
+                ],
+                "id": "d5ccf7a0-add1-494b-9fea-fe5cd623dcf6",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "3f64a1ed-2a3f-4baa-86e0-bec45a37d0eb",
+              "attributes": {
+                "name": "导出最终交付视频",
+                "kind": "transform",
+                "intent": "加载工程配置将时间线数据渲染为可发布的标准视频文件",
+                "inputs": [
+                  "视频剪辑工程文件"
+                ],
+                "outputs": [
+                  "最终交付视频文件"
+                ],
+                "id": "3f64a1ed-2a3f-4baa-86e0-bec45a37d0eb",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_224_0",
+              "source": "2445c67d-ee59-465a-a68a-29060ed85754",
+              "target": "0e572f44-f28f-4968-8b81-306523c619e4",
+              "attributes": {
+                "artifacts": [
+                  "场景结构划分表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_1",
+              "source": "2445c67d-ee59-465a-a68a-29060ed85754",
+              "target": "d26bb748-062a-4a28-be14-ed0daf1a319b",
+              "attributes": {
+                "artifacts": [
+                  "场景结构划分表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_2",
+              "source": "0e572f44-f28f-4968-8b81-306523c619e4",
+              "target": "d26bb748-062a-4a28-be14-ed0daf1a319b",
+              "attributes": {
+                "artifacts": [
+                  "视觉风格说明书"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_3",
+              "source": "2445c67d-ee59-465a-a68a-29060ed85754",
+              "target": "fe9086bf-6ebd-4613-a685-db300d085f8e",
+              "attributes": {
+                "artifacts": [
+                  "场景结构划分表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_4",
+              "source": "0e572f44-f28f-4968-8b81-306523c619e4",
+              "target": "fe9086bf-6ebd-4613-a685-db300d085f8e",
+              "attributes": {
+                "artifacts": [
+                  "视觉风格说明书"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_5",
+              "source": "d26bb748-062a-4a28-be14-ed0daf1a319b",
+              "target": "54b047f2-79d0-4469-96a6-7fb7cb304f3a",
+              "attributes": {
+                "artifacts": [
+                  "分镜头执行脚本"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_6",
+              "source": "54b047f2-79d0-4469-96a6-7fb7cb304f3a",
+              "target": "f8303b9f-ec2d-4c3d-9ed3-3d8827dd66e8",
+              "attributes": {
+                "artifacts": [
+                  "标准化视觉提示词包"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_7",
+              "source": "d26bb748-062a-4a28-be14-ed0daf1a319b",
+              "target": "fd5b2334-bad4-4263-8d3c-06b4b0abb32f",
+              "attributes": {
+                "artifacts": [
+                  "分镜头执行脚本"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_8",
+              "source": "fd5b2334-bad4-4263-8d3c-06b4b0abb32f",
+              "target": "c488dd7e-82a4-4118-8871-9b70c070ac91",
+              "attributes": {
+                "artifacts": [
+                  "声音 cues 定位表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_9",
+              "source": "2445c67d-ee59-465a-a68a-29060ed85754",
+              "target": "95bd6be9-8212-4e63-8daa-136b476d177d",
+              "attributes": {
+                "artifacts": [
+                  "场景结构划分表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_10",
+              "source": "d26bb748-062a-4a28-be14-ed0daf1a319b",
+              "target": "95bd6be9-8212-4e63-8daa-136b476d177d",
+              "attributes": {
+                "artifacts": [
+                  "分镜头执行脚本"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_11",
+              "source": "f8303b9f-ec2d-4c3d-9ed3-3d8827dd66e8",
+              "target": "d5ccf7a0-add1-494b-9fea-fe5cd623dcf6",
+              "attributes": {
+                "artifacts": [
+                  "已生成视觉素材集"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_12",
+              "source": "c488dd7e-82a4-4118-8871-9b70c070ac91",
+              "target": "d5ccf7a0-add1-494b-9fea-fe5cd623dcf6",
+              "attributes": {
+                "artifacts": [
+                  "已生成音频素材集"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_13",
+              "source": "95bd6be9-8212-4e63-8daa-136b476d177d",
+              "target": "d5ccf7a0-add1-494b-9fea-fe5cd623dcf6",
+              "attributes": {
+                "artifacts": [
+                  "剪辑时间线规划表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_14",
+              "source": "fe9086bf-6ebd-4613-a685-db300d085f8e",
+              "target": "d5ccf7a0-add1-494b-9fea-fe5cd623dcf6",
+              "attributes": {
+                "artifacts": [
+                  "画面参数配置表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_15",
+              "source": "d5ccf7a0-add1-494b-9fea-fe5cd623dcf6",
+              "target": "3f64a1ed-2a3f-4baa-86e0-bec45a37d0eb",
+              "attributes": {
+                "artifacts": [
+                  "视频剪辑工程文件"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_16",
+              "source": "2445c67d-ee59-465a-a68a-29060ed85754",
+              "target": "54b047f2-79d0-4469-96a6-7fb7cb304f3a",
+              "attributes": {
+                "artifacts": [
+                  "场景结构划分表"
+                ]
+              }
+            },
+            {
+              "key": "geid_224_17",
+              "source": "0e572f44-f28f-4968-8b81-306523c619e4",
+              "target": "54b047f2-79d0-4469-96a6-7fb7cb304f3a",
+              "attributes": {
+                "artifacts": [
+                  "视觉风格说明书"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "2d82843b-1f17-49ea-b149-4642be9798da",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "d9828cca-1abf-48ec-b427-358b1ec389c5",
+              "attributes": {
+                "name": "抽取风格技术约束",
+                "kind": "extract",
+                "intent": "解析风格文档以提取可用于后续创作的硬性技术规范。",
+                "inputs": [
+                  "视觉风格说明书"
+                ],
+                "outputs": [
+                  "视觉规范提取表"
+                ],
+                "id": "d9828cca-1abf-48ec-b427-358b1ec389c5",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "ebd5e785-872e-4917-93ad-9a114d88bf3e",
+              "attributes": {
+                "name": "逐场景生成镜头序列",
+                "kind": "transform",
+                "intent": "依据风格规范将单个场景拆解为具体的镜头序列。",
+                "inputs": [
+                  "场景结构划分表",
+                  "视觉规范提取表",
+                  "原始剧本全文",
+                  "视觉风格说明书"
+                ],
+                "outputs": [
+                  "分镜内容草稿集"
+                ],
+                "id": "ebd5e785-872e-4917-93ad-9a114d88bf3e",
+                "status": "expanded",
+                "dag": "879558ec-23c9-43cc-b0b6-a7c8dd5deadf",
+                "error": null,
+                "facets": {}
+              }
+            },
+            {
+              "key": "5794c087-1463-4544-950f-68941519706c",
+              "attributes": {
+                "name": "合并格式化最终脚本",
+                "kind": "merge",
+                "intent": "聚合草稿并转换为标准作业格式的交付文档。",
+                "inputs": [
+                  "分镜内容草稿集"
+                ],
+                "outputs": [
+                  "分镜头执行脚本"
+                ],
+                "id": "5794c087-1463-4544-950f-68941519706c",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_226_0",
+              "source": "d9828cca-1abf-48ec-b427-358b1ec389c5",
+              "target": "ebd5e785-872e-4917-93ad-9a114d88bf3e",
+              "attributes": {
+                "artifacts": [
+                  "视觉规范提取表"
+                ]
+              }
+            },
+            {
+              "key": "geid_226_1",
+              "source": "ebd5e785-872e-4917-93ad-9a114d88bf3e",
+              "target": "5794c087-1463-4544-950f-68941519706c",
+              "attributes": {
+                "artifacts": [
+                  "分镜内容草稿集"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "893befde-28f1-4bf0-a3fa-584fb44f63f1",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "2d66c458-7970-4972-86f5-f8a39e40817f",
+              "attributes": {
+                "name": "定位疑似场景断点",
+                "kind": "lookup",
+                "intent": "扫描原始剧本全文中的时间、空间或人物变化标志，定位疑似的场景切换位置。",
+                "inputs": [
+                  "原始剧本全文"
+                ],
+                "outputs": [
+                  "疑似场景断点标记单"
+                ],
+                "id": "2d66c458-7970-4972-86f5-f8a39e40817f",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "6b57008b-518b-474e-90ca-e31ac5586723",
+              "attributes": {
+                "name": "校验场景断点逻辑",
+                "kind": "classify",
+                "intent": "分析疑似断点的上下文语境，筛选出确认为真实场景边界的索引记录。",
+                "inputs": [
+                  "原始剧本全文",
+                  "疑似场景断点标记单"
+                ],
+                "outputs": [
+                  "有效场景断点判定书"
+                ],
+                "id": "6b57008b-518b-474e-90ca-e31ac5586723",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "eb21473b-65ea-4765-98de-23b9f5201491",
+              "attributes": {
+                "name": "截取独立场景文本",
+                "kind": "transform",
+                "intent": "根据有效的场景边界坐标，将原始剧本文本切割为独立的场景文本段落集合。",
+                "inputs": [
+                  "原始剧本全文",
+                  "有效场景断点判定书"
+                ],
+                "outputs": [
+                  "场景文本原始片段集"
+                ],
+                "id": "eb21473b-65ea-4765-98de-23b9f5201491",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "98890fab-248d-4823-b1d0-fea4f90eea57",
+              "attributes": {
+                "name": "提取场景核心要素",
+                "kind": "extract",
+                "intent": "遍历每一段原始场景文本，提取其时间、地点和人物等关键叙事要素。",
+                "inputs": [
+                  "场景文本原始片段集"
+                ],
+                "outputs": [
+                  "场景要素特征标注表"
+                ],
+                "id": "98890fab-248d-4823-b1d0-fea4f90eea57",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "7b4165ee-f78d-42a3-ac9d-ac6328c9998f",
+              "attributes": {
+                "name": "组装场景初版结构",
+                "kind": "merge",
+                "intent": "整合原始片段内容及其要素元数据，构建初步的结构化场景列表。",
+                "inputs": [
+                  "场景文本原始片段集",
+                  "场景要素特征标注表"
+                ],
+                "outputs": [
+                  "初版场景结构划分表"
+                ],
+                "id": "7b4165ee-f78d-42a3-ac9d-ac6328c9998f",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "fbdaeaf5-d4a1-4737-801f-8bb9a105e7f4",
+              "attributes": {
+                "name": "审查并优化逻辑",
+                "kind": "score",
+                "intent": "评估场景列表的逻辑连贯性，并根据叙事流对条目粒度进行拆分或合并调整。",
+                "inputs": [
+                  "初版场景结构划分表",
+                  "场景文本原始片段集",
+                  "有效场景断点判定书",
+                  "疑似场景断点标记单"
+                ],
+                "outputs": [
+                  "修订后场景结构划分稿"
+                ],
+                "id": "fbdaeaf5-d4a1-4737-801f-8bb9a105e7f4",
+                "status": "expanded",
+                "dag": "935fd683-83d3-47a8-884e-adc2fd67d58d",
+                "error": null,
+                "facets": {}
+              }
+            },
+            {
+              "key": "9c8c458d-c621-4917-9ff4-d15f20771c9e",
+              "attributes": {
+                "name": "格式化生成最终表",
+                "kind": "transform",
+                "intent": "按照最终交付标准对修订稿进行字段补全、格式清洗和标准化处理。",
+                "inputs": [
+                  "修订后场景结构划分稿"
+                ],
+                "outputs": [
+                  "场景结构划分表"
+                ],
+                "id": "9c8c458d-c621-4917-9ff4-d15f20771c9e",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_228_0",
+              "source": "2d66c458-7970-4972-86f5-f8a39e40817f",
+              "target": "6b57008b-518b-474e-90ca-e31ac5586723",
+              "attributes": {
+                "artifacts": [
+                  "疑似场景断点标记单"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_1",
+              "source": "6b57008b-518b-474e-90ca-e31ac5586723",
+              "target": "eb21473b-65ea-4765-98de-23b9f5201491",
+              "attributes": {
+                "artifacts": [
+                  "有效场景断点判定书"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_2",
+              "source": "eb21473b-65ea-4765-98de-23b9f5201491",
+              "target": "98890fab-248d-4823-b1d0-fea4f90eea57",
+              "attributes": {
+                "artifacts": [
+                  "场景文本原始片段集"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_3",
+              "source": "eb21473b-65ea-4765-98de-23b9f5201491",
+              "target": "7b4165ee-f78d-42a3-ac9d-ac6328c9998f",
+              "attributes": {
+                "artifacts": [
+                  "场景文本原始片段集"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_4",
+              "source": "98890fab-248d-4823-b1d0-fea4f90eea57",
+              "target": "7b4165ee-f78d-42a3-ac9d-ac6328c9998f",
+              "attributes": {
+                "artifacts": [
+                  "场景要素特征标注表"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_5",
+              "source": "7b4165ee-f78d-42a3-ac9d-ac6328c9998f",
+              "target": "fbdaeaf5-d4a1-4737-801f-8bb9a105e7f4",
+              "attributes": {
+                "artifacts": [
+                  "初版场景结构划分表"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_6",
+              "source": "fbdaeaf5-d4a1-4737-801f-8bb9a105e7f4",
+              "target": "9c8c458d-c621-4917-9ff4-d15f20771c9e",
+              "attributes": {
+                "artifacts": [
+                  "修订后场景结构划分稿"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_7",
+              "source": "eb21473b-65ea-4765-98de-23b9f5201491",
+              "target": "fbdaeaf5-d4a1-4737-801f-8bb9a105e7f4",
+              "attributes": {
+                "artifacts": [
+                  "场景文本原始片段集"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_8",
+              "source": "6b57008b-518b-474e-90ca-e31ac5586723",
+              "target": "fbdaeaf5-d4a1-4737-801f-8bb9a105e7f4",
+              "attributes": {
+                "artifacts": [
+                  "有效场景断点判定书"
+                ]
+              }
+            },
+            {
+              "key": "geid_228_9",
+              "source": "2d66c458-7970-4972-86f5-f8a39e40817f",
+              "target": "fbdaeaf5-d4a1-4737-801f-8bb9a105e7f4",
+              "attributes": {
+                "artifacts": [
+                  "疑似场景断点标记单"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "daa08b2c-5cf3-4e0c-8a04-2a6457cb08d5",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "b75c446e-3372-4dfb-b453-15bbeec28aa3",
+              "attributes": {
+                "name": "提取风格约束参数",
+                "kind": "extract",
+                "intent": "从视觉风格说明书中提取通用的艺术风格与禁忌参数。",
+                "inputs": [
+                  "视觉风格说明书"
+                ],
+                "outputs": [
+                  "全局视觉风格规则摘要"
+                ],
+                "id": "b75c446e-3372-4dfb-b453-15bbeec28aa3",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "ba8f0309-d267-48d9-8d50-6a7861d7e592",
+              "attributes": {
+                "name": "建立角色设定基准",
+                "kind": "aggregate",
+                "intent": "从场景结构划分表中归纳主要角色的静态外貌特征定义。",
+                "inputs": [
+                  "场景结构划分表"
+                ],
+                "outputs": [
+                  "关键角色设定基准表"
+                ],
+                "id": "ba8f0309-d267-48d9-8d50-6a7861d7e592",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "d000ea0a-375e-4c28-bba2-0449c02ae9f4",
+              "attributes": {
+                "name": "解析镜头画面要素",
+                "kind": "extract",
+                "intent": "将分镜头脚本拆解为人物、动作、背景、环境的结构化数据。",
+                "inputs": [
+                  "分镜头执行脚本"
+                ],
+                "outputs": [
+                  "镜头视觉要素映射表"
+                ],
+                "id": "d000ea0a-375e-4c28-bba2-0449c02ae9f4",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "532170e1-9348-4d96-842a-9142005ebea3",
+              "attributes": {
+                "name": "组合视觉提示词",
+                "kind": "generate",
+                "intent": "将视觉要素映射表中的画面内容与风格规则摘要结合生成自然语言提示词。",
+                "inputs": [
+                  "镜头视觉要素映射表",
+                  "全局视觉风格规则摘要"
+                ],
+                "outputs": [
+                  "初始组合提示词集"
+                ],
+                "id": "532170e1-9348-4d96-842a-9142005ebea3",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "d52b1f54-2582-485a-9234-7108ddb4f574",
+              "attributes": {
+                "name": "规范提示词语法结构",
+                "kind": "transform",
+                "intent": "按照图像生成模型的语法标准调整提示词语序并添加元数据。",
+                "inputs": [
+                  "初始组合提示词集"
+                ],
+                "outputs": [
+                  "模型适配提示词规范稿"
+                ],
+                "id": "d52b1f54-2582-485a-9234-7108ddb4f574",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "3a0c1184-5703-44fd-a576-a01e197b343e",
+              "attributes": {
+                "name": "验证角色外观逻辑",
+                "kind": "score",
+                "intent": "比对连续镜头间的角色描述以识别视觉设定上的矛盾冲突。",
+                "inputs": [
+                  "模型适配提示词规范稿",
+                  "关键角色设定基准表"
+                ],
+                "outputs": [
+                  "交叉一致性检测记录"
+                ],
+                "id": "3a0c1184-5703-44fd-a576-a01e197b343e",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "b9b9236f-ff89-44da-b185-7878c93725cb",
+              "attributes": {
+                "name": "修正并组装交付物",
+                "kind": "merge",
+                "intent": "依据一致性检测结果修正不一致内容并汇编成最终可用格式。",
+                "inputs": [
+                  "模型适配提示词规范稿",
+                  "交叉一致性检测记录",
+                  "关键角色设定基准表"
+                ],
+                "outputs": [
+                  "标准化视觉提示词包"
+                ],
+                "id": "b9b9236f-ff89-44da-b185-7878c93725cb",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_230_0",
+              "source": "d000ea0a-375e-4c28-bba2-0449c02ae9f4",
+              "target": "532170e1-9348-4d96-842a-9142005ebea3",
+              "attributes": {
+                "artifacts": [
+                  "镜头视觉要素映射表"
+                ]
+              }
+            },
+            {
+              "key": "geid_230_1",
+              "source": "b75c446e-3372-4dfb-b453-15bbeec28aa3",
+              "target": "532170e1-9348-4d96-842a-9142005ebea3",
+              "attributes": {
+                "artifacts": [
+                  "全局视觉风格规则摘要"
+                ]
+              }
+            },
+            {
+              "key": "geid_230_2",
+              "source": "532170e1-9348-4d96-842a-9142005ebea3",
+              "target": "d52b1f54-2582-485a-9234-7108ddb4f574",
+              "attributes": {
+                "artifacts": [
+                  "初始组合提示词集"
+                ]
+              }
+            },
+            {
+              "key": "geid_230_3",
+              "source": "d52b1f54-2582-485a-9234-7108ddb4f574",
+              "target": "3a0c1184-5703-44fd-a576-a01e197b343e",
+              "attributes": {
+                "artifacts": [
+                  "模型适配提示词规范稿"
+                ]
+              }
+            },
+            {
+              "key": "geid_230_4",
+              "source": "ba8f0309-d267-48d9-8d50-6a7861d7e592",
+              "target": "3a0c1184-5703-44fd-a576-a01e197b343e",
+              "attributes": {
+                "artifacts": [
+                  "关键角色设定基准表"
+                ]
+              }
+            },
+            {
+              "key": "geid_230_5",
+              "source": "d52b1f54-2582-485a-9234-7108ddb4f574",
+              "target": "b9b9236f-ff89-44da-b185-7878c93725cb",
+              "attributes": {
+                "artifacts": [
+                  "模型适配提示词规范稿"
+                ]
+              }
+            },
+            {
+              "key": "geid_230_6",
+              "source": "3a0c1184-5703-44fd-a576-a01e197b343e",
+              "target": "b9b9236f-ff89-44da-b185-7878c93725cb",
+              "attributes": {
+                "artifacts": [
+                  "交叉一致性检测记录"
+                ]
+              }
+            },
+            {
+              "key": "geid_230_7",
+              "source": "ba8f0309-d267-48d9-8d50-6a7861d7e592",
+              "target": "b9b9236f-ff89-44da-b185-7878c93725cb",
+              "attributes": {
+                "artifacts": [
+                  "关键角色设定基准表"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "22afabd9-d782-488c-ae70-74b6e24a9c3c",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "9e76ef49-e1c1-437f-9f97-a6f255e28cb5",
+              "attributes": {
+                "name": "梳理叙事情感与视觉导向",
+                "kind": "summarize",
+                "intent": "基于剧本文本提炼作品核心叙事主题与情感基调。",
+                "inputs": [
+                  "原始剧本全文",
+                  "场景结构划分表"
+                ],
+                "outputs": [
+                  "核心叙事主题笔记"
+                ],
+                "id": "9e76ef49-e1c1-437f-9f97-a6f255e28cb5",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "4395f78e-b814-48f3-85d7-bf966f6b9f1b",
+              "attributes": {
+                "name": "提取与筛选视觉描写",
+                "kind": "extract",
+                "intent": "从多源材料中筛选高价值的视觉美学描述片段。",
+                "inputs": [
+                  "原始剧本全文",
+                  "场景结构划分表",
+                  "核心叙事主题笔记"
+                ],
+                "outputs": [
+                  "视觉意象摘录清单"
+                ],
+                "id": "4395f78e-b814-48f3-85d7-bf966f6b9f1b",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "52c35a38-30f1-4477-87fc-f2a8987bcc89",
+              "attributes": {
+                "name": "量化视觉要素偏好",
+                "kind": "aggregate",
+                "intent": "对视觉描述数据进行归类统计并归纳核心趋势。",
+                "inputs": [
+                  "视觉意象摘录清单"
+                ],
+                "outputs": [
+                  "视觉要素统计摘要"
+                ],
+                "id": "52c35a38-30f1-4477-87fc-f2a8987bcc89",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "42667c80-4b1b-4dc7-85b4-b15037e2ff82",
+              "attributes": {
+                "name": "构建维度化风格细则",
+                "kind": "generate",
+                "intent": "将分析得出的偏好趋势转化为可执行的风格组件规范。",
+                "inputs": [
+                  "视觉要素统计摘要"
+                ],
+                "outputs": [
+                  "风格组件规范草案集"
+                ],
+                "id": "42667c80-4b1b-4dc7-85b4-b15037e2ff82",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "d2315665-ffde-4c2b-ada4-8bd03f636d2b",
+              "attributes": {
+                "name": "合成最终规格文档",
+                "kind": "merge",
+                "intent": "将分散的规范组件整合为统一的正式交付文档。",
+                "inputs": [
+                  "核心叙事主题笔记",
+                  "视觉要素统计摘要",
+                  "风格组件规范草案集"
+                ],
+                "outputs": [
+                  "视觉风格说明书"
+                ],
+                "id": "d2315665-ffde-4c2b-ada4-8bd03f636d2b",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_232_0",
+              "source": "9e76ef49-e1c1-437f-9f97-a6f255e28cb5",
+              "target": "4395f78e-b814-48f3-85d7-bf966f6b9f1b",
+              "attributes": {
+                "artifacts": [
+                  "核心叙事主题笔记"
+                ]
+              }
+            },
+            {
+              "key": "geid_232_1",
+              "source": "4395f78e-b814-48f3-85d7-bf966f6b9f1b",
+              "target": "52c35a38-30f1-4477-87fc-f2a8987bcc89",
+              "attributes": {
+                "artifacts": [
+                  "视觉意象摘录清单"
+                ]
+              }
+            },
+            {
+              "key": "geid_232_2",
+              "source": "52c35a38-30f1-4477-87fc-f2a8987bcc89",
+              "target": "42667c80-4b1b-4dc7-85b4-b15037e2ff82",
+              "attributes": {
+                "artifacts": [
+                  "视觉要素统计摘要"
+                ]
+              }
+            },
+            {
+              "key": "geid_232_3",
+              "source": "9e76ef49-e1c1-437f-9f97-a6f255e28cb5",
+              "target": "d2315665-ffde-4c2b-ada4-8bd03f636d2b",
+              "attributes": {
+                "artifacts": [
+                  "核心叙事主题笔记"
+                ]
+              }
+            },
+            {
+              "key": "geid_232_4",
+              "source": "52c35a38-30f1-4477-87fc-f2a8987bcc89",
+              "target": "d2315665-ffde-4c2b-ada4-8bd03f636d2b",
+              "attributes": {
+                "artifacts": [
+                  "视觉要素统计摘要"
+                ]
+              }
+            },
+            {
+              "key": "geid_232_5",
+              "source": "42667c80-4b1b-4dc7-85b4-b15037e2ff82",
+              "target": "d2315665-ffde-4c2b-ada4-8bd03f636d2b",
+              "attributes": {
+                "artifacts": [
+                  "风格组件规范草案集"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "879558ec-23c9-43cc-b0b6-a7c8dd5deadf",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "3ff25bb3-c360-4743-8b2f-0d12941f56ec",
+              "attributes": {
+                "name": "整合规范性约束",
+                "kind": "merge",
+                "intent": "整合分散的风格规范与硬指标形成统一执行准则",
+                "inputs": [
+                  "视觉规范提取表",
+                  "视觉风格说明书",
+                  "场景结构划分表"
+                ],
+                "outputs": [
+                  "全局视觉风格准则"
+                ],
+                "id": "3ff25bb3-c360-4743-8b2f-0d12941f56ec",
+                "status": "expanded",
+                "dag": "f1bfcfe5-bad6-4e7c-9bb7-c1992ee34ff4",
+                "error": null,
+                "facets": {}
+              }
+            },
+            {
+              "key": "58827b4f-56d1-4429-a9f2-868a93e416f4",
+              "attributes": {
+                "name": "解析场景叙事节拍",
+                "kind": "extract",
+                "intent": "从场景摘要与剧本文本中提取独立的戏剧情绪与动作节拍",
+                "inputs": [
+                  "场景结构划分表",
+                  "原始剧本全文"
+                ],
+                "outputs": [
+                  "场景戏剧节拍解析表"
+                ],
+                "id": "58827b4f-56d1-4429-a9f2-868a93e416f4",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "a966b8f1-a833-485c-ab7d-cd12a81912b0",
+              "attributes": {
+                "name": "规划镜头景别与运动",
+                "kind": "plan",
+                "intent": "依据戏剧节拍与风格准则规划每个场景的景别切换与机位运动轨迹",
+                "inputs": [
+                  "场景戏剧节拍解析表",
+                  "全局视觉风格准则"
+                ],
+                "outputs": [
+                  "景别与运动预规划表"
+                ],
+                "id": "a966b8f1-a833-485c-ab7d-cd12a81912b0",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "fb4c260d-e535-4278-8f71-b0da96784c36",
+              "attributes": {
+                "name": "撰写分镜描述文本",
+                "kind": "generate",
+                "intent": "基于规划参数为每个镜头生成完整的视觉描述文本",
+                "inputs": [
+                  "景别与运动预规划表",
+                  "场景戏剧节拍解析表",
+                  "全局视觉风格准则",
+                  "视觉规范提取表",
+                  "视觉风格说明书",
+                  "场景结构划分表",
+                  "原始剧本全文"
+                ],
+                "outputs": [
+                  "分镜内容草稿集"
+                ],
+                "id": "fb4c260d-e535-4278-8f71-b0da96784c36",
+                "status": "expanded",
+                "dag": "c2d4f6a8-8355-4fbd-a990-ea5696cdb1c7",
+                "error": null,
+                "facets": {}
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_234_0",
+              "source": "58827b4f-56d1-4429-a9f2-868a93e416f4",
+              "target": "a966b8f1-a833-485c-ab7d-cd12a81912b0",
+              "attributes": {
+                "artifacts": [
+                  "场景戏剧节拍解析表"
+                ]
+              }
+            },
+            {
+              "key": "geid_234_1",
+              "source": "3ff25bb3-c360-4743-8b2f-0d12941f56ec",
+              "target": "a966b8f1-a833-485c-ab7d-cd12a81912b0",
+              "attributes": {
+                "artifacts": [
+                  "全局视觉风格准则"
+                ]
+              }
+            },
+            {
+              "key": "geid_234_2",
+              "source": "a966b8f1-a833-485c-ab7d-cd12a81912b0",
+              "target": "fb4c260d-e535-4278-8f71-b0da96784c36",
+              "attributes": {
+                "artifacts": [
+                  "景别与运动预规划表"
+                ]
+              }
+            },
+            {
+              "key": "geid_234_3",
+              "source": "58827b4f-56d1-4429-a9f2-868a93e416f4",
+              "target": "fb4c260d-e535-4278-8f71-b0da96784c36",
+              "attributes": {
+                "artifacts": [
+                  "场景戏剧节拍解析表"
+                ]
+              }
+            },
+            {
+              "key": "geid_234_4",
+              "source": "3ff25bb3-c360-4743-8b2f-0d12941f56ec",
+              "target": "fb4c260d-e535-4278-8f71-b0da96784c36",
+              "attributes": {
+                "artifacts": [
+                  "全局视觉风格准则"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "935fd683-83d3-47a8-884e-adc2fd67d58d",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "cb849e76-c7a9-4524-81cb-72825ba964d6",
+              "attributes": {
+                "name": "执行跨源逻辑校验与问题标记",
+                "kind": "classify",
+                "intent": "结合断点判定与文本内容对场景边界进行逻辑合规性检查并记录异常",
+                "inputs": [
+                  "初版场景结构划分表",
+                  "场景文本原始片段集",
+                  "有效场景断点判定书",
+                  "疑似场景断点标记单"
+                ],
+                "outputs": [
+                  "逻辑修订批注表"
+                ],
+                "id": "cb849e76-c7a9-4524-81cb-72825ba964d6",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "6a65fac1-f702-4c9d-bc14-7d10821e6ace",
+              "attributes": {
+                "name": "制定结构修正操作指令",
+                "kind": "transform",
+                "intent": "针对评审出的具体问题制定对应的合并或拆分操作指令",
+                "inputs": [
+                  "逻辑修订批注表"
+                ],
+                "outputs": [
+                  "场景优化执行计划表"
+                ],
+                "id": "6a65fac1-f702-4c9d-bc14-7d10821e6ace",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "f121b08d-5648-4db5-9370-bdda837a0cb4",
+              "attributes": {
+                "name": "合成最终场景结构版本",
+                "kind": "merge",
+                "intent": "根据修正计划对原结构数据进行物理重组以生成新版本",
+                "inputs": [
+                  "初版场景结构划分表",
+                  "场景优化执行计划表"
+                ],
+                "outputs": [
+                  "修订后场景结构划分稿"
+                ],
+                "id": "f121b08d-5648-4db5-9370-bdda837a0cb4",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_236_0",
+              "source": "cb849e76-c7a9-4524-81cb-72825ba964d6",
+              "target": "6a65fac1-f702-4c9d-bc14-7d10821e6ace",
+              "attributes": {
+                "artifacts": [
+                  "逻辑修订批注表"
+                ]
+              }
+            },
+            {
+              "key": "geid_236_1",
+              "source": "6a65fac1-f702-4c9d-bc14-7d10821e6ace",
+              "target": "f121b08d-5648-4db5-9370-bdda837a0cb4",
+              "attributes": {
+                "artifacts": [
+                  "场景优化执行计划表"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "f1bfcfe5-bad6-4e7c-9bb7-c1992ee34ff4",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "1a8b4f95-9c00-4451-8176-676940973aae",
+              "attributes": {
+                "name": "聚合视觉规范要素",
+                "kind": "merge",
+                "intent": "合并技术参数文档与风格描述文档中的分散信息。",
+                "inputs": [
+                  "视觉规范提取表",
+                  "视觉风格说明书"
+                ],
+                "outputs": [
+                  "视觉规范聚合基线"
+                ],
+                "id": "1a8b4f95-9c00-4451-8176-676940973aae",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "81304704-b08a-4553-954f-1f2c74352b66",
+              "attributes": {
+                "name": "匹配场景生成约束草案",
+                "kind": "generate",
+                "intent": "将通用规范适配至具体场景单元形成初步草案。",
+                "inputs": [
+                  "视觉规范聚合基线",
+                  "场景结构划分表"
+                ],
+                "outputs": [
+                  "视觉执行约束草案"
+                ],
+                "id": "81304704-b08a-4553-954f-1f2c74352b66",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "14bbb261-fa99-4730-8038-c71bd4c61888",
+              "attributes": {
+                "name": "校验冲突并收敛最终准则",
+                "kind": "transform",
+                "intent": "修正草案中的逻辑冲突并统一格式生成终稿。",
+                "inputs": [
+                  "视觉执行约束草案"
+                ],
+                "outputs": [
+                  "全局视觉风格准则"
+                ],
+                "id": "14bbb261-fa99-4730-8038-c71bd4c61888",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_238_0",
+              "source": "1a8b4f95-9c00-4451-8176-676940973aae",
+              "target": "81304704-b08a-4553-954f-1f2c74352b66",
+              "attributes": {
+                "artifacts": [
+                  "视觉规范聚合基线"
+                ]
+              }
+            },
+            {
+              "key": "geid_238_1",
+              "source": "81304704-b08a-4553-954f-1f2c74352b66",
+              "target": "14bbb261-fa99-4730-8038-c71bd4c61888",
+              "attributes": {
+                "artifacts": [
+                  "视觉执行约束草案"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "c2d4f6a8-8355-4fbd-a990-ea5696cdb1c7",
+        "data": {
+          "options": {
+            "type": "directed",
+            "multi": false,
+            "allowSelfLoops": true
+          },
+          "attributes": {},
+          "nodes": [
+            {
+              "key": "48b255ba-d151-4b75-a323-8f128325c988",
+              "attributes": {
+                "name": "关联镜头规划要素",
+                "kind": "merge",
+                "intent": "将分散的场景结构、戏剧情节与拍摄规划数据进行结构化对齐与整合。",
+                "inputs": [
+                  "场景结构划分表",
+                  "场景戏剧节拍解析表",
+                  "景别与运动预规划表"
+                ],
+                "outputs": [
+                  "镜头元数据关联表"
+                ],
+                "id": "48b255ba-d151-4b75-a323-8f128325c988",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "dca2406e-f0af-4ac5-9351-5ed1d4d8cc67",
+              "attributes": {
+                "name": "固化视觉技术规范",
+                "kind": "summarize",
+                "intent": "统合多重风格源文件中的约束信息形成可执行的单一标准条目集。",
+                "inputs": [
+                  "视觉风格说明书",
+                  "视觉规范提取表",
+                  "全局视觉风格准则"
+                ],
+                "outputs": [
+                  "单体视觉规范摘要"
+                ],
+                "id": "dca2406e-f0af-4ac5-9351-5ed1d4d8cc67",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                }
+              }
+            },
+            {
+              "key": "70cebeda-242c-453b-b4ad-40a499137e6a",
+              "attributes": {
+                "name": "生成分镜描述文案",
+                "kind": "generate",
+                "intent": "依据镜头元数据和视觉规范摘要撰写满足风格要求的镜头视觉描述文本。",
+                "inputs": [
+                  "镜头元数据关联表",
+                  "单体视觉规范摘要",
+                  "原始剧本全文"
+                ],
+                "outputs": [
+                  "分镜内容草稿集"
+                ],
+                "id": "70cebeda-242c-453b-b4ad-40a499137e6a",
+                "status": "awaiting_code",
+                "dag": null,
+                "error": null,
+                "facets": {
+                  "simple": "yes"
+                },
+                "forcedNote": "深度熔断：需经过“分镜草案生成”至“风格合规性审查”的分步流程以确保视觉一致性，中间交付物为“镜头风格一致性校验单”。"
+              }
+            }
+          ],
+          "edges": [
+            {
+              "key": "geid_240_0",
+              "source": "48b255ba-d151-4b75-a323-8f128325c988",
+              "target": "70cebeda-242c-453b-b4ad-40a499137e6a",
+              "attributes": {
+                "artifacts": [
+                  "镜头元数据关联表"
+                ]
+              }
+            },
+            {
+              "key": "geid_240_1",
+              "source": "dca2406e-f0af-4ac5-9351-5ed1d4d8cc67",
+              "target": "70cebeda-242c-453b-b4ad-40a499137e6a",
+              "attributes": {
+                "artifacts": [
+                  "单体视觉规范摘要"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "artifacts": [
+      {
+        "name": "原始剧本全文",
+        "intent": "待视频化的完整剧本文本",
+        "aliases": [],
+        "qualityCriteria": [
+          "故事完整性",
+          "对话清晰性",
+          "场景可辨识性",
+          "原文真实性",
+          "格式规范性",
+          "完整性（无缺失）",
+          "可读性（格式清晰）",
+          "可读性",
+          "细节丰富度",
+          "叙事连贯性",
+          "完整性",
+          "唯一性",
+          "可用性"
+        ],
+        "sizeEstimate": "small",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "场景结构划分表",
+        "intent": "按剧本叙事顺序列出的场景单元清单，每条含序号、场景概要、预估时长、情感基调、关键动作、主要角色",
+        "aliases": [],
+        "qualityCriteria": [
+          "叙事连贯性",
+          "时序准确性",
+          "元素完整性",
+          "完整性",
+          "信息清晰度",
+          "规范性（字段完备且符合模板）",
+          "一致性（风格与格式统一）",
+          "角色定义明确度",
+          "内容覆盖度",
+          "清晰度",
+          "逻辑性",
+          "准确性",
+          "时序性",
+          "信息密度",
+          "顺序正确",
+          "信息完整",
+          "颗粒度适中"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "视觉风格说明书",
+        "intent": "统一定义的视频视觉规范文档，包含配色方案、构图原则、运镜风格、时代氛围标签、禁止元素列表",
+        "aliases": [],
+        "qualityCriteria": [
+          "风格一致性",
+          "可执行性",
+          "视觉明确度",
+          "规范性",
+          "覆盖度",
+          "明确性",
+          "细节详尽度",
+          "无歧义性",
+          "约束力",
+          "完整性",
+          "易读性",
+          "权威性",
+          "覆盖面",
+          "时效性",
+          "逻辑自洽",
+          "清晰度"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "分镜头执行脚本",
+        "intent": "详细描述每个画面具体内容的表格，包含镜头指令、景别、运镜方式及画面元素，已符合风格规范",
+        "aliases": [],
+        "qualityCriteria": [
+          "镜头逻辑合理",
+          "视觉信息充分",
+          "风格匹配度",
+          "格式标准化",
+          "编号连续性",
+          "制作可行性",
+          "完整性",
+          "清晰度",
+          "规范性"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "画面参数配置表",
+        "intent": "定义全片统一画面技术标准，包含分辨率、长宽比、帧率、码率目标、色彩空间",
+        "aliases": [],
+        "qualityCriteria": [
+          "技术规范准确性",
+          "平台兼容性"
+        ],
+        "sizeEstimate": "small",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "标准化视觉提示词包",
+        "intent": "由分镜头转换而来可直接驱动图像生成的提示词集合，每条含画面核心要素描述、风格修饰词、负面约束",
+        "aliases": [],
+        "qualityCriteria": [
+          "关键词完整度",
+          "AI 可理解性",
+          "视觉还原度",
+          "零冲突",
+          "高可用性",
+          "格式统一性"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "已生成视觉素材集",
+        "intent": "根据提示词包调用引擎生成的图像资源清单，每条含图片 URL、元数据（宽高/哈希）、关联镜头号",
+        "aliases": [],
+        "qualityCriteria": [
+          "文件可用性",
+          "解析清晰度",
+          "内容一致性"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "声音 cues 定位表",
+        "intent": "标注每个场景中声音元素的触发时机，每条含场景号、镜头号、对白文本、配音情绪、音效触发点及持续时间",
+        "aliases": [],
+        "qualityCriteria": [
+          "时间点准确性",
+          "情绪匹配度",
+          "覆盖完整性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "已生成音频素材集",
+        "intent": "根据 cues 表调用引擎合成的音频资源清单，每条含音频路径、时长/格式、关联节点 ID",
+        "aliases": [],
+        "qualityCriteria": [
+          "文件可用性",
+          "语音自然度",
+          "无杂音干扰"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "剪辑时间线规划表",
+        "intent": "定义最终视频的剪辑顺序结构，每条含场景顺序、转场类型、节奏点标记、音乐衔接点",
+        "aliases": [],
+        "qualityCriteria": [
+          "叙事流畅性",
+          "节奏合理性",
+          "转场自然度"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "视频剪辑工程文件",
+        "intent": "记录所有素材链接关系、时间轴编辑操作的非编软件工程文件",
+        "aliases": [],
+        "qualityCriteria": [
+          "素材引用无损",
+          "轨道同步准确",
+          "编辑状态可保存"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "最终交付视频文件",
+        "intent": "符合发布标准的成品视频文件（MP4/MOV），包含全部音画轨道",
+        "aliases": [],
+        "qualityCriteria": [
+          "音画同步",
+          "编码合规",
+          "播放无卡顿"
+        ],
+        "sizeEstimate": "unbounded",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "视觉规范提取表",
+        "intent": "从视觉风格说明书中剥离并结构化的硬性技术指标清单。",
+        "aliases": [],
+        "qualityCriteria": [
+          "关键项无遗漏",
+          "数值化准确",
+          "可执行性强",
+          "完整性",
+          "清晰度",
+          "无歧义",
+          "准确性",
+          "结构化程度"
+        ],
+        "sizeEstimate": "small",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "分镜内容草稿集",
+        "intent": "针对每个场景生成的镜头序列描述集合，包含景别、运动、构图等初步设计。",
+        "aliases": [],
+        "qualityCriteria": [
+          "镜头衔接流畅",
+          "风格匹配度高",
+          "视觉描述具体",
+          "完整性",
+          "一致性",
+          "可执行性"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "疑似场景断点标记单",
+        "intent": "初步扫描原文中所有可能表示时间流逝、空间转移或人物进出场的文本位置索引及上下文摘要",
+        "aliases": [],
+        "qualityCriteria": [
+          "敏感性（不漏掉明显线索）",
+          "多样性（涵盖多种切换类型）",
+          "敏感度",
+          "召回率",
+          "冗余度控制"
+        ],
+        "sizeEstimate": "small",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "有效场景断点判定书",
+        "intent": "经过语义逻辑校验后保留的、确认为真实场景边界的索引记录列表，剔除同一场景内的简单转换",
+        "aliases": [],
+        "qualityCriteria": [
+          "准确性（边界判定无误）",
+          "精简性（无冗余断点）",
+          "准确性",
+          "权威性",
+          "时效性"
+        ],
+        "sizeEstimate": "small",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "场景文本原始片段集",
+        "intent": "依据有效断点坐标切割出来的、未经结构化处理的独立故事段落集合，每个片段对应一个场景",
+        "aliases": [],
+        "qualityCriteria": [
+          "独立性（片段间互不重叠）",
+          "完整性（覆盖原剧本全部正文）",
+          "清晰度",
+          "独立性",
+          "完整性"
+        ],
+        "sizeEstimate": "unbounded",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "场景要素特征标注表",
+        "intent": "对应每个片段的关键叙事元素元数据记录，包括时间背景、空间环境、在场主要人物等结构化字段",
+        "aliases": [],
+        "qualityCriteria": [
+          "精准度（提取信息无误）",
+          "一致性（字段定义统一）",
+          "标注精确度",
+          "逻辑覆盖度",
+          "一致性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "初版场景结构划分表",
+        "intent": "集成了片段内容与要素信息的初步结构化表格，用于整体审查叙事流和关键信息密度",
+        "aliases": [],
+        "qualityCriteria": [
+          "概括力（概要精炼）",
+          "信息承载量（覆盖关键情节）",
+          "完整性",
+          "准确性",
+          "结构规范性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "修订后场景结构划分稿",
+        "intent": "经过逻辑修正、碎片合并或过碎拆分优化后的表格版本，已具备基本可用性但尚未完全格式化",
+        "aliases": [],
+        "qualityCriteria": [
+          "逻辑连贯性（上下场衔接自然）",
+          "粒度合理性（分割适度）",
+          "逻辑连贯性",
+          "叙事流畅度",
+          "结构完整性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "全局视觉风格规则摘要",
+        "intent": "从风格说明书中提取的适用于本批次画面的结构化参数集合。",
+        "aliases": [],
+        "qualityCriteria": [
+          "提取覆盖率",
+          "语义精确性",
+          "结构化程度"
+        ],
+        "sizeEstimate": "small",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "关键角色设定基准表",
+        "intent": "基于场景表整理出的主要角色外观特征及设定清单，用于跨镜头追踪。",
+        "aliases": [],
+        "qualityCriteria": [
+          "定义唯一性",
+          "细节完备性",
+          "版本可追溯性"
+        ],
+        "sizeEstimate": "small",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "镜头视觉要素映射表",
+        "intent": "对应每一分镜头的文字解析结果，结构化记录人物、动作、背景、环境四要素。",
+        "aliases": [],
+        "qualityCriteria": [
+          "要素提取完整度",
+          "逻辑独立性",
+          "字段对齐率"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "初始组合提示词集",
+        "intent": "结合视觉要素与风格规则生成的原始自然语言描述集合，尚未规范化。",
+        "aliases": [],
+        "qualityCriteria": [
+          "描述丰富度",
+          "语义连贯性",
+          "风格贴合度"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "模型适配提示词规范稿",
+        "intent": "经语法重写和权重标注后的提示词集合，符合特定 AI 生成引擎的调用标准。",
+        "aliases": [],
+        "qualityCriteria": [
+          "语法合规性",
+          "元数据齐全性",
+          "可读性"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "交叉一致性检测记录",
+        "intent": "列出发现的镜头间角色或环境描述冲突点的详细清单。",
+        "aliases": [],
+        "qualityCriteria": [
+          "冲突识别率",
+          "定位准确率",
+          "修复建议可用性"
+        ],
+        "sizeEstimate": "small",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "核心叙事主题笔记",
+        "intent": "一份简要概括剧本情感基调和叙事核心的纯文本记录，用于指导后续视觉提取方向，提炼故事的情感灵魂与世界观设定。",
+        "aliases": [],
+        "qualityCriteria": [
+          "准确性",
+          "凝练度",
+          "指导性"
+        ],
+        "sizeEstimate": "small",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "视觉意象摘录清单",
+        "intent": "从原剧本和场景表中筛选出来的、经过主题过滤的所有视觉相关原文片段集合，包含具体的颜色、材质、光影及环境描述词组。",
+        "aliases": [],
+        "qualityCriteria": [
+          "相关性",
+          "覆盖率",
+          "去重率"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "视觉要素统计摘要",
+        "intent": "将摘取的信息按类别统计后的结构化数据摘要，包含色彩偏好、光照倾向、时代特征等维度的频次与分布结论。",
+        "aliases": [],
+        "qualityCriteria": [
+          "归纳准确性",
+          "分类清晰度",
+          "数据代表性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "风格组件规范草案集",
+        "intent": "依据统计数据生成的各维度风格细则列表，包含配色方案、构图原则、运镜风格、时代氛围标签、禁止元素等具体条目。",
+        "aliases": [],
+        "qualityCriteria": [
+          "可执行性",
+          "一致性",
+          "行业符合度"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "全局视觉风格准则",
+        "intent": "基于规范表和说明书提炼出的针对当前拍摄任务的执行级约束条目集合",
+        "aliases": [],
+        "qualityCriteria": [
+          "可操作性",
+          "冲突消解",
+          "覆盖度",
+          "唯一性",
+          "可执行性",
+          "无歧义",
+          "闭环"
+        ],
+        "sizeEstimate": "small",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "场景戏剧节拍解析表",
+        "intent": "将每个场景的概要和动作拆解为独立的戏剧情绪与动作节拍的结构化列表",
+        "aliases": [],
+        "qualityCriteria": [
+          "颗粒度",
+          "情感准确",
+          "逻辑连贯"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "景别与运动预规划表",
+        "intent": "建立了“戏剧节拍”与“镜头景别及运动方式”对应关系的规划清单，是用于现场拍摄的初步调度依据",
+        "aliases": [],
+        "qualityCriteria": [
+          "视觉张力",
+          "叙事配合",
+          "技术可行性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "逻辑修订批注表",
+        "intent": "基于多源校验后生成的逐条评审意见表，记录了每处场景边界的断裂风险、逻辑跳跃或粒度问题",
+        "aliases": [],
+        "qualityCriteria": [
+          "问题定位精度",
+          "原因分析深度",
+          "修改建议明确性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "场景优化执行计划表",
+        "intent": "将批注转化为具体操作指令的表，明确了每条记录的合并、拆分或保留动作及理由",
+        "aliases": [],
+        "qualityCriteria": [
+          "指令可执行性",
+          "决策合理性",
+          "覆盖全面性"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "视觉规范聚合基线",
+        "intent": "由硬性指标和软性风格描述合并而成的统一规则池，是后续场景适配的基础数据源。",
+        "aliases": [],
+        "qualityCriteria": [
+          "无冗余冲突",
+          "来源可追溯",
+          "覆盖全面"
+        ],
+        "sizeEstimate": "medium",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "视觉执行约束草案",
+        "intent": "基于聚合基线针对各场景单元生成的初步执行约束条目集合，尚未完全消除逻辑歧义。",
+        "aliases": [],
+        "qualityCriteria": [
+          "场景贴合度",
+          "条款独立性",
+          "逻辑初筛通过"
+        ],
+        "sizeEstimate": "large",
+        "isArray": true,
+        "dataSchema": null
+      },
+      {
+        "name": "镜头元数据关联表",
+        "intent": "融合场景、节拍与预规划镜头信息的标准化结构化清单，作为镜头生成的直接索引",
+        "aliases": [],
+        "qualityCriteria": [],
+        "sizeEstimate": "small",
+        "isArray": false,
+        "dataSchema": null
+      },
+      {
+        "name": "单体视觉规范摘要",
+        "intent": "针对当前批次任务提炼出的可执行视觉技术与风格约束条目，去除了冗余文档信息",
+        "aliases": [],
+        "qualityCriteria": [],
+        "sizeEstimate": "small",
+        "isArray": false,
+        "dataSchema": null
+      }
+    ]
+  },
+  "user": "从剧本到视频"
+}

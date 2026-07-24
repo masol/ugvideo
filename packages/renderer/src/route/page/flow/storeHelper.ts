@@ -5,7 +5,7 @@ import type { PureInputArtifact } from "./store.svelte";
 
 export async function pureInput(target: PureInputArtifact) {
     // target 携带：name / canonicalName / artifact / isArray / sizeEstimate / consumers
-    const initialText = (await safeApi().project.getContent({ kind: "glossary", id: target.artifact?.name, content: true })) ?? "";
+    const initialText = (await safeApi().project.getContent({ kind: "glossary", id: target.artifact?.name, content: true, noThrow: true })) ?? "";
     const content = await dialogStore.safeShow(
         TextInputDialog,
         {

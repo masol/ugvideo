@@ -3,12 +3,20 @@
    ConfirmState — 命令式 Promise 驱动的确认对话框状态
    ═══════════════════════════════════════════════════════════ */
 
+import type { DialogSize } from "./dialog.svelte";
+
 type VariantType = "question" | 'success' | 'info' | 'error' | 'warning';
+// 定义 size 的类型枚举
+
 class ConfirmStore {
   open = $state(false);
   title = $state("");
   message = $state("");
+  icon = $state("");
+  markdown = $state(false);
+  size = $state<DialogSize>('md');
   variant = $state<VariantType>("question")
+  hideCancel = $state(false);
   confirmLabel = $state("确认");
   cancelLabel = $state("取消");
   destructive = $state(false);
@@ -21,6 +29,10 @@ class ConfirmStore {
   request(opts: {
     title: string;
     message: string;
+    icon?: string;
+    markdown?: boolean;
+    size?: DialogSize;
+    hideCancel?: boolean;
     variant?: VariantType,
     confirmLabel?: string;
     cancelLabel?: string;
@@ -34,6 +46,10 @@ class ConfirmStore {
 
     this.title = opts.title;
     this.message = opts.message;
+    this.hideCancel = opts.hideCancel ?? false;
+    this.markdown = opts.markdown ?? false;
+    this.size = opts.size ?? "md";
+    this.icon = opts.icon ?? "";
     this.variant = opts.variant ?? "question";
     this.confirmLabel = opts.confirmLabel ?? "确认";
     this.cancelLabel = opts.cancelLabel ?? "取消";

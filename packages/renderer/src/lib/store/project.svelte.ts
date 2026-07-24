@@ -92,7 +92,33 @@ class ProjectStore {
     }
 
     // 需要确保本函数在path设置之前执行，否则可能触发主控台报错。
-    private setupUI(activityData: ProjectActivityData) {
+    private async setupUI(activityData: ProjectActivityData) {
+        const status = activityData.status;
+        if (status) {
+            const statusArr = status.split(":");
+            await confirmStore.request({
+                title: "项目类型未就绪",
+                hideCancel: true,
+                confirmLabel: "我知道了",
+                variant: "warning",
+                markdown: true,
+                size: "xl2",
+                message: `## 状态限制与操作指引
+
+类型当前处于 **【${statusArr[0]}】** 状态，因此**普通用户无法直接使用**该类型。
+
+### 技术指引（右侧面板操作）
+查看AI规划的DAG，请按以下步骤操作：
+1. 在界面**右侧面板**中，进入 **蓝图 → 术语表**。
+2. 找到名为 **.${statusArr[1] ?? "ID"}_state** 的条目。
+3. 点击该条目**左侧的行动按钮**，并选择 **“面板显示”** 。
+
+### 推荐做法
+- 前往 **“反思助手”** ，使用'/plan'指令，让 AI 助手帮您将现有规划完善为**可执行的工作流**。
+
+> ⚠️ **温馨提示**：非技术人员不推荐直接运行此模块。`,
+            })
+        }
         this.#activity = new ProjectActivity(activityData);
     }
 
@@ -104,7 +130,7 @@ class ProjectStore {
             if (path) {
                 // 已经打开了项目。同步依赖插件。
                 const prjData = await safeApi().project.loadUI();
-                this.setupUI(prjData);
+                await this.setupUI(prjData);
                 // await delay(10);
                 this.#path = path;
                 // @todo: 获取项目的activity数据。
@@ -127,7 +153,7 @@ class ProjectStore {
             this.loading = "open";
 
             const prjData = await api().project.open(pathName);
-            this.setupUI(prjData);
+            await this.setupUI(prjData);
             this.#path = await api().project.info("path");
             this.#depPlugins = await api().project.get(DbKeys.depplugins);
             if (this.#depPlugins && this.#depPlugins.length > 0) {
@@ -183,7 +209,7 @@ class ProjectStore {
 
     private async doCreate(bForce: boolean, type: string, pathName?: string): Promise<boolean> {
         const prjActivities = await api().project.create({ path: pathName, force: bForce, type });
-        this.setupUI(prjActivities)
+        await this.setupUI(prjActivities)
         this.#path = await api().project.info("path");
         this.#depPlugins = await api().project.get(DbKeys.depplugins);
         if (this.#depPlugins && this.#depPlugins.length > 0) {

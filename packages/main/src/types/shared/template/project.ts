@@ -10,6 +10,7 @@ export type PartialInfoCard = z.infer<typeof partialInfoCardSchema>
 
 export const projectActivityDataSchema = z.object({
     icon: z.string(), // 图标，不能省略。
+    status: z.string().optional(),
     statusText: z.string(), // 状态栏文字，不能省略。
     activities: z.array(leftSidebarItemJSONSchema),
     header: z.object({
