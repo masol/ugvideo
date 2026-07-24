@@ -13,6 +13,7 @@ import { PrjDB } from "./drizzle/index.js";
 
 
 export class PrjRunner extends BaseProjectController {
+    static readonly serviceKey = Symbol.for('project.controller.PrjRunner');
     #runner: CapaRunner;
     #cmdrunner: CmdRunner | null = null;
 

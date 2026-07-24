@@ -24,6 +24,8 @@ import type { DrizzleDBType } from "./type.js";
 const dbName = 'db.sqlite'
 
 export class PrjDB extends BaseProjectController implements EmbedKVStore {
+    static readonly serviceKey = Symbol.for('project.controller.PrjDB');
+
     private migrationsPath: string = ""
     private dqlite: Database.Database | null = null;
     private db: DrizzleDBType | null = null;

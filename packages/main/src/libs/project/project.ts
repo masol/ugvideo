@@ -14,7 +14,7 @@ import { z } from "zod";
 import { closeProject, createProject, openProject } from "./helper/create.js";
 import type { IProjectPlugin } from "./plugin.js";
 import { registProjectBuildin } from "./register.js";
-import { type ControllerConstructor, type IProjectContext, type IProjectController, metaDirName } from "./type.js";
+import { type IProjectContext, type IProjectController, metaDirName, ServiceToken } from "./type.js";
 
 export class ProjectContainer implements IProjectContext {
     // 项目根目录。
@@ -55,24 +55,19 @@ export class ProjectContainer implements IProjectContext {
     }
 
     // 1. 严格限制 Map 的键只能是符合约束的构造函数，值是对应的实例
-    private registry = new Map<ControllerConstructor, IProjectController>();
+    private registry = new Map<symbol, IProjectController>();
 
     /**
      * 注册控制器类
      */
-    register<T extends IProjectController>(token: ControllerConstructor<T>): void {
-        // 2. 自动实例化：利用统一的构造函数契约，在容器内部 new 出来
+    register<T extends IProjectController>(token: ServiceToken<T>): void {
         const instance = new token(this);
-        this.registry.set(token, instance);
+        this.registry.set(token.serviceKey, instance);
     }
 
-    getService<T extends IProjectController>(token: ControllerConstructor<T>): T | null {
-        const instance = this.registry.get(token);
-        if (!instance) {
-            return null;
-        }
-        // 3. 内部唯一安全的断言，由于 register 和 resolve 泛型 T 严格绑定，此转换 100% 安全
-        return instance as T;
+    getService<T extends IProjectController>(token: ServiceToken<T>): T | null {
+        const instance = this.registry.get(token.serviceKey);
+        return instance ? (instance as T) : null;
     }
 
     getPath(partName: string | string[]): string {

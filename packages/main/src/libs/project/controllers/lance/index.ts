@@ -18,6 +18,8 @@ export const lanceDirName = "lance"
 // @TODO: 实现项目类型接口，此处需要调用类型接口来创建和维护表格。当前为了简化，全部硬编码在此处。
 
 export class LanceDB extends BaseProjectController implements ILanceDB {
+    static readonly serviceKey = Symbol.for('project.controller.LanceDB');
+
     #db: Connection | null = null;
     #lanceInst: LanceDBType | null = null;
     #embedInst: LanceEmbeding = new LanceEmbeding();
