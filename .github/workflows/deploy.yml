@@ -27,17 +27,16 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment:
-      name: ${{inputs.distribution-channel}}
-      url: https://github.com/${{github.repository}}/releases/tag/v${{inputs.app-version}}
+      name: ${{ inputs.distribution-channel }}
+      url: https://github.com{{ github.repository }}/releases/tag/v${{ inputs.app-version }}
     steps:
       - name: Download compiled app
         uses: actions/download-artifact@v8
         with:
-          pattern: "*-${{inputs.distribution-channel}}"
+          pattern: "*-${{ inputs.distribution-channel }}"
           path: dist
           merge-multiple: true
 
-      - run: gh release create v${{inputs.app-version}} dist/root* dist/latest*.yml --repo ${{github.repository}}
+      - run: gh release create v${{ inputs.app-version }} dist/root* dist/latest*.yml --repo ${{ github.repository }}
         env:
-          GH_TOKEN: ${{ secrets.GH_RELEASE_TOKEN }}
-          # GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
