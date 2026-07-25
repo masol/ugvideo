@@ -8,6 +8,7 @@ import { RpcContext } from '../type.js';
 
 const start = os
     .input(z.number().optional())
+    .output(z.void())
     .handler(async ({ input, context }) => {
         const ctx = context as RpcContext;
         const runner = PrjRunner.ensure(ctx.project);
@@ -17,6 +18,7 @@ const start = os
 
 const stop = os
     .input(z.boolean().optional().default(false))
+    .output(z.void())
     .handler(async ({ input, context }) => {
         const ctx = context as RpcContext;
         const runner = PrjRunner.ensure(ctx.project);
@@ -25,6 +27,8 @@ const stop = os
 
 
 const waitFinish = os
+    .input(z.void())
+    .output(z.void())
     .handler(async ({ context }) => {
         const ctx = context as RpcContext;
         const runner = PrjRunner.ensure(ctx.project);
@@ -32,6 +36,7 @@ const waitFinish = os
     });
 
 const runState = os
+    .input(z.void())
     .output(z.enum(['idle', 'running', 'terminating']))
     .handler(async ({ context }) => {
         const ctx = context as RpcContext;
@@ -40,6 +45,7 @@ const runState = os
     });
 
 const startTime = os
+    .input(z.void())
     .output(z.number())
     .handler(async ({ context }) => {
         const ctx = context as RpcContext;
