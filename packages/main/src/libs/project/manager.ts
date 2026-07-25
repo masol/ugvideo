@@ -7,16 +7,16 @@ import { ProjectContainer } from './project.js';
 class ProjectManager {
     private prjId = 0;
     private projects: ProjectContainer[] = [];
-    constructor() {
-        appLife.hooks.beforeQuit.tapPromise('ProjectManager', async () => {
-            Logger.debug('[ProjectManager] 正在清理资源...');
+    private unregisterBeforeQuit: (() => void) | null = null;
 
+    constructor() {
+        this.unregisterBeforeQuit = appLife.beforeQuit.tapPromise('ProjectManager', async () => {
+            Logger.debug('[ProjectManager] 正在清理资源...');
             await pMap(
                 this.projects,
                 (prj) => prj.close(),
                 { concurrency: 6 }
             )
-
             console.log('[ProjectManager] 清理资源完成。');
         });
     }

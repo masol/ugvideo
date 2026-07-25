@@ -18,20 +18,30 @@ export class PrjRunner extends BaseProjectController {
     static readonly serviceKey = Symbol.for('project.controller.PrjRunner');
     #runner: CapaRunner;
     #cmdrunner: CmdRunner | null = null;
+    #unregisterBeforeQuit: (() => void) | null = null;
 
     constructor(ctx: IProjectContext) {
         super(ctx)
         this.#runner = new CapaRunner();
-        // 监听 beforeQuit，强制停止运行中的任务
-        appLife.hooks.beforeQuit.tapPromise('PrjRunner', async () => {
+        // 通过 tapPromise 注册，保存 unregister 函数以便项目级注销
+        this.#unregisterBeforeQuit = appLife.beforeQuit.tapPromise('PrjRunner', async () => {
             Logger.debug('[PrjRunner] 正在停止运行中的任务...');
             if (this.#runner.state === 'running' || this.#runner.state === 'terminating') {
-                this.#runner.stop(true);   // 强制停止
+                this.#runner.stop(true);
             }
             await this.#runner.waitFinish();
             Logger.debug('[PrjRunner] 任务已停止。');
         });
     }
+
+    /**
+     * 项目销毁时调用，注销 beforeQuit 钩子，释放内存。
+     */
+    dispose(): void {
+        this.#unregisterBeforeQuit?.();
+        this.#unregisterBeforeQuit = null;
+    }
+
     static ensure(ctx: IProjectContext): PrjRunner { return this.coreEnsure(this, ctx); }
 
     get runState(): RunState {
@@ -46,7 +56,6 @@ export class PrjRunner extends BaseProjectController {
         return this.#runner.waitFinish();
     }
 
-    // 执行一个命令。
     async runCommand(command: string, fnNotify: ((title: string, detail: string) => void) | null, signal?: AbortSignal | null): Promise<void> {
         if (this.#cmdrunner) {
             throwPrecondition("已经有一个命令在执行中，每个项目只能并行执行一个命令。并行命令，请自行撰写代码能力，并执行之。")
@@ -62,7 +71,6 @@ ${getErrorMessage(e)}`;
             if (fnNotify) {
                 fnNotify("error", msg);
             }
-            // Logger.error(msg)
         } finally {
             this.#cmdrunner = null;
             ctx.fnNotify = null;

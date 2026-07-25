@@ -1,4 +1,3 @@
-// import { pathExists } from "fs-extra";
 import { configService } from "$libs/store/index.js";
 import { secondConfig } from "$libs/store/second.js";
 import { knowledgeCenter } from "$libs/utils/kc.js";
@@ -13,20 +12,24 @@ import { LanceDB } from "../controllers/lance/index.js";
 import { IProjectContext } from "../type.js";
 
 
-
 export async function openProject(prj: IProjectContext, icon: string): Promise<void> {
     Logger.debug(`[Project] open ${prj.path}`)
     const pdb = PrjDB.ensure(prj);
-    await pdb.open(false);
-    const lance = LanceDB.ensure(prj);
-    await lance.open();
+    try {
+        await pdb.open(false);
+        const lance = LanceDB.ensure(prj);
+        await lance.open();
 
-    secondConfig().addProject(prj.path, (new Date()).getTime(), icon)
-    // await prj.plugin.init(prj, false);
+        secondConfig().addProject(prj.path, (new Date()).getTime(), icon)
+    } catch (e) {
+        // 异常路径：强制关闭数据库，释放文件锁，避免目录被锁死
+        pdb.forceClose();
+        throw e;
+    }
 }
 
 export async function closeProject(prj: IProjectContext): Promise<void> {
-    if (!prj.path) { // 未打开项目，关闭之。
+    if (!prj.path) {
         return;
     }
     Logger.debug(`[Project] close ${prj.path}`)
@@ -45,7 +48,6 @@ export async function createProject(prj: IProjectContext, type: string, icon: st
         if (bForce) {
             await emptyDir(prj.path)
         } else {
-            // 非强制创建，并且路径非空。
             throw new ORPCError(COMMON_ORPC_ERROR_DEFS.UNSUPPORTED_MEDIA_TYPE.message, {
                 status: COMMON_ORPC_ERROR_DEFS.UNSUPPORTED_MEDIA_TYPE.status,
                 message: prj.path
@@ -54,19 +56,28 @@ export async function createProject(prj: IProjectContext, type: string, icon: st
     }
 
     const pdb = PrjDB.ensure(prj);
-    await pdb.open(true);
-    // pdb.set(ProjectDbKeys.depplugins, [configService().get("plugin")]);
-    pdb.set(ProjectDbKeys.version, __APP_VERSION__);
-    pdb.set(ProjectDbKeys.projectType, type)
-    const embed = configService().get("embed_model");
-    if (embed) {
-        pdb.set("embed", configService().get("embed_model"));
-        const lance = LanceDB.ensure(prj);
-        await lance.open();
-    }
+    try {
+        await pdb.open(true);
+        pdb.set(ProjectDbKeys.version, __APP_VERSION__);
+        pdb.set(ProjectDbKeys.projectType, type)
+        const embed = configService().get("embed_model");
+        if (embed) {
+            pdb.set("embed", configService().get("embed_model"));
+            const lance = LanceDB.ensure(prj);
+            await lance.open();
+        }
 
-    await knowledgeCenter.initProject(prj, type);
-    // await prj.plugin.init(prj, true);
+        await knowledgeCenter.initProject(prj, type);
+    } catch (e) {
+        // 异常路径：强制关闭数据库并清理目录，让用户可以重试
+        pdb.forceClose();
+        try {
+            await emptyDir(prj.path);
+        } catch (cleanupErr) {
+            Logger.error('[Project] 创建失败后清理目录时出错:', cleanupErr);
+        }
+        throw e;
+    }
 
     secondConfig().addProject(prj.path, (new Date()).getTime(), icon)
     return true

@@ -15,15 +15,14 @@ import { ILanceDB } from './type.js';
 
 export const lanceDirName = "lance"
 
-// @TODO: 实现项目类型接口，此处需要调用类型接口来创建和维护表格。当前为了简化，全部硬编码在此处。
-
 export class LanceDB extends BaseProjectController implements ILanceDB {
     static readonly serviceKey = Symbol.for('project.controller.LanceDB');
 
     #db: Connection | null = null;
     #lanceInst: LanceDBType | null = null;
     #embedInst: LanceEmbeding = new LanceEmbeding();
-    #skills: SkillRegistry
+    #skills: SkillRegistry;
+    #opened: boolean = false;
 
     // 这里保存的全部是单张表形式--因为从contructor为key。
     private registry = new Map<TableConstructor, TableBase>();
@@ -34,9 +33,11 @@ export class LanceDB extends BaseProjectController implements ILanceDB {
     }
 
     async addTable<T extends TableBase>(token: TableConstructor<T>, name: string): Promise<void> {
-        // 2. 自动实例化：利用统一的构造函数契约，在容器内部 new 出来
+        if (!this.#db) {
+            throwPrecondition("LanceDB数据库未初始化，无法添加表。请先调用 open() 并确保向量模型已配置。");
+        }
         const instance = new token(this, name);
-        await instance.init(this.db);
+        await instance.init(this.#db);
         this.registry.set(token, instance);
     }
 
@@ -45,7 +46,6 @@ export class LanceDB extends BaseProjectController implements ILanceDB {
         if (!instance) {
             return null;
         }
-        // 3. 内部唯一安全的断言，由于 register 和 resolve 泛型 T 严格绑定，此转换 100% 安全
         return instance as T;
     }
 
@@ -68,13 +68,10 @@ export class LanceDB extends BaseProjectController implements ILanceDB {
         return this.#embedInst.doEmbedding(batch, type);
     }
 
-
     static ensure(ctx: IProjectContext): LanceDB { return this.coreEnsure(this, ctx); }
 
-
-    // 是否成功创建--是否提供了系统级的embed.
     get opened(): boolean {
-        return !!this.#db;
+        return this.#opened && !!this.#db;
     }
 
     get db(): Connection {
@@ -88,38 +85,56 @@ export class LanceDB extends BaseProjectController implements ILanceDB {
         return this.#embedInst.embed;
     }
 
-    private async initEmbed() {
-        const prjdb = PrjDB.ensure(this.ctx);
-        return await this.#embedInst.init(prjdb);
+    get embedReady(): boolean {
+        return this.#embedInst.ready;
     }
 
-    // 打开数据库库，如果已经打开，直接返回。
+    private async initEmbed(): Promise<boolean> {
+        const prjdb = PrjDB.ensure(this.ctx);
+        await this.#embedInst.init(prjdb);
+        return this.#embedInst.ready;
+    }
+
+    /**
+     * 打开 LanceDB。
+     *
+     * 关键决策：
+     *  - embed 不可用时（例如未配置向量模型）：LanceDB 整体不可用，
+     *    标记 opened=false，但**不抛异常**。调用方通过 `embedReady` /
+     *    `opened` 自行判断是否降级使用纯 KV 功能。
+     *  - LanceDB 一旦初始化成功（embed 已就绪），`addTable` 即正常工作，
+     *    不再要求后续每次都检查 embed 状态——表本身只是 schema，不依赖嵌入。
+     */
     async open(): Promise<void> {
-        if (this.#db) return;
+        if (this.#opened && this.#db) return;
         const lancePath = join(this.ctx.path, metaDirName, lanceDirName);
 
         try {
             this.#lanceInst = await getLanceDB();
 
-            await this.initEmbed();
+            const embedReady = await this.initEmbed();
+            if (!embedReady) {
+                // 向量模型未配置或初始化失败：LanceDB 整体不可用，但不让项目打开失败
+                Logger.warn('[LanceDB] 向量模型未就绪，LanceDB 与 RAG 功能将不可用，项目将以降级模式运行。');
+                this.#opened = false;
+                return;
+            }
 
             this.#db = await this.lanceInst.connect(lancePath, {
                 storageOptions: { timeout: '10s' }
             });
             await initAllTables(this);
 
+            this.#opened = true;
             Logger.debug(`[LanceDB] 数据库已成功连接.`);
             return;
         } catch (error) {
             Logger.error('[LanceDB] 本地数据库连接失败:', error);
-            throw error;
+            this.#opened = false;
+            // 不抛出异常，允许项目以无 LanceDB 模式打开
         }
     }
 
-
-    /**
-     * 安全关闭数据库方法
-    */
     close() {
         if (!this.#db) {
             Logger.info('[LanceDB] 数据库本就处于关闭状态.');
@@ -134,14 +149,12 @@ export class LanceDB extends BaseProjectController implements ILanceDB {
             }
             this.registry.clear();
 
-            // 调用连接实例的关闭方法
             this.#db.close();
-
-            this.#db = null; // 清空引用
+            this.#db = null;
+            this.#opened = false;
             Logger.log('[LanceDB] 数据库连接已安全断开.');
         } catch (error) {
             Logger.error('[LanceDB] 关闭数据库时发生错误:', error);
-            // throw error;
         }
     }
 };

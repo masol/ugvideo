@@ -11,45 +11,44 @@ class LocalEmbeding {
     embeddingModel: LlamaModel | null = null;
     llamaInstance: Llama | null = null;
     embeddingContext: LlamaEmbeddingContext | null = null;
+    private unregisterBeforeQuit: (() => void) | null = null;
 
     constructor() {
-        appLife.hooks.beforeQuit.tapPromise('LocalEmbeding', async () => {
+        this.unregisterBeforeQuit = appLife.beforeQuit.tapPromise('LocalEmbeding', async () => {
             Logger.debug('[LocalEmbeding] 正在清理资源...');
-
             await this.dispose();
-
             Logger.debug('[LocalEmbeding] 清理资源完成。');
         });
     }
 
-    async dispose() {
+    dispose(): void {
+        this.unregisterBeforeQuit?.();
+        this.unregisterBeforeQuit = null;
+        // ... 其余 dispose 逻辑不变
+    }
+
+    async disposeImpl() {
         if (this.embeddingContext) {
             try {
-                // 检查模型是否已经被销毁（防止重复调用报错）
                 if (!this.embeddingContext.disposed) {
-                    // 1. 显式销毁模型，底层释放所有 VRAM / RAM 资源
                     await this.embeddingContext.dispose();
                     Logger.info('本地嵌入上下文已成功从显存/内存中销毁');
                 }
             } catch (error) {
                 Logger.error('销毁本地模型的上下文时出错:', error);
             } finally {
-                // 2. 将引用置为 null，允许 JavaScript 垃圾回收机制 (GC) 回收该变量
                 this.embeddingContext = null;
             }
         }
         if (this.embeddingModel) {
             try {
-                // 检查模型是否已经被销毁（防止重复调用报错）
                 if (!this.embeddingModel.disposed) {
-                    // 1. 显式销毁模型，底层释放所有 VRAM / RAM 资源
                     await this.embeddingModel.dispose();
                     Logger.info('本地模型及关联上下文已成功从显存/内存中销毁');
                 }
             } catch (error) {
                 Logger.error('销毁本地模型时出错:', error);
             } finally {
-                // 2. 将引用置为 null，允许 JavaScript 垃圾回收机制 (GC) 回收该变量
                 this.embeddingModel = null;
             }
         }
@@ -72,7 +71,6 @@ class LocalEmbeding {
         if (!this.embeddingContext) {
             throwPrecondition("本地嵌入引擎未能正确初始化。")
         }
-
         const embeddingObjects = await pMap(
             values,
             async (text) => this.embeddingContext!.getEmbeddingFor(text),
@@ -87,7 +85,7 @@ class LocalEmbeding {
     }
 
     async init(modelPath: string): Promise<EmbedingImpl> {
-        await this.dispose();
+        await this.disposeImpl();
         if (!this.llamaInstance) {
             this.llamaInstance = await getLlama();
         }
@@ -95,8 +93,7 @@ class LocalEmbeding {
         this.embeddingModel = await this.llamaInstance.loadModel({ modelPath });
 
         this.embeddingContext = await this.embeddingModel.createEmbeddingContext({
-            contextSize: 'auto', // 手动限制最大上下文 Token 数
-            // threads: 4         // 手动指定计算线程数
+            contextSize: 'auto',
         });
         return {
             embed: this.embed.bind(this),

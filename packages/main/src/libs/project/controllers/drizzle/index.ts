@@ -1,4 +1,9 @@
+import { metagFromJson, metagToJson, type MetagRow, type NewMetagRow } from '$libs/blueprint/metag/is.js';
 import * as schema from '$libs/utils/db/schema/index.js';
+import { throwNotfound, throwNotimplement, throwPrecondition } from "$libs/utils/err.js";
+import type { Capability, NewCapability } from "$types/blueprint/capability.js";
+import type { PrjTimeStamps, PrjTimeStore } from "$types/prjstore.js";
+import { BlueprintKind, GetItemInput, GetListResponse, QueryParams, SetItem } from '$types/shared/api/list.js';
 import Database from 'better-sqlite3';
 import { eq, inArray } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -9,12 +14,6 @@ import { ensureDir, pathExists } from "fs-extra";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { metaDirName, type EmbedKVStore, type IProjectContext } from "../../type.js";
-// import { PrjJob } from "../../helper/job.js";
-import { metagFromJson, metagToJson, type MetagRow, type NewMetagRow } from '$libs/blueprint/metag/is.js';
-import { throwNotfound, throwNotimplement, throwPrecondition } from "$libs/utils/err.js";
-import type { Capability, NewCapability } from "$types/blueprint/capability.js";
-import type { PrjTimeStamps, PrjTimeStore } from "$types/prjstore.js";
-import { BlueprintKind, GetItemInput, GetListResponse, QueryParams, SetItem } from '$types/shared/api/list.js';
 import { BaseProjectController } from "../base.js";
 import { deleteCapabilityById, getCapabilityById, getCapaTimestamps, upsertCapability as upcertCapability } from './capa.js';
 import { getList } from './list.js';
@@ -30,15 +29,13 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
     private dqlite: Database.Database | null = null;
     private db: DrizzleDBType | null = null;
 
-    // 设置关注了kvstore中哪些值的变动，这些值的变化，将通知客户端。
     private subKeys: Set<string> = new Set();
-    // #job: PrjJob | null = null;
+
     constructor(ctx: IProjectContext) {
         super(ctx)
         const __dirname = dirname(fileURLToPath(import.meta.url));
         this.migrationsPath = app.isPackaged
-            ? join(process.resourcesPath, 'drizzle') // 生产环境：拷贝的物理路径
-            //当前路径是dist中。
+            ? join(process.resourcesPath, 'drizzle')
             : join(__dirname, '../src/libs/utils/db/migrations');
 
         Logger.info(`[Project:DB] migrationsPath= ${this.migrationsPath}`)
@@ -53,25 +50,35 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         return this.db;
     }
 
-    close() {
-        // if (this.#job) {
-        //     this.#job.forceShutdown();
-        // }
+    /**
+     * 强制关闭数据库，幂等。用于异常路径下的资源清理。
+     * 与 close() 不同的是：即便 db 为 null，也会清理其他内部状态。
+     */
+    forceClose(): void {
         this.clearSubs();
-        if (this.dqlite && this.dqlite.open) {
+        if (this.dqlite) {
             try {
-                Logger.info('[Database] 正在安全断开数据库连接，写入 WAL 缓冲区...');
-
-                // 优化：在关闭前强制执行一次检查点，把内存和 WAL 日志中的数据彻底刷入磁盘
-                this.dqlite.pragma('wal_checkpoint(TRUNCATE)');
-                this.dqlite.close();
+                Logger.info('[Database] 强制断开数据库连接...');
+                if (this.dqlite.open) {
+                    try {
+                        this.dqlite.pragma('wal_checkpoint(TRUNCATE)');
+                    } catch (_) {
+                        // 忽略 checkpoint 失败
+                    }
+                    this.dqlite.close();
+                }
+            } catch (error) {
+                Logger.error('[Database] 强制关闭数据库时发生错误:', error);
+            } finally {
                 this.dqlite = null;
                 this.db = null;
-                Logger.debug('[Database] 数据库已成功关闭，文件锁已释放。');
-            } catch (error) {
-                Logger.error('[Database] 关闭数据库时发生错误:', error);
             }
         }
+    }
+
+    close() {
+        this.forceClose();
+        Logger.debug('[Database] 数据库已成功关闭，文件锁已释放。');
     }
 
     async open(bCreate: boolean = false): Promise<void> {
@@ -79,41 +86,28 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         const exists = await pathExists(dbPath);
         if (!exists) {
             if (!bCreate) {
-                throwNotfound(`项目“${this.ctx.path}”的数据库不存在！`)
+                throwNotfound(`项目"${this.ctx.path}"的数据库不存在！`)
             }
             await ensureDir(join(this.ctx.path, metaDirName));
         }
+
         // 关闭，如果存在旧数据。
-        this.close();
+        this.forceClose();
 
         this.dqlite = new Database(dbPath, {
-            // 加入超时，防止在多进程或密集写入时死锁
             timeout: 5000
         });
 
-        // 1. 明确关闭外键约束（SQLite 默认其实是 OFF，这里显式关闭确保性能最大化）
         this.dqlite.pragma('foreign_keys = OFF');
-
-        // 2. 开启 WAL 模式（预写日志模式：读写不互斥，写入速度直接飙升数倍）
         this.dqlite.pragma('journal_mode = WAL');
-
-        // 3. 将同步模式设为 NORMAL
-        // 在 WAL 模式下，NORMAL 非常安全，它不会每次都强制把数据刷入磁盘，而是写到操作系统的缓存中，性能极高
         this.dqlite.pragma('synchronous = NORMAL');
-
-        // 4. 增大缓存大小（单位是页，4000 约等于 16MB 的内存缓存，减少频繁读写磁盘）
         this.dqlite.pragma('cache_size = 4000');
-
-        // 5. 将临时文件存在内存中，而不是磁盘
         this.dqlite.pragma('temp_store = MEMORY');
 
         this.db = drizzle(this.dqlite, { schema });
         migrate(this.db, { migrationsFolder: this.migrationsPath });
-        // this.#job = new PrjJob(this.dqlite);
-        // await this.#job.init();
     }
 
-    // 1. 让检查方法直接返回非空的 DrizzleType
     private getInitedDB(): DrizzleDBType {
         if (!this.db) {
             throw new Error("项目数据库未初始化");
@@ -121,7 +115,6 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         return this.db;
     }
 
-    // 术语表中key的默认规范： #开头的为节点创建的术语，_开头的是资源表。其它为程序定义或用户输入的术语。
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     set(key: string, value: any): void {
         const db = this.getInitedDB();
@@ -131,7 +124,7 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
                 target: schema.kvStore.key,
                 set: { value },
             })
-            .run(); // 同步执行，执行完后此行代码才向下走
+            .run();
         if (this.subKeys.has(key)) {
             this.ctx.notify("kv-changed", { key, value })
         }
@@ -148,7 +141,6 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
     rmSub(key: string) {
         this.subKeys.delete(key);
     }
-
 
     remove(key: string): void {
         const db = this.getInitedDB();
@@ -182,17 +174,11 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         }) : null;
     }
 
-    /**
-     * 获取keyStore中对应key的更新时间（支持单个或批量查询）。
-     * @param key 单个 key (string) 或多个 key (string[])
-     * @returns 如果传入 string，返回 string | null；如果传入 string[]，返回 Record<string, string> (key-value 映射表)
-     */
     geUpdTime(key: string): string | null;
     geUpdTime(key: string[]): Record<string, string>;
     geUpdTime(key: string | string[]): string | null | Record<string, string> {
         const db = this.getInitedDB();
 
-        // 1. 处理数组参数（批量查询）
         if (Array.isArray(key)) {
             if (key.length === 0) return {};
 
@@ -203,9 +189,8 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
                 })
                 .from(schema.kvStore)
                 .where(inArray(schema.kvStore.key, key))
-                .all(); // 使用 all() 获取所有匹配行
+                .all();
 
-            // 将结果转换为对象映射，方便外部 O(1) 复杂度查询
             return results.reduce((acc, row) => {
                 if (row.updatedAt) {
                     acc[row.key] = row.updatedAt;
@@ -214,7 +199,6 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
             }, {} as Record<string, string>);
         }
 
-        // 2. 处理单个字符串参数（保持原逻辑，使用 eq 和 get）
         const result = db
             .select({ updatedAt: schema.kvStore.updatedAt })
             .from(schema.kvStore)
@@ -224,7 +208,6 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         return result?.updatedAt || null;
     }
 
-    // 返回id.
     upcertCapa(capability: NewCapability): string {
         return upcertCapability(this.ensureDB(), capability);
     }
@@ -267,15 +250,13 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
                 const capa = this.getCapaById(id);
                 if (!capa) {
                     if (!noThrow) {
-                        throwNotfound(`没有id为“${id}”的能力。`)
+                        throwNotfound(`没有id为"${id}"的能力。`)
                     }
                     return ""
                 }
-                // 如果 content 为 true，返回完整的 code
                 if (content) {
                     return capa.code;
                 }
-                // 使用解构剔除不需要的字段，保留其余属性
                 // eslint-disable-next-line @typescript-eslint/no-unused-vars
                 const { updatedAt, createdAt, code, ...safeCapa } = capa;
 
@@ -286,26 +267,24 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
                     const value = this.get<string>(id);
                     if (value === null) {
                         if (!noThrow) {
-                            throwNotfound(`没有key为“${id}”的术语。`)
+                            throwNotfound(`没有key为"${id}"的术语。`)
                         }
                         return ""
                     }
-                    // 资源类的不做JSON化，直接默认其是字符串。content为true，在export时发出，方便存储。
                     if (content || id.startsWith('_')) {
                         return value;
                     }
-                    return JSON.stringify(value, null, 2) // 这是为了方便编辑器。
+                    return JSON.stringify(value, null, 2)
                 }
             case 'metag':
                 {
                     const value = this.getMetag(id)[0];
                     if (value === null) {
                         if (!noThrow) {
-                            throwNotfound(`没有fieldKey为“${id}”的元术语。`)
+                            throwNotfound(`没有fieldKey为"${id}"的元术语。`)
                         }
                         return ""
                     }
-                    // 使用解构剔除不需要的字段，保留其余属性
                     const { updatedAt, createdAt, ...jsonValue } = metagToJson(value)!
                     void (updatedAt)
                     void (createdAt)
@@ -319,7 +298,6 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         }
     }
 
-    // 返回id.
     setContent({ kind, id, content, code }: SetItem): string {
         switch (kind) {
             case 'capa': {
@@ -363,12 +341,11 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         }
     }
 
-    // 返回验证错误字符串。
     verifyContent(_setInfo: SetItem): string[] {
         throwNotimplement("尚未实现内容验证，自行小心。")
     }
 
     dispose(): void {
-        this.close();
+        this.forceClose();
     }
 }

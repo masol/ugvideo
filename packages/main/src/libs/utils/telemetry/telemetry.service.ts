@@ -117,6 +117,7 @@ export class TelemetryService extends BaseTelemetryService {
 
     /** 防止 shutdown 并发重入（beforeQuit 可能与手动调用竞争） */
     private shuttingDown: Promise<void> | null = null;
+    private unregisterBeforeQuit: (() => void) | null = null;
 
     async initialize(endpoint?: string): Promise<void> {
         // 打开调试。@todo:为了方便用户接入，是否可配置？
@@ -127,7 +128,7 @@ export class TelemetryService extends BaseTelemetryService {
             return;
         }
 
-        appLife.hooks.beforeQuit.tapPromise("TelemetryService", async () => {
+        this.unregisterBeforeQuit = appLife.beforeQuit.tapPromise('TelemetryService', async () => {
             await this.shutdown();
         });
 
