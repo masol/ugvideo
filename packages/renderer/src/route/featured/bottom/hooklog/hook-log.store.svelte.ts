@@ -178,4 +178,6 @@ class HookLogStore {
     }
 }
 
-export const hookLogStore = new HookLogStore()
+const KEY = Symbol.for('unigen.renderer.hookLogStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const hookLogStore: HookLogStore = ((globalThis as any)[KEY] ??= new HookLogStore());

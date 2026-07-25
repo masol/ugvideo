@@ -216,4 +216,6 @@ class RouterStore {
     }
 }
 
-export const routerStore = new RouterStore();
+const KEY = Symbol.for('unigen.renderer.routerStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const routerStore: RouterStore = ((globalThis as any)[KEY] ??= new RouterStore());

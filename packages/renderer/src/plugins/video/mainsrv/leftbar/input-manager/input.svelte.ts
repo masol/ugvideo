@@ -232,4 +232,6 @@ class InputManagerStore {
     }
 }
 
-export const inputStore = new InputManagerStore();
+const KEY = Symbol.for('unigen.renderer.inputStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const inputStore: InputManagerStore = ((globalThis as any)[KEY] ??= new InputManagerStore());

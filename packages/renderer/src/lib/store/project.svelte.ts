@@ -59,7 +59,7 @@ class ProjectStore {
     }
 
     // 非命令入口！只被dashboardStore调用。
-    async start(seq: number): Promise<void> {
+    async start(seq: number, bThrow?: boolean): Promise<void> {
         try {
             if (this.#path.trim().length === 0) {
                 toast.error("尚未打开项目")
@@ -69,7 +69,11 @@ class ProjectStore {
             this.#runState = await api().project.runState(); // "running";
             // console.log("this.#runState=", this.#runState)
         } catch (e) {
+            this.#runState = 'idle';
             this.procError(e);
+            if (bThrow) {
+                throw e;
+            }
         }
     }
 
@@ -254,4 +258,6 @@ class ProjectStore {
     }
 }
 
-export const projectStore = new ProjectStore();
+const KEY = Symbol.for('unigen.renderer.projectStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const projectStore: ProjectStore = ((globalThis as any)[KEY] ??= new ProjectStore());

@@ -134,4 +134,6 @@ class WindowStore {
   }
 }
 
-export const windowStore = new WindowStore()
+const KEY = Symbol.for('unigen.renderer.windowStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const windowStore: WindowStore = ((globalThis as any)[KEY] ??= new WindowStore());

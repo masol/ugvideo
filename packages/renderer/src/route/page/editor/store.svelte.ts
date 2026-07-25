@@ -363,4 +363,6 @@ export class EditorStore {
 }
 
 /** ── 全局唯一实例：所有子组件共用 ── */
-export const editorStore = new EditorStore();
+const KEY = Symbol.for('unigen.renderer.editorStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const editorStore: EditorStore = ((globalThis as any)[KEY] ??= new EditorStore());

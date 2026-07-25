@@ -10,4 +10,6 @@ interface UnigenHooks {
 export type UnigenHookType = Hookable<UnigenHooks>
 
 // 2. 将类型传入 createHooks 泛型中
-export const hooks = createHooks<UnigenHooks>()
+const KEY = Symbol.for('unigen.renderer.hooks');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const hooks: UnigenHookType = ((globalThis as any)[KEY] ??= createHooks<UnigenHooks>());

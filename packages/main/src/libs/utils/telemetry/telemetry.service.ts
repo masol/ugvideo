@@ -15,7 +15,9 @@ import {
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { registerTelemetry } from "ai";
 import Logger from "electron-log";
+import pTimeout from "p-timeout";
 import { appLife } from "../tapable/applife.js";
+
 /**
  * ============================================================
  * 动态代理 Exporter（中间代理人模式）
@@ -212,20 +214,32 @@ export class TelemetryService extends BaseTelemetryService {
         Logger.debug("[Telemetry] 正在清理遥测资源（flush 剩余 Span）...");
 
         try {
-            // NodeSDK.shutdown 内部会驱动 BatchSpanProcessor 做最后一次 flush，
-            // 再关闭 DynamicProxyExporter 里的真实 OTLP 实例。
-            await this.sdk.shutdown();
+            // pTimeout 兜底：OTel 内部 BatchSpanProcessor 在端点不通时可能 hang 30 秒
+            await pTimeout(
+                this.sdk.shutdown(),
+                {
+                    milliseconds: 2000,
+                    message: "OTel shutdown 超时（端点可能不通），放弃等待。"
+                }
+            );
             Logger.info("[Telemetry] 剩余遥测数据已 flush，管道已关闭。");
-        } catch (e) {
-            Logger.error("[Telemetry] 关闭遥测管道时发生错误：", e);
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } catch (e: any) {
+            if (e?.name === "TimeoutError") {
+                Logger.warn("[Telemetry] shutdown 超时（2s），放弃等待。剩余数据已丢弃。");
+            } else {
+                Logger.error("[Telemetry] 关闭遥测管道时发生错误：", e);
+            }
         } finally {
             this.sdk = null;
             this.proxyExporter = null;
             this.started = false;
-            console.log("[Telemetry] 清理资源完成。");
+            Logger.debug("[Telemetry] 清理资源完成。");
         }
     }
 }
 
 /** 全局单例，供外部直接引用 */
-export const telemetryService = new TelemetryService();
+const KEY = Symbol.for('unigen.singleton.telemetryService');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const telemetryService: TelemetryService = ((globalThis as any)[KEY] ??= new TelemetryService());

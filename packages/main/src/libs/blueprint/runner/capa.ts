@@ -36,7 +36,7 @@ export class CapaRunner extends BaseRunner {
             this.#ctx.triggerAbort(bForce);
         }
         if (bForce) {
-            // 清空#running等环境。
+            // 强制模式：直接清理，让 waitFinish 立即完成
             this.#ctx = null;
             this.#running = null;
             this.#state = "idle";
@@ -48,10 +48,18 @@ export class CapaRunner extends BaseRunner {
     start(capaId: string, ctx: IRunnerContext) {
         if (this.#state === "idle") {
             if (this.#running) {
-                Logger.warn("[WorkflowRunner] 历史执行尚未执行完毕，如果未终止，这将导致其虚悬。")
+                Logger.warn("[WorkflowRunner] 历史执行尚未执行完毕...");
                 this.stop(true);
             }
-            this.#running = this.run(capaId, ctx);
+            const p = this.run(capaId, ctx);
+            // 错误处理：避免 unhandled rejection
+            p.catch((e) => {
+                Logger.error(`[CapaRunner] 执行 ${capaId} 失败:`, e);
+                this.#state = "idle";
+                this.#running = null;
+                this.#ctx = null;
+            });
+            this.#running = p;
             this.#ctx = ctx;
         }
     }
@@ -59,12 +67,13 @@ export class CapaRunner extends BaseRunner {
     async run(capaId: string, ctx: IRunnerContext): Promise<void> {
         this.#startTime = new Date().getTime();
         this.#state = "running";
-
-        // 不会抛出异常的。
-        await this.runCap(capaId, ctx);
-
-        this.#state = "idle";
-        this.#running = null;
-        this.#ctx = null;
+        try {
+            await this.runCap(capaId, ctx);
+        } finally {
+            // 任何路径都清理状态，避免 #state 永驻 "running"
+            this.#state = "idle";
+            this.#running = null;
+            this.#ctx = null;
+        }
     }
 }

@@ -1,5 +1,6 @@
 // import { getCountryCode } from '$libs/utils/sys/ip.js';
 // import eLogger from 'electron-log/main';
+import log from 'electron-log/main.js';
 import electronUpdater, { type AppUpdater, type Logger } from 'electron-updater';
 import { AppModule } from '../AppModule.js';
 
@@ -24,9 +25,9 @@ export class AutoUpdater implements AppModule {
     this.#notification = downloadNotification;
   }
 
-  async enable(): Promise<void> {
+  enable(): void {
     // const code = await getCountryCode();
-    await this.runAutoUpdater();
+    this.runAutoUpdater();
   }
 
   getAutoUpdater(): AppUpdater {
@@ -36,26 +37,22 @@ export class AutoUpdater implements AppModule {
     return autoUpdater;
   }
 
-  async runAutoUpdater() {
+  runAutoUpdater() {
     const updater = this.getAutoUpdater();
-    try {
-      updater.logger = this.#logger || null;
-      updater.fullChangelog = true;
+    updater.logger = this.#logger || null;
+    updater.fullChangelog = true;
 
-      if (import.meta.env.VITE_DISTRIBUTION_CHANNEL) {
-        updater.channel = import.meta.env.VITE_DISTRIBUTION_CHANNEL;
-      }
-
-      return await updater.checkForUpdatesAndNotify(this.#notification);
-    } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes('No published versions')) {
-          return null;
-        }
-      }
-
-      throw error;
+    if (import.meta.env.VITE_DISTRIBUTION_CHANNEL) {
+      updater.channel = import.meta.env.VITE_DISTRIBUTION_CHANNEL;
     }
+
+    updater.checkForUpdatesAndNotify(this.#notification).catch((error) => {
+      if (error instanceof Error && error.message.includes('No published versions')) {
+        return null;
+      }
+      // 后台任务失败只记日志，不要 throw（否则变成 unhandled rejection）
+      log.error('[AutoUpdater] 后台更新检查失败:', error);
+    });
   }
 }
 

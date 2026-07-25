@@ -532,9 +532,12 @@ export class GlobalToolDB implements ILanceDB {
     }
 }
 
+const KEY = Symbol.for('unigen.singleton.globalToolDB');
+
 /**
  * 应用级单例。Electron 主进程模块图唯一,模块级实例即天然单例,无需 ensure。
  * 使用顺序:main 启动 → await globalToolDB.open(builtins)
  *          → configService 加载配置 → await globalToolDB.setMcpServers(all)
  */
-export const globalToolDB = new GlobalToolDB();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const globalToolDB: GlobalToolDB = ((globalThis as any)[KEY] ??= new GlobalToolDB());

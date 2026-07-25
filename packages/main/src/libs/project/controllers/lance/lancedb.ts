@@ -3,12 +3,12 @@ import { join } from 'node:path';
 
 export type LanceDBType = Awaited<typeof import("@lancedb/lancedb")>;
 
-let lanceDb: LanceDBType | null = null; // 类型完美匹配
+const KEY = Symbol.for('unigen.singleton.lanceDB');
 
 export async function getLanceDB(): Promise<LanceDBType> {
-    if (lanceDb) return lanceDb;
-
-    // 【第1步：先设置环境变量，必须写在import之前】
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const g = globalThis as any;
+    if (g[KEY]) return g[KEY] as LanceDBType;
     const modelRoot = join(app.getPath("userData"), "lance-models");
     process.env.LANCE_LANGUAGE_MODEL_HOME = modelRoot;
 
@@ -29,7 +29,7 @@ export async function getLanceDB(): Promise<LanceDBType> {
     //       console.error("词典缺失：jieba/default 不存在");
     //     }
     //   }
-    // 动态导入
-    lanceDb = await import('@lancedb/lancedb');
-    return lanceDb;
+    const db = await import('@lancedb/lancedb');
+    g[KEY] = db;
+    return db;
 }

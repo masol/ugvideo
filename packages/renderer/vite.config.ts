@@ -49,23 +49,22 @@ export default defineConfig({
         assetFileNames: 'assets/[name]-[hash].[ext]',
 
         manualChunks(id) {
-          // 1. 核心框架拆分
+          // 核心框架（首屏必须）
           if (id.includes('svelte/src')) return 'svelte-core';
           if (id.includes('bits-ui/dist')) return 'bits-ui';
-
-          // 2. 重型依赖独立拆分（避免单文件过大导致 V8 内存峰值）
+          // 重型依赖 → 独立 chunk，由动态 import 按需拉入
           if (id.includes('monaco-editor')) return 'monaco-editor';
           if (id.includes('shiki')) return 'shiki';
           if (id.includes('@iconify-json/twemoji')) return 'iconify-twemoji';
           if (id.includes('@tabler/icons-svelte')) return 'tabler-icons';
-
-          // 3. 其他大型依赖独立拆分
+          // 流程图相关（仅 FlowPage）
+          if (id.includes('@dagrejs/dagre') || id.includes('graphology')) return 'flow-engine';
+          if (id.includes('@xyflow')) return 'xyflow';
+          // 其它 UI 库
           if (id.includes('svelte-motion/src')) return 'svelte-motion';
           if (id.includes('@floating-ui')) return 'floating-ui';
           if (id.includes('paneforge')) return 'paneforge';
-
-          // 4. 移除兜底的 vendor 策略！
-          // 零散的小依赖直接留在业务代码的 chunk 中，不要强行聚合成一个大文件
+          // 不做兜底 vendor，让小依赖跟随业务 chunk
         }
       }
     },

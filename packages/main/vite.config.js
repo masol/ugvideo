@@ -1,8 +1,13 @@
 import { getNodeMajorVersion } from "@app/electron-versions";
 import { spawn } from "child_process";
 import electronPath from "electron";
+import { builtinModules } from "module";
+import path from "node:path";
+import { fileURLToPath } from "url";
 import rootPkg from "../../package.json" assert { type: "json" };
 import pkg from "./package.json" assert { type: "json" }; // 引入 package.json
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default /**
  * @type {import('vite').UserConfig}
@@ -16,7 +21,7 @@ export default /**
     assetsDir: ".",
     target: `node${getNodeMajorVersion()}`,
     lib: {
-      entry: "src/index.ts",
+      entry: path.resolve(__dirname, "src/index.ts"),
       formats: ["es"],
     },
     rollupOptions: {
@@ -25,6 +30,9 @@ export default /**
         "electron",
         // 自动将 package.json 中所有的第三方依赖（如 @orpc/server 等）排除
         ...Object.keys(pkg.dependencies || {}),
+        ...builtinModules,
+        ...builtinModules.map((m) => `node:${m}`),
+
         // 匹配子包或深层路径引用
         /^(better-sqlite3|@lancedb\/lancedb|node-llama-cpp)/,
         // 匹配现代符合 ESM 规范的 node: 前缀内置模块

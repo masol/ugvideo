@@ -1,7 +1,7 @@
 import { appLife } from '$libs/utils/tapable/applife.js';
 import Logger from 'electron-log/main.js';
-import { ProjectContainer } from './project.js'
-import pMap from 'p-map'
+import pMap from 'p-map';
+import { ProjectContainer } from './project.js';
 
 
 class ProjectManager {
@@ -43,5 +43,6 @@ class ProjectManager {
     }
 }
 
-
-export const projectManager = new ProjectManager();
+const KEY = Symbol.for('unigen.singleton.projectManager');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const projectManager: ProjectManager = ((globalThis as any)[KEY] ??= new ProjectManager());

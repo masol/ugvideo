@@ -25,4 +25,6 @@ export class SearchStore {
     }
 }
 
-export const searchStore = new SearchStore();
+const KEY = Symbol.for('unigen.renderer.searchStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const searchStore: SearchStore = ((globalThis as any)[KEY] ??= new SearchStore());

@@ -5,7 +5,6 @@
 // ═══════════════════════════════════════════════════════════════
 
 // import { api } from '$lib/utils/api';
-import evtbus from '$lib/utils/evtbus';
 import Logger from 'electron-log/renderer.js';
 
 //─── 类型定义 ─────────────────────────────────────────────────
@@ -75,16 +74,16 @@ class UserStore {
         //   this.login(credentials);
         // });
 
-        // 🔔 监听 logout 事件 → 自动清空用户状态并重置状态机
-        evtbus.on('user:logout', () => {
-            this.#reset();
-            Logger.info('[UserStore] 用户已注销，状态已重置');
-        });
+        // // 🔔 监听 logout 事件 → 自动清空用户状态并重置状态机
+        // evtbus.on('user:logout', () => {
+        //     this.#reset();
+        //     Logger.info('[UserStore] 用户已注销，状态已重置');
+        // });
 
-        // 🔔 监听用户资料局部更新
-        evtbus.on('user:update', (patch: Partial<UserProfile>) => {
-            this.#patchUser(patch);
-        });
+        // // 🔔 监听用户资料局部更新
+        // evtbus.on('user:update', (patch: Partial<UserProfile>) => {
+        //     this.#patchUser(patch);
+        // });
 
         // 🔔 监听全局错误事件
         // evtbus.on('error', (message: string) => {
@@ -153,25 +152,27 @@ class UserStore {
         this.#error = null;
     }
 
-    // ━━━ 私有：重置全部状态 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    #reset(): void {
-        this.#user = null;
-        this.#isLoading = false;
-        this.#error = null;
-        this.#lastUpdated = null;
-    }
+    // // ━━━ 私有：重置全部状态 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // #reset(): void {
+    //     this.#user = null;
+    //     this.#isLoading = false;
+    //     this.#error = null;
+    //     this.#lastUpdated = null;
+    // }
 
-    // ━━━ 私有：局部更新用户资料 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    #patchUser(patch: Partial<UserProfile>): void {
-        if (!this.#user) {
-            console.warn('[UserStore] 尝试更新用户资料但当前未登录');
-            return;
-        }
-        this.#user = { ...this.#user, ...patch };
-        this.#lastUpdated = new Date();
-        console.info('[UserStore] 用户资料已局部更新', patch);
-    }
+    // // ━━━ 私有：局部更新用户资料 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // #patchUser(patch: Partial<UserProfile>): void {
+    //     if (!this.#user) {
+    //         console.warn('[UserStore] 尝试更新用户资料但当前未登录');
+    //         return;
+    //     }
+    //     this.#user = { ...this.#user, ...patch };
+    //     this.#lastUpdated = new Date();
+    //     console.info('[UserStore] 用户资料已局部更新', patch);
+    // }
 }
 
 // ━━━ 单例导出 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-export const userStore = new UserStore();
+const KEY = Symbol.for('unigen.renderer.userStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const userStore: UserStore = ((globalThis as any)[KEY] ??= new UserStore());

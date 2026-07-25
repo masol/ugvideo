@@ -8,4 +8,6 @@ class SettingsPanelStore {
   }
 }
 
-export const settingsPanelStore = new SettingsPanelStore();
+const KEY = Symbol.for('unigen.renderer.settingsPanelStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const settingsPanelStore: SettingsPanelStore = ((globalThis as any)[KEY] ??= new SettingsPanelStore());

@@ -19,12 +19,12 @@ export async function initApp(initConfig: AppInitConfig) {
 
     const moduleRunner = createModuleRunner()
       .init(disallowMultipleAppInstance())
-      .init(createWindowManagerModule({ initConfig, openDevTools: import.meta.env.DEV }))
-      .init(terminateAppOnLastWindowClose())
       .init(loggerModule())
       .init(orpcModule())
       .init(protocalModule())
       .init(hardwareAccelerationMode())
+      .init(createWindowManagerModule({ initConfig, openDevTools: import.meta.env.DEV }))
+      .init(terminateAppOnLastWindowClose())
       .init(autoUpdater())
       // Install DevTools extension if needed
       // .init(chromeDevToolsExtension({extension: 'VUEJS3_DEVTOOLS'}))

@@ -398,4 +398,5 @@ class LayoutStore {
 }
 
 // ── 单例导出 ──
-export const layoutStore = new LayoutStore()
+const KEY = Symbol.for('unigen.renderer.layoutStore');
+export const layoutStore: LayoutStore = ((globalThis as any)[KEY] ??= new LayoutStore());

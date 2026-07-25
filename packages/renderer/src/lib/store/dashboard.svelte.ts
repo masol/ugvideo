@@ -228,7 +228,7 @@ class DashboardStore {
         }
 
         try {
-            await projectStore.start(seq);
+            await projectStore.start(seq, true);
         } catch (err) {
             // 启动失败：回滚所有权，避免 store 卡在“已认领但未运行”的悬空态。
             log.error("[DashboardStore] projectStore.start() failed", err);
@@ -376,4 +376,6 @@ class DashboardStore {
     };
 }
 
-export const dashboardStore = new DashboardStore();
+const KEY = Symbol.for('unigen.renderer.dashboardStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const dashboardStore: DashboardStore = ((globalThis as any)[KEY] ??= new DashboardStore());

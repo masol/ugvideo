@@ -30,4 +30,6 @@ function createBottomPanelStore() {
     };
 }
 
-export const bottomPanelStore = createBottomPanelStore();
+const KEY = Symbol.for('unigen.renderer.bottomPanelStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const bottomPanelStore = ((globalThis as any)[KEY] ??= createBottomPanelStore());

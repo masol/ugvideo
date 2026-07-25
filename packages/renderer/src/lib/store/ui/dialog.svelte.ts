@@ -146,8 +146,9 @@ class DialogStore {
     }
 }
 
-export const dialogStore = new DialogStore();
-
+const KEY = Symbol.for('unigen.renderer.dialogStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const dialogStore: DialogStore = ((globalThis as any)[KEY] ??= new DialogStore());
 
 /**
 const confirmed = await dialogStore.show(

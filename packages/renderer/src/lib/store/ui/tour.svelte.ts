@@ -47,4 +47,6 @@ class TourStore {
 
 }
 
-export const tourStore = new TourStore()
+const KEY = Symbol.for('unigen.renderer.tourStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const tourStore: TourStore = ((globalThis as any)[KEY] ??= new TourStore());

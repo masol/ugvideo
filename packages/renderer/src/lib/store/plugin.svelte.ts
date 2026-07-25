@@ -704,4 +704,6 @@ class PluginStore {
     }
 }
 
-export const pluginStore = new PluginStore()
+const KEY = Symbol.for('unigen.renderer.pluginStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const pluginStore: PluginStore = ((globalThis as any)[KEY] ??= new PluginStore());

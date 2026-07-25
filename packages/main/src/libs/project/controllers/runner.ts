@@ -2,7 +2,9 @@ import { RunnerContext } from "$libs/blueprint/context.js";
 import { CapaRunner, CmdRunner } from "$libs/blueprint/runner/index.js";
 import { configService } from "$libs/store/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
+import { appLife } from "$libs/utils/tapable/applife.js";
 import type { RunState } from "$types/index.js";
+import Logger from "electron-log/main.js";
 import { getErrorMessage } from "radashi";
 import { ProjectDbKeys } from "../../utils/db/dbkeys.js";
 import type { IProjectContext } from "../type.js";
@@ -20,6 +22,15 @@ export class PrjRunner extends BaseProjectController {
     constructor(ctx: IProjectContext) {
         super(ctx)
         this.#runner = new CapaRunner();
+        // 监听 beforeQuit，强制停止运行中的任务
+        appLife.hooks.beforeQuit.tapPromise('PrjRunner', async () => {
+            Logger.debug('[PrjRunner] 正在停止运行中的任务...');
+            if (this.#runner.state === 'running' || this.#runner.state === 'terminating') {
+                this.#runner.stop(true);   // 强制停止
+            }
+            await this.#runner.waitFinish();
+            Logger.debug('[PrjRunner] 任务已停止。');
+        });
     }
     static ensure(ctx: IProjectContext): PrjRunner { return this.coreEnsure(this, ctx); }
 

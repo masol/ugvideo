@@ -89,4 +89,6 @@ class ConfirmStore {
   }
 }
 
-export const confirmStore = new ConfirmStore();
+const KEY = Symbol.for('unigen.renderer.confirmStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const confirmStore: ConfirmStore = ((globalThis as any)[KEY] ??= new ConfirmStore());

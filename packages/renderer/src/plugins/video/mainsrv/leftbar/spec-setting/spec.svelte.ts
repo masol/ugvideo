@@ -438,4 +438,6 @@ class SpecStore {
     }
 }
 
-export const specStore = new SpecStore();
+const KEY = Symbol.for('unigen.renderer.specStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const specStore: SpecStore = ((globalThis as any)[KEY] ??= new SpecStore());

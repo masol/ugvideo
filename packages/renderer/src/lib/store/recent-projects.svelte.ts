@@ -59,4 +59,6 @@ class RecentProjectsStore {
     }
 }
 
-export const recentProjectsStore = new RecentProjectsStore()
+const KEY = Symbol.for('unigen.renderer.recentProjectsStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const recentProjectsStore: RecentProjectsStore = ((globalThis as any)[KEY] ??= new RecentProjectsStore());

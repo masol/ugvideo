@@ -12,10 +12,10 @@ export abstract class TableBase {
         this.name = name;
     }
 
-    async close(): Promise<void> {
+    close(): void {
         if (this.table) {
             try {
-                await this.table.close();
+                this.table.close();
             } catch (e) {
                 Logger.warn(`[LanceDB] 表 [${this.name}] 关闭异常:`, e);
             }

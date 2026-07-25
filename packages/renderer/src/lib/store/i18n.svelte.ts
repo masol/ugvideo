@@ -129,4 +129,6 @@ class I18nStore {
 }
 
 /* ---------- 导出单例 ---------- */
-export const i18nStore = new I18nStore();
+const KEY = Symbol.for('unigen.renderer.i18nStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const i18nStore: I18nStore = ((globalThis as any)[KEY] ??= new I18nStore());

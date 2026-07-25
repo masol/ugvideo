@@ -33,4 +33,5 @@ function createRightPanelStore() {
     };
 }
 
-export const rightPanelStore = createRightPanelStore();
+const KEY = Symbol.for('unigen.renderer.rightPanelStore');
+export const rightPanelStore = ((globalThis as any)[KEY] ??= createRightPanelStore());

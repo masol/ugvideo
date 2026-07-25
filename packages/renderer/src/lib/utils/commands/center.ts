@@ -1,7 +1,7 @@
 // command/center.ts
 
 import { builtins } from "./buildin";
-import type { CommandHandler, CommandDescriptor } from "./type";
+import type { CommandDescriptor, CommandHandler } from "./type";
 
 interface CommandFilter {
     keyword?: string;
@@ -214,4 +214,6 @@ class CommandCenter {
     }
 }
 
-export const commandCenter = new CommandCenter();
+const KEY = Symbol.for('unigen.renderer.commandCenter');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const commandCenter: CommandCenter = ((globalThis as any)[KEY] ??= new CommandCenter());

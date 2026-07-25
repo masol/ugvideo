@@ -4,18 +4,18 @@
 // 纯工具类，不持有任何响应式状态，专为 pluginStore 服务
 // ─────────────────────────────────────────────────────────────
 
+import { isPlatformService } from '$lib/types/plugin/platform'
 import { type PluginModule } from '$lib/types/plugin/plugin'
 import {
-    createContainer,
     asValue,
     type AwilixContainer,
+    createContainer,
     InjectionMode,
 } from 'awilix'
 import log from 'electron-log/renderer'
+import { assertPluginModule } from './guard'
 import { moduleLoader } from './loader'
 import { PLATFORM_SERVICES } from './shared/service'
-import { assertPluginModule } from './guard'
-import { isPlatformService } from '$lib/types/plugin/platform'
 
 // ══════════════════════════ 公开类型 ══════════════════════════
 
@@ -293,4 +293,6 @@ class PluginRuntimeManager {
 
 // ══════════════════════════ 单例导出 ══════════════════════════
 
-export const pluginRuntime = new PluginRuntimeManager()
+const KEY = Symbol.for('unigen.renderer.pluginRuntime');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const pluginRuntime: PluginRuntimeManager = ((globalThis as any)[KEY] ??= new PluginRuntimeManager());

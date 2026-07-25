@@ -78,19 +78,18 @@ class ConfigService {
     }
 }
 
-let cs: ConfigService;
-
+const KEY = Symbol.for('unigen.singleton.configService');
 /**
  * 获取 ConfigService 单例实例
  */
 export const configService = (): ConfigService => {
-    if (!cs) {
-        cs = new ConfigService(
-            new Store<AppConfig>({
-                schema: configSchema,
-                name: 'config',
-            })
-        );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const g = globalThis as any;
+    if (!g[KEY]) {
+        g[KEY] = new ConfigService(new Store<AppConfig>({
+            schema: configSchema,
+            name: 'config',
+        }));
     }
-    return cs;
+    return g[KEY] as ConfigService;
 };

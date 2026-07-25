@@ -242,4 +242,6 @@ class MessageStore {
     }
 }
 
-export const messageStore = new MessageStore();
+const KEY = Symbol.for('unigen.renderer.messageStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const messageStore: MessageStore = ((globalThis as any)[KEY] ??= new MessageStore());

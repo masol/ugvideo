@@ -825,4 +825,6 @@ export function analyzeMapping(
     };
 }
 
-export const flowStore = new FlowStore();
+const KEY = Symbol.for('unigen.renderer.flowStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const flowStore: FlowStore = ((globalThis as any)[KEY] ??= new FlowStore());

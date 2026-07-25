@@ -112,5 +112,6 @@ class ModuleLoader {
 }
 
 // ══════════════════════════ 单例导出 ══════════════════════════
-
-export const moduleLoader = new ModuleLoader()
+const KEY = Symbol.for('unigen.renderer.moduleLoader');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const moduleLoader: ModuleLoader = ((globalThis as any)[KEY] ??= new ModuleLoader());

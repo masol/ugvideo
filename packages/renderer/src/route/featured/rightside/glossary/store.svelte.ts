@@ -201,4 +201,6 @@ class BlueprintStore {
     }
 }
 
-export const blueprintStore = new BlueprintStore()
+const KEY = Symbol.for('unigen.renderer.blueprintStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const blueprintStore: BlueprintStore = ((globalThis as any)[KEY] ??= new BlueprintStore());

@@ -1,6 +1,4 @@
 // evtbus.ts
-// mitt + TypeScript 全局事件总线封装模板
-// 安装依赖：npm install mitt
 import type { AppConfig, RecentProject, WindowEventPayload } from '@app/main/types';
 import mitt, { type Emitter } from "mitt";
 
@@ -32,86 +30,47 @@ export type Events = {
 export type EventNameType = keyof Events;
 
 /**
- * 2. 创建 mitt 实例
+ * 2. 内部包装类：封装底层 mitt 的操作
  */
-const _emitter: Emitter<Events> = mitt<Events>();
+class EventBus {
+    private _emitter: Emitter<Events> = mitt<Events>();
 
-/**
- * 3. 封装为全局事件总线对象 evtbus
- *    在任意模块中导入使用：import evtbus from "./evtbus"
- */
-const evtbus = {
-    /**
-     * 监听事件
-     */
-    on<K extends keyof Events>(
-        event: K,
-        handler: (payload: Events[K]) => void
-    ) {
-        return _emitter.on(event, handler);
-    },
+    on<K extends keyof Events>(event: K, handler: (payload: Events[K]) => void) {
+        this._emitter.on(event, handler);
+    }
 
-    /**
-     * 一次性监听（触发一次后自动移除）
-     */
-    once<K extends keyof Events>(
-        event: K,
-        handler: (payload: Events[K]) => void
-    ) {
+    once<K extends keyof Events>(event: K, handler: (payload: Events[K]) => void) {
         let called = false;
         const wrapped: typeof handler = (payload) => {
             if (called) return;
             called = true;
             handler(payload);
-            _emitter.off(event, wrapped);
+            this._emitter.off(event, wrapped);
         };
-        return _emitter.on(event, wrapped);
-    },
+        this._emitter.on(event, wrapped);
+    }
 
-    /**
-     * 移除监听
-     */
-    off<K extends keyof Events>(
-        event: K,
-        handler: (payload: Events[K]) => void
-    ) {
-        return _emitter.off(event, handler);
-    },
+    off<K extends keyof Events>(event: K, handler: (payload: Events[K]) => void) {
+        this._emitter.off(event, handler);
+    }
 
-    /**
-     * 移除某事件的所有监听（可选）
-     */
     offAll<K extends keyof Events>(event: K) {
-        _emitter.off(event);
-    },
+        this._emitter.off(event);
+    }
 
-    /**
-     * 触发事件
-     */
-    emit<K extends keyof Events>(
-        event: K,
-        payload: Events[K]
-    ) {
-        return _emitter.emit(event, payload);
-    },
-};
+    emit<K extends keyof Events>(event: K, payload: Events[K]) {
+        this._emitter.emit(event, payload);
+    }
+}
 
 /**
- * 4. 导出全局事件总线对象
+ * 3. 基于 Symbol.for 的全局单例挂载
  */
+const KEY = Symbol.for('unigen.renderer.evtbus');
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const evtbus: EventBus = ((globalThis as any)[KEY] ??= new EventBus());
+
+export type Evtbus = EventBus;
+
 export default evtbus;
-
-export type Evtbus = typeof evtbus;
-
-/**
- * 5. 使用示例（可直接在项目中使用）
- */
-
-/*
-// 在任意模块中导入
-import evtbus from "./evtbus";
-
-// 监听 user:login
-evtbus.on("user:login", (user) => {
-  // user 的类型自动推断为 { id: number; name: string; avatar?: string }
-  console.log("用户登录:", user.name, user.id);*/

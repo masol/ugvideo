@@ -579,4 +579,7 @@ class ConfigStore {
     }
 }
 
-export const configStore = new ConfigStore()
+
+const KEY = Symbol.for('unigen.renderer.configStore');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const configStore: ConfigStore = ((globalThis as any)[KEY] ??= new ConfigStore());

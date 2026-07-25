@@ -2,7 +2,10 @@ import { configService } from '$libs/store/index.js';
 import type { Provider } from '$types/index.js';
 import { ProviderLimiter } from './provider-pool.js';
 
-const limiters = new Map<string, ProviderLimiter>();
+const KEY = Symbol.for('unigen.singleton.providerLimiters');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const limiters: Map<string, ProviderLimiter> = (globalThis as any)[KEY] ??= new Map<string, ProviderLimiter>();
+
 
 const DEFAULT_MAX_CONN = 10;
 

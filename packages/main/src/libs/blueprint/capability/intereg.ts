@@ -89,5 +89,6 @@ class InterReg {
     }
 }
 
-
-export const intereg = new InterReg();
+const KEY = Symbol.for('unigen.singleton.intereg');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const intereg: InterReg = ((globalThis as any)[KEY] ??= new InterReg());
