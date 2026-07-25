@@ -22,8 +22,6 @@
 **🏗️ 系统架构**
 
 - [[🔮 棱镜推理 Prism|prism]]
-- [[🧵 过渡规划器 Loom|loom]]
-- [[⚙️ 符号规划器|planner]]
 - [[🧮 逻辑向 AI|Logic-Oriented-AI]]
 - [[📏 自改进的边界|self-improvement-boundary]]
 
@@ -55,8 +53,6 @@
 **🏗️ Architecture**
 
 - [[🔮 Prism Reasoning|prism.en]]
-- 🧵 Loom (Transitional Planner) — *not yet translated, see [[中文|loom]]*
-- [[⚙️ Symbolic Planner|planner.en]]
 - [[🧮 Logic-Oriented AI|Logic-Oriented-AI.en]]
 
 **📈 Project**
