@@ -18,7 +18,10 @@ export function throwCancel(message: string): never {
     })
 }
 
-export function throwNotfound(message: string): never {
+export function throwNotfound(message: string, blogger = false): never {
+    if (blogger) {
+        Logger.error(`[NOTFOUND:] ${message}`);
+    }
     throw new ORPCError(COMMON_ORPC_ERROR_DEFS.NOT_FOUND.message, {
         status: COMMON_ORPC_ERROR_DEFS.NOT_FOUND.status,
         message
