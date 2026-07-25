@@ -1,22 +1,19 @@
-import type { ArrayItem } from "$types/blueprint/blackboard/array.js";
+import type { IdentifiedItem } from "$types/blueprint/blackboard/array.js";
 import { isPlainObject, isString } from "radashi";
-import * as validator from 'validator';
 
 /**
- * 标注数据假定,如果不指定任意的schema。默认的数据布局如下：
- * 1. 如果是数组，则使用下方guard判定。兼容flatten。
- * 标准的flattern
- * @param value 
- * @returns 
+ * 判断是否为"带 ID 的数组项"(推荐数组元素形态)。
+ * 约束：普通对象 + 含 string 类型的 (推荐UUID，但不验证) id 字段。
+ * 内部逻辑不应假定数据一定是这种形态；仅在明确使用 id 语义(如 upsertById)时才依赖它。
  */
-
-export function isArrayItem(value: unknown): value is ArrayItem {
-    if (isPlainObject(value) && 'id' in value && isString(value.id) && validator.isUUID(value.id)) {
+export function isIdentifiedItem(value: unknown): value is IdentifiedItem {
+    if (isPlainObject(value) && 'id' in value && isString(value.id) && value.id) {
         return true;
     }
     return false;
 }
 
-export function isCapaArray(value: unknown): value is ArrayItem[] {
-    return Array.isArray(value) && value.every(isArrayItem);
+/** 判断是否为"带 ID 的数组"(每一项都是 IdentifiedItem)。 */
+export function isIdentifiedArray(value: unknown): value is IdentifiedItem[] {
+    return Array.isArray(value) && value.every(isIdentifiedItem);
 }

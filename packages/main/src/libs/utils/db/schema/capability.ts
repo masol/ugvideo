@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text } from 'drizzle-orm/sqlite-core';
-import { ChunkProcessingMode, type FewShotExample } from './capatype.js';
+import { type FewShotExample } from './capatype.js';
 
 /**
  * Capabilities 表 (SQLite)
@@ -30,8 +30,6 @@ export const capabilities = sqliteTable('capabilities', {
 
     // 根据name,保存不同的内容，如果有值，通常意味着可跳过组装提示词。
     code: text('code').notNull().default(""),
-
-    chunk: text('chunk').$type<ChunkProcessingMode>(),
 
     // 仅存储 fieldKey 字符串数组
     // 每一项都是 metag 表中的 fieldKey (若存在，则可查到完整的 Schema/Reducer/Storage 定义)

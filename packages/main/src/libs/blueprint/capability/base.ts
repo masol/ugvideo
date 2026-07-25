@@ -18,7 +18,6 @@ export function fillCapa(capa: NewCapability): Capability {
         code: "",
         input: [],
         output: [],
-        chunk: 'bulk',
         process: '',
         negative: '',
         criteria: '',

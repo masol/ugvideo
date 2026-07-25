@@ -1,5 +1,5 @@
 // src/workflows/script-to-video/nodes/normalize-entities.ts
-import { getSmartModel, SortStrategy } from "$libs/model/balancer/get-smart-model.js";
+import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import { safefmt } from "$libs/model/llm/outline.js";
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
@@ -33,10 +33,10 @@ export async function normalizeEntities(ctx: IRunnerContext): Promise<void> {
     ctx.notify("阶段一·实体归一", "正在合并同名实体 / 维护状态...");
 
     // ---------- 3.1 结构化抽取 ----------
-    const extractModel = getSmartModel({
-        requiredAbilities: [ModelTags.Outline],
-        sort: SortStrategy.VersionAsc,
-    }, ctx);
+    // const extractModel = getSmartModel({
+    //     requiredAbilities: [ModelTags.Outline],
+    //     sort: SortStrategy.VersionAsc,
+    // }, ctx);
 
     const SceneEntitiesSchema = z.object({
         entities: z.array(z.object({

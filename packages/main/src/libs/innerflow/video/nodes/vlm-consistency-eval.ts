@@ -6,7 +6,6 @@ import { ModelTags } from "$types/shared/model.js";
 import { generateText } from "ai";
 import { VLM_EVALUATOR_PROMPT } from "../prompts/vlm-evaluator.js";
 
-const MAX_ITER = 4;
 
 /**
  * 节点 10：VLM 一致性评估闭环

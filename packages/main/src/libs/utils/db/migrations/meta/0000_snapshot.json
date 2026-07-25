@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a6f411b2-b44a-4a31-87cc-f697199d7d4e",
+  "id": "ca9fe526-bd53-4669-b4a9-571e343f2b8a",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "kv_store": {
@@ -77,13 +77,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": "''"
-        },
-        "chunk": {
-          "name": "chunk",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "input": {
           "name": "input",
@@ -183,20 +176,6 @@
         },
         "schema": {
           "name": "schema",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "reducer": {
-          "name": "reducer",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "storage": {
-          "name": "storage",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

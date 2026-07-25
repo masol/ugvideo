@@ -5,80 +5,89 @@ import type { IRunnerContext } from "$types/blueprint/context.js";
 import type { PrjTimeStore } from "$types/prjstore.js";
 import dayjs from "dayjs";
 import { Capability } from "../capability/is.js";
-import { getAllIOData } from "./input.js";
+import { isExpiredByTime } from "./expiry.js";
 
-
-export type IOInfo<IType = unknown, OType = unknown> = {
-    expired: boolean; // 指示是否已过时，如果目标key不存在，或者目标key的更新时间小于input的时间，则设置为true.否则false.这个值指示是否需要重新计算output.
+export type IOInfo<IType = unknown, OType = unknown, RType = unknown> = {
+    /** 输出是否过期(需要重算)。资源被视为输入的一部分参与判断。 */
+    expired: boolean;
     inputs: Array<IType | null>;
     outputs: Array<OType | null>;
-    inputsWithTime: Array<PrjTimeStore<IType> | null> | null;
-    outputsWithTime: Array<PrjTimeStore<OType> | null> | null;
+    resources: Array<RType | null>;
+    inputsWithTime: Array<PrjTimeStore<IType> | null>;
+    outputsWithTime: Array<PrjTimeStore<OType> | null>;
+    resourcesWithTime: Array<PrjTimeStore<RType> | null>;
+};
+
+export type GetIOArgs = {
+    inputs?: string | string[];
+    outputs?: string | string[];
+    /** 依赖资源：参与过期判断(等价于额外输入)，并原样读取返回。 */
+    res?: string | string[];
+};
+
+function toKeys(k?: string | string[]): string[] {
+    if (k == null) return [];
+    return Array.isArray(k) ? k : [k];
 }
 
 /**
- * 获取全部IO对象，并判断是否失效。(资源，输入包括capa自身，更新时间都需要早于输出，否则expired.)
- * 但是未使用schema验证数据内容，策略是写入时验证，而不是读取时验证。
- * @param capa 能力对象
- * @param reses 依赖资源。 
- * @param inputKeys 输入metag数组，如未指定，使用capa.input.
- * @param outputKeys 输出metag数组，如未指定，使用capa.output.
- * @returns IOInfo
+ * key-based 主入口：不依赖 capa，按 key 读取 IO + 资源并给出过期判断。
+ * inputs/outputs/res 均可为单值或数组；返回值统一归一化为数组
+ * (最佳实践：数组返回可预测，无联合/条件类型负担)。
+ *
+ * 通常一次调用即可拿到值 + expired。
+ * 仅"数组内逐项失效"等特殊场景才需调用方自行再比对(基座见 isExpiredByTime)。
  */
-export function getIOInfo<ITYpe = any, OType = any>(ctx: IRunnerContext, capa: Capability,
-    reses?: string[], inputKeys?: string[],
-    outputKeys?: string[]): IOInfo<ITYpe, OType> {
-
-    inputKeys = inputKeys ?? capa.input;
-    outputKeys = outputKeys ?? capa.output;
-
+export function getIOByKeys<IType = any, OType = any, RType = any>(
+    ctx: IRunnerContext,
+    args: GetIOArgs
+): IOInfo<IType, OType, RType> {
     const prjdb: PrjDB = PrjDB.ensure(ctx.prj);
-    const inputMetag = prjdb.getMetag(inputKeys);
-    const outputMetag = prjdb.getMetag(outputKeys);
-    const inputs = getAllIOData<ITYpe>(ctx, inputMetag);
-    const outputs = getAllIOData<OType>(ctx, outputMetag);
 
-    let bExpired = true;
-    if (inputs && outputs) {
-        const latestInput = getPrjTimeFromArray(inputs, true);
-        const earliestOutput = getPrjTimeFromArray(outputs, false);
-        if (earliestOutput) {
-            if (latestInput) {
-                bExpired = earliestOutput.isBefore(latestInput);
-            }
+    const inKeys = toKeys(args.inputs);
+    const outKeys = toKeys(args.outputs);
+    const resKeys = toKeys(args.res);
 
-            // output有效。开始检查capa是否在output之后更新了。
-            if (!bExpired && capa.updatedAt) {
-                bExpired = dayjs(capa.updatedAt).isAfter(earliestOutput);
-            }
+    const inputsWithTime = inKeys.map((k) => prjdb.getWithTime<IType>(k));
+    const outputsWithTime = outKeys.map((k) => prjdb.getWithTime<OType>(k));
+    const resourcesWithTime = resKeys.map((k) => prjdb.getWithTime<RType>(k));
 
-            // output有效，开始检查依赖资源是否在output之后更新了。
-            if (!bExpired && reses && reses.length > 0) {
-                const timesMap = prjdb.geUpdTime(reses);
-                if (timesMap) {
-                    let currentResTime = dayjs(0);
-                    const times = Object.values(timesMap);
-                    for (const t of times) {
-                        if (t) {
-                            const dayt = dayjs(t);
-                            if (dayt.isAfter(currentResTime)) {
-                                currentResTime = dayt;
-                            }
-                        }
-                    }
-                    // currentResTime保存了最新时间的resource(或1970.1.1)，如果比最早的output晚，说明有资源在output之后更新。标记output已过期。
-                    bExpired = currentResTime.isAfter(earliestOutput);
-                }
-            }
+    const expired = isExpiredByTime(inputsWithTime, outputsWithTime, resourcesWithTime);
+
+    return {
+        expired,
+        inputs: stripPrjTimeArray<IType>(inputsWithTime),
+        outputs: stripPrjTimeArray<OType>(outputsWithTime),
+        resources: stripPrjTimeArray<RType>(resourcesWithTime),
+        inputsWithTime,
+        outputsWithTime,
+        resourcesWithTime,
+    };
+}
+
+/**
+ * capa 版本：以 capa.input/output 为默认 IO，委托给 getIOByKeys。
+ * 额外语义：capa 自身若在输出之后更新(改了代码/目标)，同样视为过期。
+ */
+export function getIOInfo<IType = any, OType = any, RType = any>(
+    ctx: IRunnerContext,
+    capa: Capability,
+    reses?: string[],
+    inputKeys?: string[],
+    outputKeys?: string[]
+): IOInfo<IType, OType, RType> {
+    const info = getIOByKeys<IType, OType, RType>(ctx, {
+        inputs: inputKeys ?? capa.input,
+        outputs: outputKeys ?? capa.output,
+        res: reses,
+    });
+
+    if (!info.expired && capa.updatedAt && info.outputsWithTime.length > 0) {
+        const earliestOutput = getPrjTimeFromArray(info.outputsWithTime, false);
+        if (earliestOutput && dayjs(capa.updatedAt).isAfter(earliestOutput)) {
+            return { ...info, expired: true };
         }
     }
 
-
-    return {
-        expired: bExpired,
-        inputs: stripPrjTimeArray<ITYpe>(inputs),
-        outputs: stripPrjTimeArray<OType>(outputs),
-        inputsWithTime: inputs,   // 原始值未被修改，直接返回
-        outputsWithTime: outputs, // 原始值未被修改，直接返回
-    }
+    return info;
 }

@@ -10,7 +10,6 @@ CREATE TABLE `capabilities` (
 	`role` text DEFAULT '' NOT NULL,
 	`goal` text DEFAULT '' NOT NULL,
 	`code` text DEFAULT '' NOT NULL,
-	`chunk` text,
 	`input` text DEFAULT '[]' NOT NULL,
 	`output` text DEFAULT '[]' NOT NULL,
 	`process` text DEFAULT '' NOT NULL,
@@ -26,8 +25,6 @@ CREATE TABLE `metag` (
 	`intent` text,
 	`dims` text DEFAULT '[]' NOT NULL,
 	`schema` text,
-	`reducer` text,
-	`storage` text,
 	`created_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL,
 	`updated_at` text DEFAULT CURRENT_TIMESTAMP NOT NULL
 );

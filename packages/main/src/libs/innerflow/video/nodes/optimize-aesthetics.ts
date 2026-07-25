@@ -2,7 +2,6 @@
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
-import { ModelTags } from "$types/shared/model.js";
 import { generateText } from "ai";
 import { AESTHETIC_OPTIMIZER_PROMPT } from "../prompts/aesthetic-optimizer.js";
 
@@ -18,10 +17,7 @@ export async function optimizeAesthetics(ctx: IRunnerContext): Promise<void> {
 
     ctx.notify("阶段二·美学优化", "正在润色构图与光影...");
 
-    const model = getSmartModel({
-        requiredAbilities: [ModelTags.Writing, ModelTags.Reasoning],
-        minInctx: 32768,
-    }, ctx);
+    const model = getSmartModel(undefined, ctx);
 
     const { text } = await generateText({
         model,
