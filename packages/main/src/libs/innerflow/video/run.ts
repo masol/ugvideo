@@ -2,8 +2,8 @@
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { buildStages } from './nodes/build-stage/index.js';
 import { parseScript } from "./nodes/parse-script/index.js";
-
 
 /**
  * 剧本 -> 视频 全自动工作流
@@ -27,6 +27,7 @@ export async function run(ctx: IRunnerContext): Promise<void> {
 
     // ===== 阶段一：剧本解析 + 资产归一 =====
     await parseScript(ctx);
+    await buildStages(ctx);
     // await extractEntities(ctx);
     // await normalizeEntities(ctx);
 

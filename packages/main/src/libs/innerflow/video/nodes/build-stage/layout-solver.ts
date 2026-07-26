@@ -1,32 +1,27 @@
 // nodes/build-stage/layout-solver.ts
 import { RelationGraph } from "./relation-graph.js";
-import {
-    sizeOf,
-    type EntityTransform,
-    type SpatialRelation,
-    type StageEntity,
-    type StageWorld,
-} from "./types.js";
+import { sizeOf, type EntityTransform, type SpatialRelation, type StageEntity, type StageWorld } from "./types.js";
 
 interface Pt { x: number; y: number; z: number; }
 
-const ITER = 160;
-const DAMP = 0.25;
+// 梦境级物理：少量迭代满足拓扑即可，不做精细约束求解
+const ITER = 48;
+const DAMP = 0.3;
 const MARGIN = 0.3;
-const NEAR_DIST = 0.9;
-const NEXT_DIST = 0.55;
+const NEAR = 0.9;
+const NEXT = 0.55;
+const HAND_HEIGHT = 1.0; // 持有物默认手部高度
 
-/** x-z 平面半径（取该轴半宽） */
-function radiusX(e: StageEntity): number { return sizeOf(e.sizeClass)[0] / 2; }
-function radiusZ(e: StageEntity): number { return sizeOf(e.sizeClass)[2] / 2; }
-function planarRadius(e: StageEntity): number {
+function rX(e: StageEntity): number { return sizeOf(e.sizeClass)[0] / 2; }
+function rZ(e: StageEntity): number { return sizeOf(e.sizeClass)[2] / 2; }
+function planarR(e: StageEntity): number {
     const s = sizeOf(e.sizeClass);
     return Math.max(s[0], s[2]) / 2;
 }
 
 /**
- * 定性空间关系 → 确定性 3D 坐标。
- * 约束松弛：先由 DAG 定 y（堆叠高度），再在 x-z 平面迭代满足方向/距离约束，最后附着持有物。
+ * 拓扑关系 → 粗略 3D 坐标。
+ * 附着物（on_top_of / holds 的从属方）跳过平面松弛，由后处理定位。
  */
 export function solveLayout(
     world: StageWorld,
@@ -38,102 +33,86 @@ export function solveLayout(
     const graph = new RelationGraph(entities, relations);
     const pos = new Map<string, Pt>();
 
-    // ---- 初始化 ----
     entities.forEach((e, i) => {
         const s = seed?.get(e.id);
-        if (s) {
-            pos.set(e.id, { x: s[0], y: s[1], z: s[2] });
-            return;
-        }
-        const angle = (i / Math.max(1, entities.length)) * Math.PI * 2;
-        pos.set(e.id, {
-            x: Math.cos(angle) * 1.5,
-            y: sizeOf(e.sizeClass)[1] / 2,
-            z: Math.sin(angle) * 1.5,
-        });
+        if (s) { pos.set(e.id, { x: s[0], y: s[1], z: s[2] }); return; }
+        const a = (i / Math.max(1, entities.length)) * Math.PI * 2;
+        pos.set(e.id, { x: Math.cos(a) * 1.5, y: sizeOf(e.sizeClass)[1] / 2, z: Math.sin(a) * 1.5 });
     });
 
-    const attached = new Set<string>(); // 被 on_top_of/holds 锁定的实体，跳过 x-z 松弛
+    // 附着方：被堆叠或被持有的实体，平面位置由后处理决定
+    const attached = new Set<string>();
     for (const e of entities) {
-        if (graph.supporterOf(e.id)) attached.add(e.id);
+        if (graph.stackBaseOf(e.id) || graph.holderOf(e.id)) attached.add(e.id);
     }
 
-    // ---- x-z 松弛 ----
     const halfW = world.floor_width / 2;
     const halfD = world.floor_depth / 2;
 
     for (let it = 0; it < ITER; it++) {
         for (const r of relations) {
-            const a = pos.get(r.subject);
-            const b = pos.get(r.object);
-            const ea = byId.get(r.subject);
-            const eb = byId.get(r.object);
-            if (!a || !b || !ea || !eb) continue;
-            if (attached.has(r.subject)) continue;
-
-            const gapX = radiusX(ea) + radiusX(eb) + MARGIN;
-            const gapZ = radiusZ(ea) + radiusZ(eb) + MARGIN;
-
+            const a = pos.get(r.subject), b = pos.get(r.object);
+            const ea = byId.get(r.subject), eb = byId.get(r.object);
+            if (!a || !b || !ea || !eb || attached.has(r.subject)) continue;
+            const gapX = rX(ea) + rX(eb) + MARGIN;
+            const gapZ = rZ(ea) + rZ(eb) + MARGIN;
             switch (r.relation) {
-                case "left_of": enforceAxis(a, b, "x", b.x - a.x, gapX); break;
-                case "right_of": enforceAxis(b, a, "x", a.x - b.x, gapX); break;
-                case "in_front_of": enforceAxis(b, a, "z", a.z - b.z, gapZ); break;
-                case "behind": enforceAxis(a, b, "z", b.z - a.z, gapZ); break;
-                case "near": pull(a, b, NEAR_DIST); break;
-                case "next_to": pull(a, b, NEXT_DIST); break;
-                case "at": pull(a, b, planarRadius(ea) + planarRadius(eb)); break;
+                case "left_of": enforce(a, b, "x", b.x - a.x, gapX); break;
+                case "right_of": enforce(b, a, "x", a.x - b.x, gapX); break;
+                case "in_front_of": enforce(b, a, "z", a.z - b.z, gapZ); break;
+                case "behind": enforce(a, b, "z", b.z - a.z, gapZ); break;
+                case "near": pull(a, b, NEAR); break;
+                case "next_to": pull(a, b, NEXT); break;
+                case "at": pull(a, b, planarR(ea) + planarR(eb)); break;
                 default: break; // on_top_of / holds 后处理
             }
         }
-
-        // 防重叠
         for (let i = 0; i < entities.length; i++) {
             for (let j = i + 1; j < entities.length; j++) {
                 const A = entities[i], B = entities[j];
                 if (attached.has(A.id) || attached.has(B.id)) continue;
-                separate(pos.get(A.id)!, pos.get(B.id)!, planarRadius(A) + planarRadius(B));
+                separate(pos.get(A.id)!, pos.get(B.id)!, planarR(A) + planarR(B));
             }
         }
-
-        // 夹到世界边界
         for (const e of entities) {
             const p = pos.get(e.id)!;
-            p.x = clamp(p.x, -halfW + radiusX(e), halfW - radiusX(e));
-            p.z = clamp(p.z, -halfD + radiusZ(e), halfD - radiusZ(e));
+            p.x = clamp(p.x, -halfW + rX(e), halfW - rX(e));
+            p.z = clamp(p.z, -halfD + rZ(e), halfD - rZ(e));
         }
     }
 
-    // ---- y：堆叠链自底向上 ----
-    for (const id of graph.supportOrder()) {
-        const e = byId.get(id);
-        if (!e) continue;
+    // on_top_of：自底向上定高
+    for (const id of graph.stackOrder()) {
+        const e = byId.get(id); if (!e) continue;
+        const base = graph.stackBaseOf(id);
         const p = pos.get(id)!;
-        const supporter = graph.supporterOf(id);
-        if (supporter && pos.get(supporter)) {
-            const sp = pos.get(supporter)!;
-            const se = byId.get(supporter)!;
-            p.x = sp.x;
-            p.z = sp.z + 0.3; // 持有物略靠前
-            p.y = sp.y + sizeOf(se.sizeClass)[1] / 2 + sizeOf(e.sizeClass)[1] / 2;
+        if (base && pos.get(base)) {
+            const bp = pos.get(base)!, be = byId.get(base)!;
+            p.x = bp.x; p.z = bp.z;
+            p.y = bp.y + sizeOf(be.sizeClass)[1] / 2 + sizeOf(e.sizeClass)[1] / 2;
         } else {
-            p.y = sizeOf(e.sizeClass)[1] / 2; // 落地
+            p.y = sizeOf(e.sizeClass)[1] / 2;
         }
+    }
+
+    // holds：附着到持有者手部（不堆到头顶）
+    for (const e of entities) {
+        const holder = graph.holderOf(e.id);
+        if (!holder || !pos.get(holder)) continue;
+        const hp = pos.get(holder)!;
+        const p = pos.get(e.id)!;
+        p.x = hp.x + 0.2;      // 略偏一侧（左右手细节由 beat 记录，坐标粗放即可）
+        p.z = hp.z + 0.25;     // 略靠前
+        p.y = HAND_HEIGHT;
     }
 
     return entities.map((e) => {
         const p = pos.get(e.id)!;
-        return {
-            id: e.id,
-            position: [round(p.x), round(p.y), round(p.z)],
-            facing: 0, // v1 默认面向 +z；后续由 beat 的 new_facing 精修
-            size: sizeOf(e.sizeClass),
-        };
+        return { id: e.id, position: [round(p.x), round(p.y), round(p.z)], facing: 0, size: sizeOf(e.sizeClass) };
     });
 }
 
-/**
- * 从基准布局出发，叠加某节拍的关系，重新解算该节拍快照。
- */
+/** 从基准布局叠加某节拍关系，重解算该拍快照（供未来分镜阶段） */
 export function resolveBeatLayout(
     world: StageWorld,
     entities: StageEntity[],
@@ -141,43 +120,29 @@ export function resolveBeatLayout(
     beatRelations: SpatialRelation[],
     base: EntityTransform[],
 ): EntityTransform[] {
-    const seed = new Map<string, [number, number, number]>(
-        base.map((t) => [t.id, t.position]),
-    );
+    const seed = new Map<string, [number, number, number]>(base.map((t) => [t.id, t.position]));
     return solveLayout(world, entities, [...baseRelations, ...beatRelations], seed);
 }
 
 // ---- helpers ----
-
-/** 强制 hi 在 lo 之上（同轴），要求 cur = (hi[axis]-lo[axis]) >= gap */
-function enforceAxis(lo: Pt, hi: Pt, axis: "x" | "z", cur: number, gap: number): void {
+function enforce(lo: Pt, hi: Pt, axis: "x" | "z", cur: number, gap: number): void {
     if (cur >= gap) return;
-    const corr = (gap - cur) * DAMP;
-    lo[axis] -= corr / 2;
-    hi[axis] += corr / 2;
+    const c = (gap - cur) * DAMP;
+    lo[axis] -= c / 2; hi[axis] += c / 2;
 }
-
 function pull(a: Pt, b: Pt, target: number): void {
     const dx = b.x - a.x, dz = b.z - a.z;
     const d = Math.hypot(dx, dz) || 1e-6;
     if (d <= target) return;
-    const corr = (d - target) * DAMP;
-    const ux = dx / d, uz = dz / d;
-    a.x += ux * corr / 2; a.z += uz * corr / 2;
-    b.x -= ux * corr / 2; b.z -= uz * corr / 2;
+    const c = (d - target) * DAMP, ux = dx / d, uz = dz / d;
+    a.x += ux * c / 2; a.z += uz * c / 2; b.x -= ux * c / 2; b.z -= uz * c / 2;
 }
-
-function separate(a: Pt, b: Pt, minDist: number): void {
+function separate(a: Pt, b: Pt, min: number): void {
     const dx = a.x - b.x, dz = a.z - b.z;
     const d = Math.hypot(dx, dz) || 1e-6;
-    if (d >= minDist) return;
-    const corr = (minDist - d) * 0.5;
-    const ux = dx / d, uz = dz / d;
-    a.x += ux * corr; a.z += uz * corr;
-    b.x -= ux * corr; b.z -= uz * corr;
+    if (d >= min) return;
+    const c = (min - d) * 0.5, ux = dx / d, uz = dz / d;
+    a.x += ux * c; a.z += uz * c; b.x -= ux * c; b.z -= uz * c;
 }
-
-function clamp(v: number, lo: number, hi: number): number {
-    return Math.max(lo, Math.min(hi, v));
-}
+function clamp(v: number, lo: number, hi: number): number { return Math.max(lo, Math.min(hi, v)); }
 function round(v: number): number { return Math.round(v * 100) / 100; }
