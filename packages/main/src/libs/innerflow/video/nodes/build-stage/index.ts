@@ -1,119 +1,126 @@
 // nodes/build-stage/index.ts
-import { getIOByKeys } from "$libs/blueprint/glossary/ioinfo.js";
-import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
+import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import pMap from "p-map";
-import { ParseStorage } from "../parse-script/storage.js";
-import { alignSceneEntities, refLabel } from "./entity-aligner.js";
 import { buildSceneStage } from "./scene-stage-builder.js";
-import { loadScriptLines, sliceScene } from "./script-lines.js";
-import { StageStorage } from "./storage.js";
+import { Storage } from "./storage.js";
+import type { Beat, SceneStage } from "./types.js";
 
 /**
- * 工作流第二步：为每个已解析场景构建导演台（世界模型）。
- *
- * 依赖：parse-script 的 parse:idx:scenes / parse:scene:*
- *      （原始 script 仅由 loadScriptLines 用于取回场景原文）
- *
- * 产出多表：
- *   stage:scene:*     场景静态舞台（world + 局部实体 + 粗布局）
- *   stage:beats:*     节拍时间线（动态变化）
- *   stage:emotion:*   场景情绪简报
- *   stage:registry:*  全局实体登记册（跨场景身份 + 出图记忆）
- *   state:stages_nl   下游总览
- *
- * 门控源为真正的上游产出 parse:idx:scenes，而非 script。
+ * build-stage 节点：把所有场景还原为"物理舞台 + 节拍时间线"。
+ * 每个场景两 Pass（静态舞台 NL→safefmt / 节拍 NL→safefmt），
+ * 场景间用 p-map 并发。空间信息全部自然语言，无坐标求解。
  */
-export async function buildStages(ctx: IRunnerContext): Promise<void> {
-    const prjdb = PrjDB.ensure(ctx.prj);
+export async function buildStage(ctx: IRunnerContext): Promise<void> {
+    const store = new Storage(ctx);
+    const sceneIds = store.sceneIds();
 
-    const io = getIOByKeys(ctx, {
-        inputs: "parse:idx:scenes",
-        outputs: "state:stages_nl",
-    });
-    if (!io.expired) {
-        ctx.info("[buildStages] 导演台仍新鲜，跳过");
+    if (!sceneIds.length) {
+        ctx.info("[buildStage] 无场景，跳过");
         return;
     }
 
-    const parseStore = new ParseStorage(ctx);
-    const stageStore = new StageStorage(prjdb);
-
-    const sceneIds = parseStore.listSceneIds();
-    if (sceneIds.length === 0) {
-        ctx.warn("[buildStages] 无场景数据，请先运行 parseScript");
-        return;
-    }
-
-    const lines = loadScriptLines(ctx);
-
-    // 叙事顺序
-    const ordered = sceneIds
-        .map((id) => parseStore.loadScene(id))
-        .filter((s): s is NonNullable<typeof s> => s != null)
-        .sort((a, b) => a.line_start - b.line_start);
-
-    ctx.notify("阶段一·导演台", `开始为 ${ordered.length} 个场景构建世界模型`);
-
-    // ===== Pass A/B/C：并发构建各场景（彼此独立）=====
-    await pMap(ordered, async (scene) => {
-        const sceneText = sliceScene(lines, scene.line_start, scene.line_end);
-        if (!sceneText.trim()) return;
-
-        const meta = [
-            `场景：${scene.scene_id} ${scene.title}`,
-            `地点：${scene.context.location ?? "(待定)"}`,
-            `时间：${scene.context.timeOfDay ?? "(待定)"}`,
-            `在场人物：${scene.context.charactersInvolved?.join("、") || "(待定)"}`,
-        ].join("\n");
-
-        const result = await buildSceneStage(ctx, meta, sceneText, scene.scene_id);
-        if (result) {
-            stageStore.saveStage(result.stage);
-            stageStore.saveBeats(scene.scene_id, result.beats);
-            stageStore.saveEmotion(scene.scene_id, result.emotion);
-            ctx.info(
-                `[buildStages] ${scene.scene_id} 完成：` +
-                `${result.stage.entities.length} 实体，${result.beats.length} 节拍`,
-            );
-        }
-    }, { concurrency: 3 });
-
-    // ===== Pass D：跨场景对齐（必须按叙事顺序串行，登记册增长）=====
-    ctx.notify("阶段一·实体对齐", "正在跨场景归并全局实体...");
-    for (const scene of ordered) {
-        await alignSceneEntities(ctx, stageStore, scene.scene_id);
-    }
-
-    // ===== 下游总览 =====
-    const summaryParts: string[] = [];
-    for (const id of stageStore.listStageIds()) {
-        const stage = stageStore.loadStage(id);
-        if (!stage) continue;
-        const beats = stageStore.loadBeats(id);
-        const entityLines = stage.entities
-            .map((e) => {
-                const t = stage.base_layout.find((x) => x.id === e.id);
-                const pos = t ? `(${t.position.join(", ")})` : "(未解算)";
-                return `- ${refLabel(stageStore, e)}｜${e.kind}｜位置 ${pos}`;
-            })
-            .join("\n");
-        summaryParts.push([
-            `### ${stage.world.scene_id}`,
-            `环境：${stage.world.environment}`,
-            `主光：${stage.world.key_light}`,
-            `尺度：${stage.world.floor_width}×${stage.world.floor_depth}×${stage.world.ceiling_height} m`,
-            `实体布局：`,
-            entityLines,
-            `节拍数：${beats.length}`,
-            ``,
-        ].join("\n"));
-    }
-    stageStore.saveStagesSummary(summaryParts.join("\n---\n\n"));
-
-    ctx.notify(
-        "阶段一·导演台",
-        `导演台构建完成：${stageStore.listStageIds().length} 场景，${stageStore.listGlobalIds().length} 全局实体`,
+    await pMap(
+        sceneIds,
+        async (sceneId) => {
+            await buildSceneStage(ctx, sceneId);
+        },
+        { concurrency: 3 },
     );
-    ctx.info(`[buildStages] 完成`);
+
+    ctx.info(`[buildStage] 全部场景舞台构建完成，共 ${sceneIds.length} 场`);
+
+    // 总览（纯展示拼接，无坐标）
+    await buildOverview(ctx);
+}
+
+/** 人类可读总览：环境 + 实体外观 + 开场布局 + 节拍摘要，无几何坐标 */
+async function buildOverview(ctx: IRunnerContext): Promise<void> {
+    const store = new Storage(ctx);
+    const sceneIds = store.sceneIds();
+
+    if (!checkExpiry(ctx, {
+        inputKeys: sceneIds.map(id => store.stageKey(id)),
+        outputKeys: "output:stage_overview",
+    })) {
+        ctx.info("[buildStage:overview] 总览仍新鲜，跳过");
+        return;
+    }
+
+    const sections: string[] = [];
+
+    for (const sceneId of sceneIds) {
+        const stage = store.getStage(sceneId);
+        const beats = store.getBeats(sceneId);
+        if (!stage) continue;
+
+        sections.push(renderSceneSection(sceneId, stage, beats ?? []));
+    }
+
+    const overview = sections.join("\n\n---\n\n");
+    store.saveOverview(overview);
+    ctx.info(`[buildStage:overview] 总览完成 ${overview.length}字`);
+}
+
+function renderSceneSection(
+    sceneId: string,
+    stage: SceneStage,
+    beats: Beat[],
+): string {
+    const lines: string[] = [];
+
+    lines.push(`# 场景 ${sceneId}`);
+    lines.push("");
+    lines.push(`## 环境`);
+    lines.push(stage.world.environment);
+    lines.push(`主光：${stage.world.key_light}`);
+    lines.push("");
+
+    lines.push(`## 实体`);
+    for (const e of stage.entities) {
+        lines.push(`- ${e.id}｜${e.kind}｜${e.label}`);
+        lines.push(`  - 外观：${e.appearance}`);
+        lines.push(`  - 对齐特征：${e.alignment_hint}`);
+        if (e.scene_overrides) {
+            lines.push(`  - 本场差异：${e.scene_overrides}`);
+        }
+    }
+    lines.push("");
+
+    lines.push(`## 开场布局`);
+    lines.push(stage.spatial_layout);
+    lines.push("");
+
+    if (beats.length) {
+        lines.push(`## 节拍时间线`);
+        for (const b of beats) {
+            const dur = b.duration_hint ? `｜${b.duration_hint}` : "";
+            const mood = b.mood ? `｜${b.mood}` : "";
+            lines.push(`### 节拍 ${b.index}${dur}${mood}`);
+            lines.push(b.summary);
+            if (b.staging) {
+                lines.push(`- 站位变化：${b.staging}`);
+            }
+            for (const d of b.deltas) {
+                const parts: string[] = [];
+                if (d.action) parts.push(`动作：${d.action}`);
+                if (d.dialogue) parts.push(`台词：${d.dialogue}`);
+                if (d.moves_to) parts.push(`移动：${d.moves_to}`);
+                if (d.new_facing) parts.push(`朝向：${d.new_facing}`);
+                if (d.holds?.length) {
+                    const hstr = d.holds
+                        .map(h => `${h.object_id}${h.hand ? `(${h.hand})` : ""}`)
+                        .join("、");
+                    parts.push(`持有：${hstr}`);
+                }
+                if (d.appearance_change) parts.push(`状态：${d.appearance_change}`);
+                if (d.mood) parts.push(`情绪：${d.mood}`);
+                if (parts.length) {
+                    lines.push(`- ${d.entity_id}：${parts.join("；")}`);
+                }
+            }
+        }
+    }
+
+    return lines.join("\n");
 }

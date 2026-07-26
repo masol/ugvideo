@@ -4,7 +4,7 @@ import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { ModelTags } from "$types/shared/model.js";
 import { generateText } from "ai";
-// import { EMOTION_ANALYZER_PROMPT } from "../prompts/emotion-analyzer.js";
+// import { EMOTION_ANALYZER_PROMPT } from "./build-stage/prompts/emotion-analyzer.js";
 
 /**
  * 节点 4：情绪与意图分析
@@ -30,7 +30,7 @@ export async function analyzeEmotion(ctx: IRunnerContext): Promise<void> {
 
     const { text } = await generateText({
         model,
-        instructions: "", // EMOTION_ANALYZER_PROMPT.system,
+        instructions: "",  // EMOTION_ANALYZER_PROMPT.system,
         prompt: '', // EMOTION_ANALYZER_PROMPT.user(scenes, stateLog, dialogues, register),
     });
 
