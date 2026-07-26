@@ -226,6 +226,14 @@ declare global {
 
   const z: any;
 
+  /** 检索和执行已固化的流程 */
+  const flow: {
+    // 执行命名的内部固化流程。
+    inner: (name: string) => Promise<void>;
+    // 执行内建命令--本质也是flow. body要通过args传入。
+    cmd: (name: string, args?: Record<string, unknown>) => Promise<void>;
+  }
+
   const util: IRadashi & {
     // 确保输入值转换为字符串
     toStrSafe(val: string | string[] | unknown): string;

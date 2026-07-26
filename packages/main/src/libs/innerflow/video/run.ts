@@ -2,10 +2,8 @@
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { parseScript } from "./nodes/parse-script/index.js";
 
-import { extractEntities } from "./nodes/extract-entities.js";
-import { normalizeEntities } from "./nodes/normalize-entities.js";
-import { parseScript } from "./nodes/parse-script.js";
 
 /**
  * 剧本 -> 视频 全自动工作流
@@ -20,17 +18,17 @@ export async function run(ctx: IRunnerContext): Promise<void> {
     const prjdb = PrjDB.ensure(ctx.prj);
 
     // ===== 校验入口输入 =====
-    const script = prjdb.get<string>("input:raw_script");
-    if (!script || script.trim().length < 50) {
-        throwPrecondition("[script-to-video] 缺少剧本输入 input:raw_script");
+    const script = prjdb.get<string>("script");
+    if (!script) {
+        throwPrecondition("[script-to-video] 缺少剧本输入 script");
     }
 
     ctx.notify("剧本到视频", "工作流启动");
 
     // ===== 阶段一：剧本解析 + 资产归一 =====
     await parseScript(ctx);
-    await extractEntities(ctx);
-    await normalizeEntities(ctx);
+    // await extractEntities(ctx);
+    // await normalizeEntities(ctx);
 
     // // ===== 阶段二：分镜规划 =====
     // await analyzeEmotion(ctx);

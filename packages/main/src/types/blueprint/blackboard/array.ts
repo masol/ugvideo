@@ -8,7 +8,16 @@ import { z } from 'zod';
  */
 export const IdentifiedItemSchema = z.object({
     id: z.string(),
-    item: z.any().optional(),
 }).loose();
 
 export type IdentifiedItem = z.input<typeof IdentifiedItemSchema>;
+
+
+
+export const CacheItemSchema = IdentifiedItemSchema.extend({
+    size: z.number().optional(),
+    updatedAt: z.union([z.number(), z.string()]).optional(),
+});
+
+// 派生对应的 TypeScript 类型
+export type CacheItem = z.infer<typeof CacheItemSchema>;

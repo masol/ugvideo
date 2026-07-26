@@ -1,6 +1,6 @@
 // 这里导出的类型，目的是与renderer共享类型的--只能是type导出--默认的shared子目录为与renderer共享的类型定义。
-export type { ScriptItem } from '../plugins/video/metag/script.js'
 export type { AppConfig } from './appconfig.js'
+export type { CacheItem, IdentifiedItem } from './blueprint/blackboard/array.js'
 export type { RunState } from './blueprint/state.js'
 export type { AppClient, NotifyContract } from './shared/api/index.js'
 export type { BlueprintKind } from './shared/api/list.js'

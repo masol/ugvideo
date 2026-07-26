@@ -13,6 +13,8 @@ export class RunnerContext implements IRunnerContext {
     readonly prj: IProjectContext;
     readonly prjdb: PrjDB;
     readonly seq: number;
+    readonly store: Record<string, unknown> = {};
+
     cmd: CommandInfo = { isCommand: false, body: "" };
     fnNotify: ((title: string, detail: string) => void) | null = null;
     #stack: Capability[] = [];

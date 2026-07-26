@@ -96,7 +96,8 @@ export class CmdRunner extends BaseRunner {
         return await this.runCap(capId, ctx);
     }
 
-    private async dispatch(ctx: IRunnerContext): Promise<void> {
+    // 仅供flow.runCommand调用。
+    async dispatch(ctx: IRunnerContext): Promise<void> {
         switch (ctx.cmd.command) {
             case 'export':
                 await doExport(ctx);

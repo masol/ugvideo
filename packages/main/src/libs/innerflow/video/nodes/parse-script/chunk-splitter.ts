@@ -2,8 +2,8 @@
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import type { Chunk } from "./types.js";
 
-const MAX_LINES = 600;
-const MAX_CHARS = 120_000;
+const MAX_LINES = 300;
+const MAX_CHARS = 30_000;
 const WINDOW = 30;
 
 /**

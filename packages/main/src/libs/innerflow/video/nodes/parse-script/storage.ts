@@ -1,11 +1,21 @@
 // parse-script/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
+import type { IRunnerContext } from "$types/blueprint/context.js";
 import type { GlobalItem, PersistedScene, ScriptFormat } from "./types.js";
 
 export class ParseStorage {
-    constructor(private prjdb: PrjDB) { }
+    private prjdb: PrjDB;
 
-    //===== Format =====
+    constructor(ctx: IRunnerContext) {
+        this.prjdb = PrjDB.ensure(ctx.prj);
+    }
+
+    // ===== 入口：剧本正文分片（按 identified array 的 id 读取）=====
+    getScriptPart(id: string): string | null {
+        return this.prjdb.get<string>(`script_${id}`);
+    }
+
+    // ===== Format =====
     saveFormat(fmt: ScriptFormat): void {
         this.prjdb.set("parse:format", fmt);
     }
@@ -16,7 +26,7 @@ export class ParseStorage {
     // ===== Global Items（跨 chunk 累积）=====
     appendGlobalItem(item: GlobalItem): void {
         const list = this.prjdb.get<GlobalItem[]>("parse:global_items") ?? [];
-        // 去重：同line_start 不重复写
+        // 去重：同 line_start 不重复写
         if (!list.some((g) => g.line_start === item.line_start)) {
             this.prjdb.set("parse:global_items", [...list, item]);
         }
@@ -35,8 +45,21 @@ export class ParseStorage {
     }
     loadScene(id: string): PersistedScene | null {
         return this.prjdb.get<PersistedScene>(`parse:scene:${id}`) ?? null;
-    } listSceneIds(): string[] {
+    }
+    listSceneIds(): string[] {
         return this.prjdb.get<string[]>("parse:idx:scenes") ?? [];
+    }
+
+    /** 按 line_start 重排场景索引，保证下游遍历为叙事顺序 */
+    reorderScenesByLine(): void {
+        const ordered = this.listSceneIds()
+            .slice()
+            .sort((a, b) => {
+                const sa = this.loadScene(a);
+                const sb = this.loadScene(b);
+                return (sa?.line_start ?? 0) - (sb?.line_start ?? 0);
+            });
+        this.prjdb.set("parse:idx:scenes", ordered);
     }
 
     // ===== Cursor =====

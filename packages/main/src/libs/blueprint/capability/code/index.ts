@@ -5,6 +5,7 @@ import vm from "node:vm";
 import { BaseFunctor } from "../base.js";
 import { Capability } from "../is.js";
 import { FIXED_PACKAGES } from "./fixedpkgs.js";
+import { getFlow } from "./flow.js";
 import { getGlossary } from "./glossary.js";
 import { getLLMPkgs } from "./llm.js";
 
@@ -53,6 +54,7 @@ ${capa.code}
             cap: this.capa,
             glossary: getGlossary(ctx),
             llm: getLLMPkgs(ctx),
+            flow: getFlow(ctx),
             ...FIXED_PACKAGES
         };
 

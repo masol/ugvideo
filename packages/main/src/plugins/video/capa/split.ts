@@ -3,8 +3,8 @@ import { throwPrecondition } from "$libs/utils/err.js";
 import { BaseFunctor, fillCapa } from "$libs/blueprint/capability/base.js";
 import { getIOInfo } from "$libs/blueprint/glossary/ioinfo.js";
 import { saveToOutput } from "$libs/blueprint/glossary/output.js";
-import { ParaItem, ScriptItem } from "$plugins/video/metag/script.js";
 import { IRunnerContext } from "$types/blueprint/context.js";
+import { CacheItem } from "$types/index.js";
 import { isString } from "radashi";
 
 
@@ -110,14 +110,14 @@ export class SplitFunctor extends BaseFunctor {
 
             if (ioInfo.expired) {
 
-                const scripts: ScriptItem[] = ioInfo.inputs[0] as ScriptItem[];
+                const scripts: CacheItem[] = ioInfo.inputs[0] as CacheItem[];
 
                 // // 获取需要更新的ParaItemSchema。
                 // const expChunks = getExpiredChunk(ctx, this.capa.input[0], this.capa.output[0]);
                 // Logger.debug("expChunks=", JSON.stringify(expChunks, null, 2))
 
                 let startId = 0;
-                const output: ParaItem[] = [];
+                const output: CacheItem[] = [];
 
                 // console.log("scripts=", scripts)
                 scripts.forEach((s) => {
@@ -126,7 +126,7 @@ export class SplitFunctor extends BaseFunctor {
                     }
                     const lines = splitLines(s.item);
 
-                    const paragraphs: ParaItem[] = lines.map((text, i) => ({
+                    const paragraphs: CacheItem[] = lines.map((text, i) => ({
                         id: formatId(startId + i + 1),
                         index: startId + i,
                         text,

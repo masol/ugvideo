@@ -17,6 +17,8 @@ export interface IRunnerContext {
     // 默认的调用序列，用来指示本次runcontext的标识--这个标识只在进程内唯一(用户指定正向增加，内部分配负向减少)
     readonly seq: number;
 
+    readonly store: Record<string, unknown>;
+
     /** 快照检查点：判断当前工作流是否已经被终止 */
     readonly isAborted: boolean;
 

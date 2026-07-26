@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // parse-script/react-orchestrator.ts
-import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { processChunk } from "./chunk-processor.js";
 import { sliceChunk } from "./chunk-splitter.js";
@@ -19,8 +17,7 @@ export async function reactParse(
     lines: string[],
     chunks: Chunk[]
 ): Promise<void> {
-    const prjdb = PrjDB.ensure(ctx.prj);
-    const storage = new ParseStorage(prjdb);
+    const storage = new ParseStorage(ctx);
 
     // 加载已知格式（首次为 null）
     let knownFormat = storage.loadFormat();
@@ -33,7 +30,7 @@ export async function reactParse(
 
         const { context, main_start, main_end } = sliceChunk(lines, chunk);
 
-        // ===== 单次 LLM：扫格式+全局+场景+marcers =====
+        // ===== 单次 LLM：扫格式+全局+场景+markers =====
         const result = await processChunk(
             ctx,
             chunk,
@@ -81,11 +78,11 @@ export async function reactParse(
 
         for (const item of merged) {
             if (item.kind === "episode") {
-                currentEpisode = (item.payload as any).text;
+                currentEpisode = item.payload.text;
                 continue;
             }
             if (item.kind === "act") {
-                currentAct = (item.payload as any).text;
+                currentAct = item.payload.text;
                 continue;
             }
 
@@ -118,11 +115,13 @@ export async function reactParse(
                 break;
             }
 
-            if (!verdict || verdict.kind !== "verified" || !verdict.scene) {
+            if (!verdict || verdict.kind !== "verified") {
+                const reason =
+                    verdict?.kind === "redirect" || verdict?.kind === "rejected"
+                        ? verdict.reason
+                        : "未知";
                 ctx.warn(
-                    `[react] 行 ${cand.line_no} (chunk ${chunk.chunk_id}) 未通过 verifier：` +
-                    // @ts-expect-error 不写类型了。
-                    (verdict?.reason ?? "未知")
+                    `[react] 行 ${cand.line_no} (chunk ${chunk.chunk_id}) 未通过 verifier：${reason}`
                 );
                 continue;
             }
@@ -158,12 +157,13 @@ export async function reactParse(
     }
 
     // ===== 后处理：回填 line_end =====
-    const ids = storage.listSceneIds();
-    const ordered = ids.slice().sort((a, b) => {
-        const sa = storage.loadScene(a)!;
-        const sb = storage.loadScene(b)!;
-        return sa.line_start - sb.line_start;
-    });
+    const ordered = storage.listSceneIds()
+        .slice()
+        .sort((a, b) => {
+            const sa = storage.loadScene(a)!;
+            const sb = storage.loadScene(b)!;
+            return sa.line_start - sb.line_start;
+        });
 
     for (let i = 0; i < ordered.length; i++) {
         const cur = storage.loadScene(ordered[i])!;
@@ -171,4 +171,7 @@ export async function reactParse(
         cur.line_end = next ? next.line_start - 1 : lines.length;
         storage.saveScene(cur);
     }
+
+    // ===== 让索引本身按行号有序，下游遍历即叙事顺序 =====
+    storage.reorderScenesByLine();
 }

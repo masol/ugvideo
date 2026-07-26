@@ -9,6 +9,7 @@
   import { type IValueService } from "$lib/store/ui/activity/type";
   import { confirmStore } from "$lib/store/ui/confirm.svelte";
   import { dialogStore } from "$lib/store/ui/dialog.svelte";
+  import type { CacheItem } from "@app/main/types";
   import autoAnimate from "@formkit/auto-animate";
   import {
     IconAlertTriangle,
@@ -25,18 +26,12 @@
   let { node, service }: { node: TextListNode; service: IValueService } =
     $props();
 
-  interface ListItem {
-    id: string;
-    size?: number;
-    updatedAt?: number | string;
-  }
-
   // 随 node 响应式更新；每条正文的存储 key = `${key}_${条目id}`
   let key = $derived(node.binding.key);
   const itemKey = (id: string) => `${key}_${id}`;
 
-  const b = useBinding<ListItem[]>(service, () => node.binding);
-  let items = $derived(coerceList<ListItem>(b.value));
+  const b = useBinding<CacheItem[]>(service, () => node.binding);
+  let items = $derived(coerceList<CacheItem>(b.value));
   let loading = $derived(b.loading);
   let error = $derived(b.error);
 
@@ -54,13 +49,13 @@
     );
     if (content === null || !content) return;
     const id = crypto.randomUUID();
-    const item: ListItem = { id, size: content.length, updatedAt: Date.now() };
+    const item: CacheItem = { id, size: content.length, updatedAt: Date.now() };
     // 先写正文（原始 key，无 hook 绑定），成功后再写索引（经 b.set 更新本地）。
     await service.set(itemKey(id), content);
     await b.set([...items, item]);
   }
 
-  async function handleEdit(item: ListItem) {
+  async function handleEdit(item: CacheItem) {
     if (loading) return;
     const orig = await readItemContent(item.id);
     const content = await dialogStore.safeShow(
@@ -83,7 +78,7 @@
     await b.set(next);
   }
 
-  async function handleDelete(item: ListItem, index: number) {
+  async function handleDelete(item: CacheItem, index: number) {
     if (loading) return;
     const ok = await confirmStore.request({
       title: node.confirmTitle ?? "删除",
