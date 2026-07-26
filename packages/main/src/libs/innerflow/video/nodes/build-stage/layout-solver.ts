@@ -75,13 +75,13 @@ export function solveLayout(
             const gapZ = radiusZ(ea) + radiusZ(eb) + MARGIN;
 
             switch (r.relation) {
-                case "left_of":     enforceAxis(a, b, "x", b.x - a.x, gapX); break;
-                case "right_of":    enforceAxis(b, a, "x", a.x - b.x, gapX); break;
+                case "left_of": enforceAxis(a, b, "x", b.x - a.x, gapX); break;
+                case "right_of": enforceAxis(b, a, "x", a.x - b.x, gapX); break;
                 case "in_front_of": enforceAxis(b, a, "z", a.z - b.z, gapZ); break;
-                case "behind":      enforceAxis(a, b, "z", b.z - a.z, gapZ); break;
-                case "near":        pull(a, b, NEAR_DIST); break;
-                case "next_to":     pull(a, b, NEXT_DIST); break;
-                case "at":          pull(a, b, planarRadius(ea) + planarRadius(eb)); break;
+                case "behind": enforceAxis(a, b, "z", b.z - a.z, gapZ); break;
+                case "near": pull(a, b, NEAR_DIST); break;
+                case "next_to": pull(a, b, NEXT_DIST); break;
+                case "at": pull(a, b, planarRadius(ea) + planarRadius(eb)); break;
                 default: break; // on_top_of / holds 后处理
             }
         }
