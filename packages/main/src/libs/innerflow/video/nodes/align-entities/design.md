@@ -119,3 +119,4 @@ gate(inputs: parse:idx:scenes, outputs: output:stage_overview)
 
 本节点产出的"名称对齐后的原文"是下游的首选输入，因为它保留了原文的叙事完整性，
 同时所有实体引用已被标准化。
+  
