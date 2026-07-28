@@ -1,9 +1,11 @@
-// nodes/build-stage/storage.ts
+// nodes/align-entities/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import type { PersistedScene } from "../parse-script/types.js";
 import { loadScriptLines, sliceScene } from "./script-lines.js";
-import type { Beat, GlobalEntity, SceneStage } from "./types.js";
+import type { GlobalEntity, SceneStage } from "./types.js";
+
+const P = "#video:";
 
 export class Storage {
     private prjdb: ReturnType<typeof PrjDB.ensure>;
@@ -23,7 +25,6 @@ export class Storage {
         this.prjdb.set(key, value);
     }
 
-    /** 惰性加载剧本行数组（行号口径与 parse-script 完全一致） */
     private lines(): string[] {
         if (this._lines == null) {
             this._lines = loadScriptLines(this.ctx);
@@ -36,23 +37,21 @@ export class Storage {
     // --------------------------------------------------------
 
     sceneIds(): string[] {
-        return this.read<string[]>("parse:idx:scenes") ?? [];
+        return this.read<string[]>(`${P}parse:idx:scenes`) ?? [];
     }
 
     // --------------------------------------------------------
-    // 场景原文与元信息（数据源：parse-script 落盘的 parse:scene:{id}）
+    // 场景原文与元信息
     // --------------------------------------------------------
 
     private getPersistedScene(sceneId: string): PersistedScene | null {
-        return this.read<PersistedScene>(`parse:scene:${sceneId}`);
+        return this.read<PersistedScene>(`${P}parse:scene:${sceneId}`);
     }
 
-    /** 供 checkExpiry 使用的 inputKey（门控元数据入参，用真实上游产出） */
     sceneInputKey(sceneId: string): string {
-        return `parse:scene:${sceneId}`;
+        return `${P}parse:scene:${sceneId}`;
     }
 
-    /** 场景元信息（标题/集幕/地点/时间/出场人物/概述/转场），由 context 渲染 */
     getSceneMeta(sceneId: string): string | null {
         const s = this.getPersistedScene(sceneId);
         if (!s) return null;
@@ -72,7 +71,6 @@ export class Storage {
         return parts.join("\n");
     }
 
-    /** 场景原文：按 parse-script 的 line_start/line_end 从脚本行数组切片 */
     getSceneText(sceneId: string): string | null {
         const s = this.getPersistedScene(sceneId);
         if (!s) return null;
@@ -85,7 +83,7 @@ export class Storage {
     // --------------------------------------------------------
 
     stageNlKey(sceneId: string): string {
-        return `state:stage_nl_${sceneId}`;
+        return `${P}state:stage_nl_${sceneId}`;
     }
 
     getStageNl(sceneId: string): string | null {
@@ -97,7 +95,7 @@ export class Storage {
     }
 
     stageKey(sceneId: string): string {
-        return `state:stage_${sceneId}`;
+        return `${P}state:stage_${sceneId}`;
     }
 
     getStage(sceneId: string): SceneStage | null {
@@ -109,11 +107,11 @@ export class Storage {
     }
 
     // --------------------------------------------------------
-    // Pass B：节拍时间线
+    // Pass B：节拍时间线 NL（工作载体，不做 safefmt 提取）
     // --------------------------------------------------------
 
     beatNlKey(sceneId: string): string {
-        return `state:beat_nl_${sceneId}`;
+        return `${P}state:beat_nl_${sceneId}`;
     }
 
     getBeatNl(sceneId: string): string | null {
@@ -124,29 +122,32 @@ export class Storage {
         this.write(this.beatNlKey(sceneId), text);
     }
 
-    beatsKey(sceneId: string): string {
-        return `state:beats_${sceneId}`;
+    // --------------------------------------------------------
+    // Pass C：名称对齐后的场景原文
+    // --------------------------------------------------------
+
+    alignedTextKey(sceneId: string): string {
+        return `${P}output:aligned_text_${sceneId}`;
     }
 
-    getBeats(sceneId: string): Beat[] | null {
-        return this.read<Beat[]>(this.beatsKey(sceneId));
+    getAlignedText(sceneId: string): string | null {
+        return this.read<string>(this.alignedTextKey(sceneId));
     }
 
-    saveBeats(sceneId: string, beats: Beat[]): void {
-        this.write(this.beatsKey(sceneId), beats);
+    saveAlignedText(sceneId: string, text: string): void {
+        this.write(this.alignedTextKey(sceneId), text);
     }
 
     // --------------------------------------------------------
-    // Pass D：全局实体登记册（跨场景身份）
-    //   key = 原文规范名；idx 维护全部规范名。
+    // Pass D：全局实体登记册
     // --------------------------------------------------------
 
     private registryKey(name: string): string {
-        return `stage:registry:${name}`;
+        return `${P}stage:registry:${name}`;
     }
 
     entityNames(): string[] {
-        return this.read<string[]>("stage:registry:idx") ?? [];
+        return this.read<string[]>(`${P}stage:registry:idx`) ?? [];
     }
 
     getGlobalEntity(name: string): GlobalEntity | null {
@@ -163,11 +164,17 @@ export class Storage {
         const names = this.entityNames();
         this.write(this.registryKey(entity.name), entity);
         if (!names.includes(entity.name)) {
-            this.write("stage:registry:idx", [...names, entity.name]);
+            this.write(`${P}stage:registry:idx`, [...names, entity.name]);
         }
     }
 
-    /** 把某场景追加到已登记实体的出场列表（去重） */
+    /** 从登记册删除一个实体（合并时用） */
+    removeGlobalEntity(name: string): void {
+        this.prjdb.remove(this.registryKey(name));
+        const names = this.entityNames().filter(n => n !== name);
+        this.write(`${P}stage:registry:idx`, names);
+    }
+
     addSceneToEntity(name: string, sceneId: string): void {
         const e = this.getGlobalEntity(name);
         if (!e) return;
@@ -177,12 +184,11 @@ export class Storage {
     }
 
     // --------------------------------------------------------
-    // Pass D：场景对齐映射（局部名 → 全局规范名）
-    //   写独立 KV，不污染抽取产物。
+    // Pass D：场景对齐映射
     // --------------------------------------------------------
 
     alignKey(sceneId: string): string {
-        return `stage:align:${sceneId}`;
+        return `${P}stage:align:${sceneId}`;
     }
 
     getStageAlign(sceneId: string): Record<string, string> | null {
@@ -193,15 +199,31 @@ export class Storage {
         this.write(this.alignKey(sceneId), mapping);
     }
 
+    /** 批量更新所有场景 align 映射中对某个旧名的引用 */
+    renameInAllAligns(oldName: string, newName: string): void {
+        for (const sceneId of this.sceneIds()) {
+            const mapping = this.getStageAlign(sceneId);
+            if (!mapping) continue;
+            let changed = false;
+            for (const [localName, globalName] of Object.entries(mapping)) {
+                if (globalName === oldName) {
+                    mapping[localName] = newName;
+                    changed = true;
+                }
+            }
+            if (changed) this.saveStageAlign(sceneId, mapping);
+        }
+    }
+
     // --------------------------------------------------------
-    // 最终总览输出
+    // 总览输出
     // --------------------------------------------------------
 
     getOverview(): string | null {
-        return this.read<string>("output:stage_overview");
+        return this.read<string>(`${P}output:stage_overview`);
     }
 
     saveOverview(text: string): void {
-        this.write("output:stage_overview", text);
+        this.write(`${P}output:stage_overview`, text);
     }
 }

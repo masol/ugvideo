@@ -29,6 +29,11 @@
     push(`/editor/${blueprintStore.kind}/${term.name}/`);
   }
 
+  function forceMDFormat() {
+    // console.log("blueprintStore.kind=", blueprintStore.kind);
+    push(`/editor/${blueprintStore.kind}/${term.name}/markdown`);
+  }
+
   function handleEditContent() {
     push(`/editor/${blueprintStore.kind}/${term.name}/${editContentFmt}`);
   }
@@ -75,6 +80,12 @@
       <IconEdit size={20} stroke={1.5} />
       编辑
     </DropdownMenu.Item>
+    {#if blueprintStore.kind === "glossary"}
+      <DropdownMenu.Item class="rounded-lg" onclick={forceMDFormat}>
+        <IconFileText size={20} stroke={1.5} />
+        以MD格式编辑
+      </DropdownMenu.Item>
+    {/if}
     {#if editContentFmt.trim().length > 0}
       <DropdownMenu.Item class="rounded-lg" onclick={handleEditContent}>
         <IconFileText size={20} stroke={1.5} />

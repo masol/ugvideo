@@ -2,7 +2,7 @@
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
-import { buildStage } from './nodes/build-stage/index.js';
+import { alignEntities } from './nodes/align-entities/index.js';
 import { parseScript } from "./nodes/parse-script/index.js";
 
 /**
@@ -27,7 +27,7 @@ export async function run(ctx: IRunnerContext): Promise<void> {
 
     // ===== 阶段一：剧本解析 + 资产归一 =====
     await parseScript(ctx);
-    await buildStage(ctx);
+    await alignEntities(ctx);
     // await extractEntities(ctx);
     // await normalizeEntities(ctx);
 

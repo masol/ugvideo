@@ -5,7 +5,7 @@ import type { Capability, NewCapability } from "$types/blueprint/capability.js";
 import type { PrjTimeStamps, PrjTimeStore } from "$types/prjstore.js";
 import { BlueprintKind, GetItemInput, GetListResponse, QueryParams, SetItem } from '$types/shared/api/list.js';
 import Database from 'better-sqlite3';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { app } from "electron";
@@ -147,6 +147,26 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         db.delete(schema.kvStore)
             .where(eq(schema.kvStore.key, key))
             .run();
+    }
+
+    removeByGlob(pattern: string): void {
+        const db = this.getInitedDB();
+        db.delete(schema.kvStore)
+            .where(sql`${schema.kvStore.key} GLOB ${pattern}`)
+            .run();
+    }
+
+    getByGlob(pattern: string): string[] {
+        const db = this.getInitedDB();
+
+        // 1. 使用 select 仅提取 key 列
+        const rows = db.select({ key: schema.kvStore.key })
+            .from(schema.kvStore)
+            .where(sql`${schema.kvStore.key} GLOB ${pattern}`)
+            .all(); // 使用 .all() 获取所有匹配的行
+
+        // 2. 将对象数组映射为纯字符串数组
+        return rows.map(row => row.key);
     }
 
     get<T>(key: string): T | null {

@@ -40,6 +40,11 @@ export const chatCommands: ChatCommand[] = [
 --facets: 最大维度数，默认5.
 --kind:   日志中的名称。`},
     { id: "clear", label: "/clear", desc: "清空当前对话记录" },
+    {
+        id: "kv", label: "/kv", desc: `维护项目术语表，支持如下参数:
+--rm pattern: 删除pattern通配符的全部key.
+--ls pattern: 列出pattern通配符的全部key.
+` },
 ];
 
 /** 根据输入的查询词过滤命令（去掉开头的 "/"） */

@@ -97,6 +97,9 @@ export class EditorStore {
         content: string
     ): EditorLang {
         if (kind === 'glossary') {
+            if (content) {
+                return 'markdown';
+            }
             return id.startsWith('_') ? 'markdown' : 'json';
         }
         if (kind === 'capa') {

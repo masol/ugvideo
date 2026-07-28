@@ -1,10 +1,9 @@
-// nodes/build-stage/types.ts
+// nodes/align-entities/types.ts
 
 export type EntityKind = "character" | "prop" | "set" | "light";
 
 // ============================================================
 // 全局实体登记册（跨场景身份）
-//   以原文名称为规范键；只记忠实信息与出场场景，不做几何、不存图历史。
 // ============================================================
 
 export interface GlobalEntity {
@@ -15,6 +14,10 @@ export interface GlobalEntity {
     appearance: string;
     /** 出场场景 id 列表（叙事顺序） */
     scenes: string[];
+    /** 是否具有类人外观（人形角色/拟人化生物=true；纯兽/纯物件=false） */
+    humanoid: boolean;
+    /** 数量：1=个体，>1=群体（如"三名士兵"=3），0=不确定数量的群体 */
+    count: number;
 }
 
 // ============================================================
@@ -27,6 +30,10 @@ export interface StageEntity {
     kind: EntityKind;
     /** 原文对该实体的外观描写；原文没写则 null（不臆造） */
     appearance: string | null;
+    /** 是否具有类人外观；仅 character 类型有意义，其余填 false */
+    humanoid: boolean;
+    /** 数量：1=个体，>1=群体，0=不确定数量的群体 */
+    count: number;
 }
 
 export interface StageWorld {
@@ -42,34 +49,4 @@ export interface SceneStage {
     entities: StageEntity[];
     /** 开场瞬间实体相对位置与姿态（自然语言，无词表限制）；原文无则 null */
     spatial_layout: string | null;
-}
-
-// ============================================================
-// 节拍时间线（动态变化）
-// ============================================================
-
-export interface BeatDelta {
-    /** 实体名，必须来自本场实体清单 */
-    entity: string;
-    /** 本拍视觉可见动作（原文所述）；无则 null */
-    action: string | null;
-    /** 本拍台词原文；无则 null */
-    dialogue: string | null;
-    /** 本拍外观/状态增量（伤痕/沾染/破损）；无则 null */
-    state_change: string | null;
-    /** 本拍该个体情绪（TTS 语气来源）；读不出则 null */
-    emotion: string | null;
-}
-
-export interface Beat {
-    index: number;
-    /** 语义时长（约Ns）；无法判断则 null */
-    duration_hint: string | null;
-    summary: string;
-    /** 本拍整体情绪基调；读不出则 null */
-    mood: string | null;
-    /** 本拍站位/关系变化（移动、持有变化、位置改变）；无变化则 null */
-    staging: string | null;
-    /** 本拍有动静的实体 */
-    deltas: BeatDelta[];
 }

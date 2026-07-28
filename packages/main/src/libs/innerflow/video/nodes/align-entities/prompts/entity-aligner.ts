@@ -1,4 +1,4 @@
-// nodes/build-stage/prompts/entity-aligner.ts
+// nodes/align-entities/prompts/entity-aligner.ts
 
 /**
  * Pass D：跨场景实体身份核对。
@@ -11,6 +11,9 @@ export const ENTITY_ALIGNER_PROMPT = {
 - 名称相同且外观无明显冲突 → 判为同一个
 - 名称相同但外观出现硬冲突（如一处为白发老者、一处为垂髫孩童）→ 判为不同
 - 信息不足以否定时 → 判为同一个（宁合勿分，后续节点可再拆）
+
+**注意**：剧本格式后缀（OS/VO/旁白/画外音/内心/独白等）不是名字的一部分。
+"林乃龙"和"林乃龙OS"是同一个人，"张三"和"张三(旁白)"是同一个人。
 
 先用一句话说明依据，然后另起一行，**最后一行只输出一个词：SAME 或 DIFFERENT**，
 这一行不要输出其它任何内容。`,
