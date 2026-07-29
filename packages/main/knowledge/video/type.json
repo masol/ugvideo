@@ -681,6 +681,109 @@
                                         }
                                     }
                                 ]
+                            },
+                            {
+                                "type": "select",
+                                "binding": {
+                                    "key": "colorTone"
+                                },
+                                "label": "画面色调",
+                                "icon": "IconPalette",
+                                "fallback": "neutral",
+                                "options": [
+                                    {
+                                        "value": "warm_vibrant",
+                                        "label": "温暖鲜活",
+                                        "sub": "暖调偏橙，色彩饱满",
+                                        "badge": {
+                                            "text": "暖",
+                                            "className": "bg-linear-to-br from-orange-400 to-rose-500 text-white shadow-sm"
+                                        }
+                                    },
+                                    {
+                                        "value": "warm_muted",
+                                        "label": "复古柔和",
+                                        "sub": "暖调偏黄，低饱和胶片感",
+                                        "badge": {
+                                            "text": "柔",
+                                            "className": "bg-linear-to-br from-amber-300 to-yellow-600 text-white shadow-sm"
+                                        }
+                                    },
+                                    {
+                                        "value": "neutral",
+                                        "label": "自然真实",
+                                        "sub": "冷暖适中，还原肉眼所见",
+                                        "badge": {
+                                            "text": "中",
+                                            "className": "bg-linear-to-br from-slate-400 to-slate-600 text-white shadow-sm"
+                                        }
+                                    },
+                                    {
+                                        "value": "cool_crisp",
+                                        "label": "清冷通透",
+                                        "sub": "冷调偏蓝，色彩明快",
+                                        "badge": {
+                                            "text": "冷",
+                                            "className": "bg-linear-to-br from-cyan-400 to-blue-600 text-white shadow-sm"
+                                        }
+                                    },
+                                    {
+                                        "value": "cool_moody",
+                                        "label": "暗黑情绪",
+                                        "sub": "冷调偏暗，低对比度电影感",
+                                        "badge": {
+                                            "text": "暗",
+                                            "className": "bg-linear-to-br from-indigo-500 to-slate-800 text-white shadow-sm"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "select",
+                                "binding": {
+                                    "key": "cameraMovement"
+                                },
+                                "label": "运镜风格",
+                                "icon": "IconCameraPin",
+                                "fallback": "smooth",
+                                "options": [
+                                    {
+                                        "value": "tripod",
+                                        "label": "固定机位",
+                                        "sub": "绝对静止，适合对话或展示",
+                                        "badge": {
+                                            "text": "稳",
+                                            "className": "bg-linear-to-br from-teal-400 to-emerald-600 text-white shadow-sm"
+                                        }
+                                    },
+                                    {
+                                        "value": "smooth",
+                                        "label": "丝滑稳定",
+                                        "sub": "云台质感，如行云流水般平滑",
+                                        "badge": {
+                                            "text": "滑",
+                                            "className": "bg-linear-to-br from-blue-400 to-indigo-600 text-white shadow-sm"
+                                        }
+                                    },
+                                    {
+                                        "value": "natural",
+                                        "label": "自然呼吸",
+                                        "sub": "轻微晃动，模拟真实人眼视角",
+                                        "badge": {
+                                            "text": "真",
+                                            "className": "bg-linear-to-br from-violet-400 to-purple-600 text-white shadow-sm"
+                                        }
+                                    },
+                                    {
+                                        "value": "handheld",
+                                        "label": "纪实手持",
+                                        "sub": "明显晃动，充满临场感与活力",
+                                        "badge": {
+                                            "text": "动",
+                                            "className": "bg-linear-to-br from-orange-400 to-red-600 text-white shadow-sm"
+                                        }
+                                    }
+                                ]
                             }
                         ]
                     }

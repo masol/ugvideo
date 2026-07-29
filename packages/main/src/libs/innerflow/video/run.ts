@@ -3,6 +3,7 @@ import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { alignEntities } from './nodes/align-entities/index.js';
+import { designShots } from './nodes/design-shots/index.js';
 import { parseScript } from "./nodes/parse-script/index.js";
 
 /**
@@ -28,30 +29,21 @@ export async function run(ctx: IRunnerContext): Promise<void> {
     // ===== 阶段一：剧本解析 + 资产归一 =====
     await parseScript(ctx);
     await alignEntities(ctx);
-    // await extractEntities(ctx);
-    // await normalizeEntities(ctx);
-
-    // // ===== 阶段二：分镜规划 =====
-    // await analyzeEmotion(ctx);
-    // await designStoryboard(ctx);
-    // await planKeyframes(ctx);
-    // await optimizeAesthetics(ctx);
+    // ===== 阶段二：分镜设计 =====
+    await designShots(ctx);
 
     // // ===== 阶段三：资产图 + VLM 闭环 =====
     // await buildLayeredPrompts(ctx);
-    // await generateBaseImages(ctx);       // ← 留空，由你接 SD/Midjourney
-    // await vlmConsistencyEval(ctx);       // 内部循环迭代
-
+    // await generateBaseImages(ctx);
+    // await vlmConsistencyEval(ctx);
     // // ===== 阶段四：动态视频 + 音频 =====
     // await buildMotionPrompts(ctx);
-    // // 视频与音频可并发
     // await Promise.all([
-    //     renderVideos(ctx),               // ← 留空，由你接 Seedance/Veo
-    //     synthesizeAudio(ctx),            // ← 留空，由你接 TTS/BGM
+    //     renderVideos(ctx),
+    //     synthesizeAudio(ctx),
     // ]);
-
     // // ===== 阶段五：合成导出 =====
-    // await assembleFinal(ctx);            // ← 留空，由你接 FFmpeg
+    // await assembleFinal(ctx);
 
     ctx.notify("完成", "剧本到视频全流程已跑完");
 }

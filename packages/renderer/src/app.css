@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@source "../../main/knowledge/video/type.json";
+
 @import "tw-animate-css";
 
 @import "shadcn-svelte/tailwind.css";
