@@ -40,7 +40,10 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
     if (!checkExpiry(ctx, {
         inputKeys: [
             store.assetConstraintsKey(),
-            ...sceneIds.flatMap(id => [store.designKey(id), store.lightingKey(id)]),
+            ...sceneIds.flatMap(id => [
+                store.designKey(id),
+                store.lightingKey(id),
+            ]),
         ],
         outputKeys: store.overviewKey(),
     })) {

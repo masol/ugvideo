@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 // nodes/align-entities/scene-stage-builder.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
@@ -6,9 +5,6 @@ import { safefmt } from "$libs/model/llm/outline.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText, Output } from "ai";
-import type { Root } from "mdast";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
 import { z } from "zod";
 import { BEAT_ANALYZER_PROMPT } from "./prompts/beat-analyzer.js";
 import { ENTITY_ANALYZER_PROMPT } from "./prompts/entity-analyzer.js";
@@ -59,7 +55,7 @@ function buildRoster(entities: Array<{ name: string; kind: string; count: number
 }
 
 /** RawStaticStage → SceneStage */
-function toSceneStage(raw: RawStaticStage, sceneId: string, dialogueRanges: Array<{ start: number; end: number }>): SceneStage {
+function toSceneStage(raw: RawStaticStage, sceneId: string): SceneStage {
     const world: StageWorld = {
         scene_id: sceneId,
         environment: raw.world.environment,
@@ -72,111 +68,18 @@ function toSceneStage(raw: RawStaticStage, sceneId: string, dialogueRanges: Arra
         humanoid: e.humanoid ?? false,
         count: e.count ?? 1,
     }));
-    return { world, entities, spatial_layout: raw.spatial_layout ?? null, dialogue_ranges: dialogueRanges };
-}
-
-// ============================================================
-// 对话区间检测（Pass A 调用，识别原始 sceneText 中的对话块）
-// ============================================================
-
-/**
- * 识别 sceneText 中所有对话块的字符偏移范围（含两端）。
- * 对话特征（经验规则）：
- *   - 行内含冒号 + 人名（如 "林夏："）
- *   - 行内被引号包裹（中文 ""「」，英文 ""）
- *   - 行首有缩进或特定前缀（如 "OS:" / "(VO)" 等）
- * 
- * 使用 unified + remark-parse 解析为 AST，遍历 paragraph/listItem 节点，
- * 逐节点判断是否属于对话，收集字符偏移。
- * 
- * YAGNI：不上 LLM，纯规则足够（格式层判断）。
- */
-function detectDialogueRanges(sceneText: string): Array<{ start: number; end: number }> {
-    const ranges: Array<{ start: number; end: number }> = [];
-    
-    // 解析 markdown AST
-    const tree = unified().use(remarkParse).parse(sceneText) as Root;
-    
-    // 遍历所有 paragraph 节点
-    function visit(node: any, offset: number) {
-        if (node.type === "paragraph") {
-            const text = extractText(node);
-            if (isDialogueLine(text)) {
-                // 找到对话行，记录其在原文中的偏移
-                // node.position 给出在源文本中的位置
-                if (node.position) {
-                    const start = node.position.start.offset ?? 0;
-                    const end = node.position.end.offset ?? 0;
-                    ranges.push({ start, end });
-                }
-            }
-        }
-        
-        // 递归子节点
-        if (node.children) {
-            for (const child of node.children) {
-                visit(child, offset);
-            }
-        }
-    }
-    
-    visit(tree, 0);
-    
-    // 合并相邻区间（对话可能跨多个段落）
-    return mergeAdjacentRanges(ranges);
-}
-
-/** 递归收集 mdast 节点的纯文本 */
-function extractText(node: any): string {
-    if (node.value) return node.value;
-    if (node.children) return node.children.map(extractText).join("");
-    return "";
-}
-
-/** 判断一行文本是否属于对话 */
-function isDialogueLine(text: string): boolean {
-    const trimmed = text.trim();
-    if (!trimmed) return false;
-    
-    // 规则1：含人名+冒号（中英文冒号）
-    if (/[\u4e00-\u9fa5a-zA-Z]+[：:]/.test(trimmed)) return true;
-    
-    // 规则2：被引号包裹
-    if (/^["「"']/.test(trimmed) && /["」"']$/.test(trimmed)) return true;
-    
-    // 规则3：含剧本格式后缀（OS/VO等）
-    if (/\(?(OS|VO|V\.O\.|OC|O\.S\.|O\.C\.)\)?[：:]/.test(trimmed)) return true;
-    
-    return false;
-}
-
-/** 合并相邻或重叠的区间 */
-function mergeAdjacentRanges(ranges: Array<{ start: number; end: number }>): Array<{ start: number; end: number }> {
-    if (ranges.length === 0) return [];
-    
-    const sorted = ranges.slice().sort((a, b) => a.start - b.start);
-    const merged: Array<{ start: number; end: number }> = [sorted[0]];
-    
-    for (let i = 1; i < sorted.length; i++) {
-        const last = merged[merged.length - 1];
-        const curr = sorted[i];
-        
-        // 相邻或重叠：合并
-        if (curr.start <= last.end + 1) {
-            last.end = Math.max(last.end, curr.end);
-        } else {
-            merged.push(curr);
-        }
-    }
-    
-    return merged;
+    return { world, entities, spatial_layout: raw.spatial_layout ?? null };
 }
 
 // ============================================================
 // 代词残留检测（Pass C 用）
 // ============================================================
 
-const PRONOUN_PATTERN = /(?<![「\w])(?:他|她|它|他们|她们|它们|此人|此物|该人|那人|那把|那个|这把|这个|对方|前者|后者)(?![」\w])/g;
+// (?<![「\w其]) 排除：紧跟规范名标记「后、英文单词字符后，以及"其他/其它"中的"其"后。
+const PRONOUN_PATTERN = /(?<![「\w其])(?:他|她|它|他们|她们|它们|此人|此物|该人|那人|那把|那个|这把|这个|对方|前者|后者)(?![」\w])/g;
+
+// 节拍格式固定字段标记：台词字段内容从"台词："起，到下一字段标记 / 换行 / 文末为止。
+const DIALOGUE_SPAN_PATTERN = /台词：[\s\S]*?(?=状态变化：|情绪：|来源群体：|动作：|\n|$)/g;
 
 interface PronounOccurrence {
     /** 代词所在句/行的前后文片段（含代词本身） */
@@ -188,24 +91,36 @@ interface PronounOccurrence {
 }
 
 /**
- * 在文本中找出所有代词残留，并提取每个代词的"前后文片段"（各 40 字），
- * 但排除位于对话区间内的代词（对话内代词不需要消解）。
+ * 识别被扫描文本自身中的"台词"字段区间（字符偏移，含起排除对话内代词）。
+ * beat 格式固定：… 台词：<对话内容> 状态变化：… —— 台词内容天然可正则圈定。
+ * 直接在被扫描文本上计算，偏移与代词检测同源，不会错位。
  */
-function findPronounOccurrences(
-    text: string,
-    dialogueRanges: Array<{ start: number; end: number }>,
-    maxResults = 20
-): PronounOccurrence[] {
+function findDialogueSpans(text: string): Array<{ start: number; end: number }> {
+    const spans: Array<{ start: number; end: number }> = [];
+    for (const m of text.matchAll(DIALOGUE_SPAN_PATTERN)) {
+        const start = m.index ?? 0;
+        spans.push({ start, end: start + m[0].length });
+    }
+    return spans;
+}
+
+/**
+ * 在文本中找出所有代词残留，并提取每个代词的"前后文片段"（各 40 字），
+ * 但排除位于"台词"字段内的代词（对话内代词保持原样，不需消解）。
+ */
+function findPronounOccurrences(text: string, maxResults = 20): PronounOccurrence[] {
     if (!text) return [];
+
+    const dialogueSpans = findDialogueSpans(text);
     const occurrences: PronounOccurrence[] = [];
 
     for (const match of text.matchAll(PRONOUN_PATTERN)) {
         const pronoun = match[0];
         const offset = match.index ?? 0;
 
-        // 判断该代词是否在对话区间内
-        const inDialogue = dialogueRanges.some(r => offset >= r.start && offset <= r.end);
-        if (inDialogue) continue; // 跳过对话内代词
+        // 位于台词字段内 → 跳过（对话内代词不消解）
+        const inDialogue = dialogueSpans.some(s => offset >= s.start && offset < s.end);
+        if (inDialogue) continue;
 
         // 提取前后各 40 字的上下文片段
         const ctxStart = Math.max(0, offset - 40);
@@ -254,9 +169,6 @@ async function runPassC(
     const beatNl = store.getBeatNl(sceneId);
     if (!beatNl) throwPrecondition(`[PassC] ${sceneId} 缺少 beat NL`);
 
-    // 构造对话块提示（从 stage 的 dialogue_ranges 提取对应原文片段）
-    const dialogueHints = buildDialogueHints(sceneText, stage.dialogue_ranges);
-
     let currentInput = beatNl;
     let alignedText: string | null = null;
 
@@ -268,11 +180,11 @@ async function runPassC(
         const { text: alignedNl } = await generateText({
             model: getSmartModel(undefined, ctx),
             instructions: NAME_ALIGNER_PROMPT.system,
-            prompt: NAME_ALIGNER_PROMPT.user(roster, currentInput, dialogueHints) + feedbackSection,
+            prompt: NAME_ALIGNER_PROMPT.user(roster, currentInput) + feedbackSection,
         });
 
-        // 提取代词残留位置 + 上下文（排除对话区间）
-        const occurrences = findPronounOccurrences(alignedNl, stage.dialogue_ranges);
+        // 提取代词残留位置 + 上下文（自动排除台词字段内代词）
+        const occurrences = findPronounOccurrences(alignedNl);
 
         if (occurrences.length === 0) {
             alignedText = alignedNl;
@@ -280,7 +192,7 @@ async function runPassC(
             break;
         }
 
-        ctx.info(`[PassC] ${sceneId} 第${attempt + 1}次对齐残留 ${occurrences.length} 处代词（已排除对话内）`);
+        ctx.info(`[PassC] ${sceneId} 第${attempt + 1}次对齐残留 ${occurrences.length} 处代词（已排除台词内）`);
         // 日志：前 3 条上下文
         for (const occ of occurrences.slice(0, 3)) {
             ctx.info(`[PassC]   "${occ.pronoun}" @ "...${occ.context}..."`);
@@ -308,32 +220,14 @@ async function runPassC(
 }
 
 /**
- * 构造对话块提示文本：从原始 sceneText 中提取对话区间的实际内容，
- * 标注为"[对话块：...]"格式，让 LLM 知道这些区域不要改。
- */
-function buildDialogueHints(sceneText: string, ranges: Array<{ start: number; end: number }>): string {
-    if (ranges.length === 0) return "（本场景无对话块）";
-    
-    const hints: string[] = [];
-    for (const r of ranges) {
-        const snippet = sceneText.slice(r.start, r.end).trim();
-        // 只取前 80 字作为提示，避免 prompt 过长
-        const preview = snippet.length > 80 ? snippet.slice(0, 80) + "..." : snippet;
-        hints.push(`[对话块：${preview}]`);
-    }
-    
-    return hints.join("\n");
-}
-
-/**
  * 把代词残留列表格式化为带上下文片段的反馈 prompt。
  * 反馈结构：编号 + 代词 + 上下文片段 + 提示 LLM 用「规范名」替换。
  */
 function formatPronounFeedback(occurrences: PronounOccurrence[], originalNl: string): string {
     const lines: string[] = [
-        `你的上一次输出中仍有以下代词未被消解。`,
+        `你的上一次输出中仍有以下代词未被消解（这些代词均不在"台词："字段内）。`,
         `请逐条处理，把每个代词替换为实体清单中的规范名，并用「」括住。`,
-        `注意：这些代词都不在对话块内（对话块内的代词已自动忽略）。`,
+        `注意："台词："字段内的代词已自动忽略，请勿改动台词。`,
         `处理后请输出完整的对齐文本（不要只输出修改片段）。`,
         ``,
         `## 待处理代词（共 ${occurrences.length} 处）`,
@@ -400,11 +294,7 @@ async function runPassA(
         throwPrecondition(`[PassA] ${sceneId} 静态舞台抽取失败`);
     }
 
-    // 识别对话区间（从原始 sceneText）
-    const dialogueRanges = detectDialogueRanges(sceneText);
-    ctx.info(`[PassA] ${sceneId} 识别对话区间 ${dialogueRanges.length} 处`);
-
-    const stage = toSceneStage(result.value.output, sceneId, dialogueRanges);
+    const stage = toSceneStage(result.value.output, sceneId);
     store.saveStage(sceneId, stage);
     ctx.info(`[PassA] ${sceneId} 抽取完成，实体数=${stage.entities.length}`);
     return stage;

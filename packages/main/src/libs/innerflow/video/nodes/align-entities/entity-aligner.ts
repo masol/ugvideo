@@ -9,29 +9,22 @@ import { REGISTRY_AUDITOR_PROMPT } from "./prompts/registry-auditor.js";
 import { Storage } from "./storage.js";
 import type { GlobalEntity, StageEntity } from "./types.js";
 
-/**
- * 剧本格式后缀：这些是剧本格式标记，不是实体名称的一部分。
- */
 const SCRIPT_SUFFIXES = /[\s·\-_]*(OS|VO|V\.?O\.?|OC|旁白|画外音|内心|独白|O\.S\.|O\.C\.)$/i;
 
-/** 剥离剧本格式后缀，得到"裸名" */
 function stripScriptSuffix(name: string): string {
     return name.replace(SCRIPT_SUFFIXES, "").trim();
 }
 
 const FUSE_THRESHOLD = 0.2;
 const MAX_AUDIT_ROUNDS = 2;
+const P = "#video:";
 
 // ============================================================
 // Pass D 主入口：逐场景对齐 + 反向审计 ReAct
 // ============================================================
 
-/**
- * 按叙事顺序串行对齐所有场景，然后执行登记册反向审计。
- * 审计发现问题 → 自动修正 → 再审计，最多 MAX_AUDIT_ROUNDS 轮。
- */
 export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): Promise<void> {
-    // const store = new Storage(ctx);
+    const store = new Storage(ctx);
 
     // 逐场景串行对齐
     for (const sceneId of sceneIds) {
@@ -42,6 +35,20 @@ export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): P
 
     // 反向审计 ReAct 循环
     for (let round = 1; round <= MAX_AUDIT_ROUNDS; round++) {
+        // gate：登记册审计仍新鲜则整轮跳过
+        const auditInputKeys = [
+            `${P}stage:registry:idx`,
+            ...sceneIds.map(id => store.alignKey(id)),
+        ];
+
+        if (!checkExpiry(ctx, {
+            inputKeys: auditInputKeys,
+            outputKeys: `${P}stage:registry:idx`,
+        })) {
+            ctx.info(`[alignAllScenes] 登记册审计仍新鲜，跳过第${round}轮`);
+            break;
+        }
+
         const hasIssues = await auditRegistry(ctx, round);
         if (!hasIssues) {
             ctx.info(`[alignAllScenes] 登记册审计通过（第${round}轮）`);
@@ -220,12 +227,6 @@ function parseSameVerdict(text: string): boolean {
 // 登记册反向审计（ReAct）
 // ============================================================
 
-/**
- * 执行一轮登记册审计：
- *   1) LLM 审查登记册，输出问题列表或 PASS；
- *   2) 程序根据问题列表执行合并/拆分；
- *   3) 返回是否仍有未解决的问题。
- */
 async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolean> {
     const store = new Storage(ctx);
     const entities = store.allGlobalEntities();
@@ -249,9 +250,9 @@ async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolea
     let fixedCount = 0;
     for (const issue of issues) {
         if (issue.type === "merge") {
-            if (doMerge(store, issue.entries, issue.target ?? "")) fixedCount++;
+            if (doMerge(ctx, store, issue.entries, issue.target ?? "")) fixedCount++;
         } else if (issue.type === "split") {
-            if (doSplit(store, issue.entries)) fixedCount++;
+            if (doSplit(ctx, store, issue.entries)) fixedCount++;
         }
     }
 
@@ -274,8 +275,8 @@ function renderRegistryForAudit(entities: GlobalEntity[]): string {
 
 type AuditIssue = {
     type: "merge" | "split";
-    entries: string[];  // 涉及的实体名
-    target?: string;    // 合并时的目标名
+    entries: string[];
+    target?: string;
 };
 
 function parseAuditVerdict(text: string): "PASS" | "ISSUES" {
@@ -288,7 +289,6 @@ function parseAuditIssues(text: string): AuditIssue[] {
     const blocks = text.split(/^##\s+/m).slice(1);
     for (const block of blocks) {
         const lines = block.split("\n");
-        // const header = lines[0] ?? "";
         const typeLine = lines.find(l => /类型：/.test(l)) ?? "";
         const entryLine = lines.find(l => /条目：/.test(l)) ?? "";
         const targetLine = lines.find(l => /建议：/.test(l)) ?? "";
@@ -317,7 +317,6 @@ function parseAuditIssues(text: string): AuditIssue[] {
 }
 
 function parseNamesFromLine(line: string): string[] {
-    // 从 "条目：[A] 和 [B]" 或 "条目：[A]" 中提取引号/方括号内容
     const matches = line.match(/[「[【]([^「\]】\]]+)[」\]】]/g) ?? [];
     return matches.map(m => m.replace(/[「[【」\]】]/g, "").trim()).filter(Boolean);
 }
@@ -326,12 +325,12 @@ function parseNamesFromLine(line: string): string[] {
  * 执行合并：把所有 entries 合并到 target，
  * 合并后删除 entries 中除 target 外的其他条目。
  */
-function doMerge(store: Storage, entries: string[], target: string): boolean {
+function doMerge(ctx: IRunnerContext, store: Storage, entries: string[], target: string): boolean {
     if (entries.length < 2 || !target) return false;
 
     const targetEntity = store.getGlobalEntity(target);
     if (!targetEntity) {
-        ctxWarn(`[doMerge] 目标实体不存在：${target}`);
+        ctx.warn(`[doMerge] 目标实体不存在：${target}`);
         return false;
     }
 
@@ -358,7 +357,7 @@ function doMerge(store: Storage, entries: string[], target: string): boolean {
         scenes: Array.from(allSceneIds).sort(),
     });
 
-    ctxInfo(`[doMerge] 合并 ${entries.join("+")} → ${target}（共 ${allSceneIds.size} 个场景）`);
+    ctx.info(`[doMerge] 合并 ${entries.join("+")} → ${target}（共 ${allSceneIds.size} 个场景）`);
     return true;
 }
 
@@ -367,20 +366,13 @@ function doMerge(store: Storage, entries: string[], target: string): boolean {
  * 让它重新在下次对齐时被识别为新实体。
  * 当前实现：删除目标实体，相关场景的 align 映射会在下次 Pass D 重跑时回填。
  */
-function doSplit(store: Storage, entries: string[]): boolean {
+function doSplit(ctx: IRunnerContext, store: Storage, entries: string[]): boolean {
     if (entries.length === 0) return false;
     const target = entries[0];
     const entity = store.getGlobalEntity(target);
     if (!entity) return false;
 
     store.removeGlobalEntity(target);
-    ctxInfo(`[doSplit] 拆分 ${target}（相关场景将在下次对齐时重新识别）`);
+    ctx.info(`[doSplit] 拆分 ${target}（相关场景将在下次对齐时重新识别）`);
     return true;
 }
-
-// ============================================================
-// 日志工具（避免循环依赖 ctx）
-// ============================================================
-
-function ctxInfo(msg: string) { console.log(msg); }
-function ctxWarn(msg: string) { console.warn(msg); }

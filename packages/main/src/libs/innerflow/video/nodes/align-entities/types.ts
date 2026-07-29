@@ -49,6 +49,4 @@ export interface SceneStage {
     entities: StageEntity[];
     /** 开场瞬间实体相对位置与姿态（自然语言，无词表限制）；原文无则 null */
     spatial_layout: string | null;
-    /** 对话区间（字符偏移，含两端）：用于 Pass C 代词消解时排除对话内代词 */
-    dialogue_ranges: Array<{ start: number; end: number }>;
 }

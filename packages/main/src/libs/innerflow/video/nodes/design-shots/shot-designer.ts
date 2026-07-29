@@ -20,10 +20,6 @@ const P = "#video:";
 const MAX_REVIEW_ROUNDS = 2;
 const MAX_SHOT_ENTITY_CHECK_ROUNDS = 3;
 
-// ============================================================
-// RAG 接口（留空）
-// ============================================================
-
 async function queryShotSkill(_query: string): Promise<string | null> {
     return null;
 }
@@ -31,10 +27,6 @@ async function queryShotSkill(_query: string): Promise<string | null> {
 async function queryAssetSkill(_query: string): Promise<string | null> {
     return null;
 }
-
-// ============================================================
-// 素材全局约束初始化
-// ============================================================
 
 export function initAssetConstraints(ctx: IRunnerContext): void {
     const store = new ShotStorage(ctx);
@@ -54,10 +46,6 @@ export function initAssetConstraints(ctx: IRunnerContext): void {
     ctx.info(`[initAssetConstraints] 初始化完成，${store.getAssetConstraints().length} 条`);
 }
 
-// ============================================================
-// 单场景设计主入口
-// ============================================================
-
 export async function designScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
     const store = new ShotStorage(ctx);
 
@@ -66,6 +54,14 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
             `${P}output:aligned_text_${sceneId}`,
             `${P}state:stage_${sceneId}`,
             store.assetConstraintsKey(),
+            `${P}stage:registry:idx`,
+            `${P}stage:align:${sceneId}`,
+            "config:pace",
+            "config:aspectRatio",
+            "config:style",
+            "config:audience",
+            "config:colorTone",
+            "config:cameraMovement",
         ],
         outputKeys: [store.designKey(sceneId), store.lightingKey(sceneId)],
     })) {
@@ -74,8 +70,9 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
     }
 
     const alignedText = store.getAlignedText(sceneId);
-    if (!alignedText) throwPrecondition(`[designScene] ${sceneId} 缺少对齐原文`);
-
+    if (!alignedText) {
+        throwPrecondition("无法获取指代消解完毕的文本。")
+    }
     const stage = store.getStage(sceneId);
     if (!stage) throwPrecondition(`[designScene] ${sceneId} 缺少舞台信息`);
 
@@ -89,37 +86,72 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
         aspect_ratio: globalStyle.aspect_ratio,
     });
 
-    // Pass A：场景意图
+    // 构建跨场景时间线索（用于年龄推断）
+    const timelineContext = buildTimelineContext(ctx, sceneId, store);
+
     const intent = await extractIntent(ctx, sceneId, alignedText, stage);
     const { intentSection, riskSection } = splitIntent(intent);
     const ragQuery = buildRagQuery(intentSection);
     const configForSkill = formatConfigForSkill(globalStyle);
 
-    // SKILL
     const shotSkill = await ensureShotSkill(ctx, sceneId, ragQuery, intentSection, riskSection, configForSkill);
     const assetSkill = await ensureAssetSkill(ctx, sceneId, ragQuery, intentSection, riskSection, configForSkill);
 
-    // Pass C：场景光照
     const lighting = await designLighting(ctx, sceneId, stage, intentSection, styleDirectives);
     const lightingText = formatLighting(lighting);
 
-    // Pass B：分镜设计（含实体引用自检 ReAct）
     await designShotsForScene(ctx, sceneId, {
         alignedText, stage, styleDirectives, shotSkill, lightingText,
     });
 
-    // Pass D：逐实体素材扩写
     await designAssetsForScene(ctx, sceneId, {
-        alignedText, stage, styleDirectives, assetSkill, lightingText,
+        alignedText, stage, styleDirectives, assetSkill, lightingText, timelineContext,
     });
 
     store.markSceneDesigned(sceneId);
     ctx.info(`[designScene] ${sceneId} 完成`);
 }
 
-// ============================================================
-// Pass A：场景意图
-// ============================================================
+/**
+ * 构建跨场景时间线索，用于年龄/外观推断。
+ * 收集：当前场景元信息（episode/act/location/timeOfDay）+ 已登记的全局实体历史出场摘要。
+ */
+function buildTimelineContext(
+    _ctx: IRunnerContext,
+    sceneId: string,
+    store: ShotStorage,
+): string {
+    const meta = store.getSceneMeta(sceneId);
+    if (!meta) return "";
+
+    const ctx = meta.context as Record<string, unknown> | undefined;
+    const parts: string[] = [];
+
+    if (ctx?.episode) parts.push(`集：${ctx.episode}`);
+    if (ctx?.act) parts.push(`幕：${ctx.act}`);
+    if (ctx?.location) parts.push(`地点：${ctx.location}`);
+    if (ctx?.timeOfDay) parts.push(`时间：${ctx.timeOfDay}`);
+    if (typeof ctx?.first_line_summary === "string") parts.push(`摘要：${ctx.first_line_summary}`);
+
+    // 收集所有场景的元信息供 LLM 理解整部剧的时间线
+    const allSceneIds = store.sceneIds();
+    const sceneTimeline: string[] = [];
+    for (const sid of allSceneIds) {
+        const sm = store.getSceneMeta(sid);
+        if (!sm) continue;
+        const sc = sm.context as Record<string, unknown> | undefined;
+        const label = `场景 ${sid}`;
+        const ep = sc?.episode ? `${sc.episode}` : "";
+        const loc = sc?.location ? `${sc.location}` : "";
+        const summary = typeof sc?.first_line_summary === "string" ? sc.first_line_summary : "";
+        sceneTimeline.push(`- ${label} ${ep} ${loc}：${summary}`);
+    }
+
+    let result = "";
+    if (parts.length) result += `【本场景】\n${parts.join("\n")}\n\n`;
+    if (sceneTimeline.length) result += `【全剧场景时间线】\n${sceneTimeline.join("\n")}`;
+    return result;
+}
 
 async function extractIntent(
     ctx: IRunnerContext,
@@ -148,10 +180,6 @@ async function extractIntent(
     ctx.info(`[PassA] ${sceneId} 意图抽象完成`);
     return text;
 }
-
-// ============================================================
-// SKILL 获取
-// ============================================================
 
 async function ensureShotSkill(
     ctx: IRunnerContext,
@@ -223,10 +251,6 @@ async function ensureAssetSkill(
     return text;
 }
 
-// ============================================================
-// Pass C：场景光照
-// ============================================================
-
 async function designLighting(
     ctx: IRunnerContext,
     sceneId: string,
@@ -259,10 +283,6 @@ async function designLighting(
     return lighting;
 }
 
-// ============================================================
-// Pass B：分镜设计 + 实体引用自检 ReAct
-// ============================================================
-
 async function designShotsForScene(
     ctx: IRunnerContext,
     sceneId: string,
@@ -289,7 +309,6 @@ async function designShotsForScene(
         .map(e => `- 「${e.name}」`)
         .join("\n");
 
-    // 允许引用的实体集合（用于自检）
     const allowedEntities = new Set(params.stage.entities.map(e => e.name));
 
     let designNl: string | null = null;
@@ -314,7 +333,6 @@ async function designShotsForScene(
 
         designNl = text.trim();
 
-        // 程序化自检：提取所有「」内的实体引用
         const referencedEntities = extractEntityReferences(designNl);
         const invalidEntities = referencedEntities.filter(e => !allowedEntities.has(e));
 
@@ -323,7 +341,6 @@ async function designShotsForScene(
             break;
         }
 
-        // 发现非法引用 → 构造反馈
         ctx.warn(`[PassB] ${sceneId} 分镜引用了清单外实体（第${round + 1}轮）：${invalidEntities.join("、")}`);
 
         if (round === MAX_SHOT_ENTITY_CHECK_ROUNDS) {
@@ -342,10 +359,6 @@ async function designShotsForScene(
     ctx.info(`[PassB] ${sceneId} 分镜落盘 ${designNl.length}字`);
 }
 
-/**
- * 程序化自检：从分镜文本中提取所有「」内的实体名。
- * 返回去重后的实体名数组。
- */
 function extractEntityReferences(text: string): string[] {
     const pattern = /「([^」]+)」/g;
     const found = new Set<string>();
@@ -358,9 +371,6 @@ function extractEntityReferences(text: string): string[] {
     return Array.from(found);
 }
 
-/**
- * 构造实体引用检查失败的反馈 prompt。
- */
 function buildEntityCheckFeedback(invalidEntities: string[], allowedEntities: Set<string>): string {
     const lines: string[] = [
         `你的分镜文本中引用了以下清单外的实体，这是严重错误：`,
@@ -377,10 +387,6 @@ function buildEntityCheckFeedback(invalidEntities: string[], allowedEntities: Se
     return lines.join("\n");
 }
 
-// ============================================================
-// Pass D：逐实体素材扩写
-// ============================================================
-
 async function designAssetsForScene(
     ctx: IRunnerContext,
     sceneId: string,
@@ -390,20 +396,25 @@ async function designAssetsForScene(
         styleDirectives: string;
         assetSkill: string;
         lightingText: string;
+        timelineContext: string;
     },
 ): Promise<void> {
-    // const store = new ShotStorage(ctx);
+    const store = new ShotStorage(ctx);
 
     const sceneContext = `环境：${params.stage.world.environment}\n开场站位：${params.stage.spatial_layout ?? "无"}\n原文节选：${params.alignedText.slice(0, 300)}`;
 
     await pMap(
         params.stage.entities,
         async (entity) => {
-            await designSingleAsset(ctx, sceneId, entity, {
+            // 关键：用 align 映射把局部名转为全局规范名，再去查/写约束
+            const globalName = store.resolveToGlobalName(sceneId, entity.name);
+
+            await designSingleAsset(ctx, sceneId, entity, globalName, {
                 styleDirectives: params.styleDirectives,
                 assetSkill: params.assetSkill,
                 lightingText: params.lightingText,
                 sceneContext,
+                timelineContext: params.timelineContext,
             });
         },
         { concurrency: 3 },
@@ -416,15 +427,18 @@ async function designSingleAsset(
     ctx: IRunnerContext,
     sceneId: string,
     entity: StageEntity,
+    globalName: string,
     params: {
         styleDirectives: string;
         assetSkill: string;
         lightingText: string;
         sceneContext: string;
+        timelineContext: string;
     },
 ): Promise<void> {
     const store = new ShotStorage(ctx);
-    const existingConstraint = findConstraint(store, entity.name);
+    // 用全局规范名查 constraint
+    const existingConstraint = findConstraint(store, globalName);
     const countLabel = entity.count === 0 ? "群体" : entity.count === 1 ? "个体" : `${entity.count}个`;
 
     let assetNl: string | null = null;
@@ -435,13 +449,14 @@ async function designSingleAsset(
             model: getSmartModel(undefined, ctx),
             instructions: ASSET_DESIGNER_PROMPT.system(params.styleDirectives, params.assetSkill),
             prompt: ASSET_DESIGNER_PROMPT.user({
-                entityName: entity.name,
+                entityName: globalName,
                 entityKind: entity.kind,
                 entityCount: countLabel,
                 originalAppearance: entity.appearance ?? "无",
                 existingConstraint,
                 sceneLighting: params.lightingText,
                 sceneContext: params.sceneContext,
+                timelineContext: params.timelineContext || undefined,
                 reviewFeedback: feedback,
             }),
         });
@@ -451,22 +466,23 @@ async function designSingleAsset(
 
         if (round < MAX_REVIEW_ROUNDS) {
             const baseDesc = extractSection(text, "基础描述");
-            const verdict = await reviewAssetConflict(ctx, entity.name, existingConstraint, baseDesc);
+            const verdict = await reviewAssetConflict(ctx, globalName, existingConstraint, baseDesc);
             if (verdict.passed) break;
             feedback = verdict.issues.join("\n");
-            ctx.info(`[PassD] ${sceneId}/${entity.name} 冲突：${feedback}`);
+            ctx.info(`[PassD] ${sceneId}/${globalName} 冲突：${feedback}`);
         } else {
-            ctx.warn(`[PassD] ${sceneId}/${entity.name} 达到最大评审轮次，强制通过`);
+            ctx.warn(`[PassD] ${sceneId}/${globalName} 达到最大评审轮次，强制通过`);
         }
     }
 
     if (!assetNl) return;
 
-    const asset = parseEntityAsset(entity.name, entity.kind, assetNl);
-    store.saveEntityAsset(sceneId, asset);
+    const asset = parseEntityAsset(globalName, entity.kind, assetNl);
+    // 用全局规范名落盘
+    store.saveEntityAsset(sceneId, { ...asset, entity_name: globalName });
 
     if (!existingConstraint && asset.base_description) {
-        store.upsertAssetConstraint(entity.name, asset.base_description, sceneId);
+        store.upsertAssetConstraint(globalName, asset.base_description, sceneId);
     }
 }
 
@@ -503,10 +519,6 @@ async function reviewAssetConflict(
 
     return { passed, issues };
 }
-
-// ============================================================
-// 辅助函数
-// ============================================================
 
 function splitIntent(intent: string): { intentSection: string; riskSection: string } {
     const riskMarker = "## AI 风险点";

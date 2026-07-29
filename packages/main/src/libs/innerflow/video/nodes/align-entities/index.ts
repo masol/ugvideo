@@ -7,14 +7,8 @@ import { buildSceneStage } from "./scene-stage-builder.js";
 import { Storage } from "./storage.js";
 import type { GlobalEntity, SceneStage } from "./types.js";
 
-/**
- * align-entities 节点：建立跨场景实体身份一致性。
- *
- * 编排：
- *   1) 按场景并发 buildSceneStage（Pass A+B+C 三 Pass）
- *   2) 按叙事顺序串行 alignAllScenes（Pass D：逐场景对齐 + 登记册反向审计 ReAct）
- *   3) 总览拼接
- */
+const P = "#video:";
+
 export async function alignEntities(ctx: IRunnerContext): Promise<void> {
     const store = new Storage(ctx);
     const sceneIds = store.sceneIds();
@@ -47,13 +41,14 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
 
     if (!checkExpiry(ctx, {
         inputKeys: [
+            `${P}stage:registry:idx`,
             ...sceneIds.flatMap(id => [
                 store.stageKey(id),
                 store.alignedTextKey(id),
                 store.alignKey(id),
             ]),
         ],
-        outputKeys: "output:stage_overview",
+        outputKeys: `${P}output:stage_overview`,
     })) {
         ctx.info("[alignEntities:overview] 总览仍新鲜，跳过");
         return;

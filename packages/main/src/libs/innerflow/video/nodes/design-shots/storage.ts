@@ -52,6 +52,32 @@ export class ShotStorage {
     }
 
     // --------------------------------------------------------
+    // 场景对齐映射（align-entities 产出，本节点只读）
+    // --------------------------------------------------------
+
+    getStageAlign(sceneId: string): Record<string, string> | null {
+        return this.read<Record<string, string>>(`${P}stage:align:${sceneId}`);
+    }
+
+    /**
+     * 把场景局部名转为全局规范名。
+     * 如果映射表中没有该局部名，原样返回。
+     */
+    resolveToGlobalName(sceneId: string, localName: string): string {
+        const mapping = this.getStageAlign(sceneId);
+        if (!mapping) return localName;
+        return mapping[localName] ?? localName;
+    }
+
+    // --------------------------------------------------------
+    // 场景元信息（parse-script 产出，用于时间线推断）
+    // --------------------------------------------------------
+
+    getSceneMeta(sceneId: string): Record<string, unknown> | null {
+        return this.read<Record<string, unknown>>(`${P}parse:scene:${sceneId}`);
+    }
+
+    // --------------------------------------------------------
     // 全局视觉准则（配置项读取）
     // --------------------------------------------------------
 
@@ -181,7 +207,7 @@ export class ShotStorage {
     }
 
     // --------------------------------------------------------
-    // Pass D：逐实体素材（独立落盘）
+    // Pass D：逐实体素材（独立落盘，用全局规范名作为 key）
     // --------------------------------------------------------
 
     entityAssetKey(sceneId: string, entityName: string): string {
@@ -201,7 +227,10 @@ export class ShotStorage {
         const stage = this.getStage(sceneId);
         if (!stage) return [];
         return stage.entities
-            .map(e => this.getEntityAsset(sceneId, e.name))
+            .map(e => {
+                const globalName = this.resolveToGlobalName(sceneId, e.name);
+                return this.getEntityAsset(sceneId, globalName);
+            })
             .filter((v): v is EntityAsset => v != null);
     }
 

@@ -4,6 +4,7 @@ import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { alignEntities } from './nodes/align-entities/index.js';
 import { designShots } from './nodes/design-shots/index.js';
+import { generateReferenceImages } from "./nodes/generate-reference-images/index.js";
 import { parseScript } from "./nodes/parse-script/index.js";
 
 /**
@@ -33,7 +34,7 @@ export async function run(ctx: IRunnerContext): Promise<void> {
     await designShots(ctx);
 
     // // ===== 阶段三：资产图 + VLM 闭环 =====
-    // await buildLayeredPrompts(ctx);
+    await generateReferenceImages(ctx);
     // await generateBaseImages(ctx);
     // await vlmConsistencyEval(ctx);
     // // ===== 阶段四：动态视频 + 音频 =====
