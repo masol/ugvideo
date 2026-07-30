@@ -2,6 +2,13 @@
 
 export type EntityKind = "character" | "prop" | "set" | "light";
 
+/**
+ * 道具/陈设的出生方式：
+ * - "scene" — 场景固有（桌上的茶壶、墙上的画、地面的法盆），开场即在，属于环境的一部分
+ * - "character:角色名" — 由某角色带入/持有/催生（角色的武器、随身物品、中途掏出的道具）
+ */
+export type EntityOrigin = "scene" | `character:${string}`;
+
 // ============================================================
 // 全局实体登记册（跨场景身份）
 // ============================================================
@@ -18,6 +25,12 @@ export interface GlobalEntity {
     humanoid: boolean;
     /** 数量：1=个体，>1=群体（如"三名士兵"=3），0=不确定数量的群体 */
     count: number;
+    /**
+     * 出生方式（仅 prop/set 有意义）。
+     * "scene" = 场景固有；"character:角色名" = 由角色带入/持有。
+     * character/light 类固定为 "scene"（无意义但统一类型）。
+     */
+    origin: EntityOrigin;
 }
 
 // ============================================================
@@ -34,6 +47,23 @@ export interface StageEntity {
     humanoid: boolean;
     /** 数量：1=个体，>1=群体，0=不确定数量的群体 */
     count: number;
+    /**
+     * 来源群体名称。若该实体是从某群体中提升出的独立个体，
+     * 填来源群体的名称（如"士兵们"）；否则为 undefined/null。
+     *
+     * 有 source_group 的实体：
+     * - 不进全局登记册（不参与跨场景身份对齐）
+     * - 在本场景内有独立 EntityAsset（design-shots Pass D 会为其扩写）
+     * - 在镜头提示词中以 inlineForShot 文字描述渲染（不生成独立定妆照）
+     */
+    source_group?: string | null;
+    /**
+     * 出生方式（仅 prop/set 有意义）。
+     * "scene" = 场景固有（开场即在，是环境的一部分）；
+     * "character:角色名" = 由角色带入/持有/催生。
+     * character/light 类不填此字段。
+     */
+    origin?: EntityOrigin;
 }
 
 export interface StageWorld {

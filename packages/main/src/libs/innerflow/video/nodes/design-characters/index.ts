@@ -203,18 +203,19 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
 async function designUniforms(ctx: IRunnerContext): Promise<void> {
     const store = new CharDesignStorage(ctx);
 
-    // 制服判定需要一个临时的策略预判：取所有 humanoid+count>1 的 character
-    // 如果已经在 assign-render-strategies 中写过决策，可以读，否则用临时启发式
-    const decisions = store.allGlobalEntities()
-        .filter(e => e.kind === "character" && !e.humanoid && e.count > 1);
-    if (!decisions.length) {
+    // 制服面向"穿制式服装的类人群体"：humanoid 且 count!==1
+    // （count=0 表示数量不确定的群体如"士兵们"，count>1 表示有确定数量的群体，
+    //  二者都是群体；count=1 是个体角色，走服装设计不走制服）
+    const groupCharacters = store.allGlobalEntities()
+        .filter(e => e.kind === "character" && e.humanoid && e.count !== 1);
+    if (!groupCharacters.length) {
         ctx.info("[designUniforms] 无群体角色，跳过");
         return;
     }
 
     const worldContext = extractWorldContext(ctx, store);
 
-    await pMap(decisions, async (entity) => {
+    await pMap(groupCharacters, async (entity) => {
         const uniformName = `${entity.name}制服`;
 
         if (!checkExpiry(ctx, {

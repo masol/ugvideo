@@ -10,7 +10,7 @@ import { BEAT_ANALYZER_PROMPT } from "./prompts/beat-analyzer.js";
 import { ENTITY_ANALYZER_PROMPT } from "./prompts/entity-analyzer.js";
 import { NAME_ALIGNER_PROMPT } from "./prompts/name-aligner.js";
 import { Storage } from "./storage.js";
-import type { SceneStage, StageEntity, StageWorld } from "./types.js";
+import type { EntityOrigin, SceneStage, StageEntity, StageWorld } from "./types.js";
 
 // ============================================================
 // safefmt Schema — 静态舞台（Pass A）
@@ -35,8 +35,12 @@ const StaticStageSchema = z.object({
                 .describe("该实体外观是否具有人形特征：人类/仙人/拟人化角色/人形机器人=true；纯兽形(龙/蛇/鸟等非人形态)/纯物件=false；仅character类需认真判断，prop/set/light一律填false"),
             count: z.number().int()
                 .describe("该实体代表多少个个体：明确单个=1；明确群体有数量(如'三名士兵')=具体数字；群体但数量不确定(如'众村民''一群士兵')=0；非character类一律填1"),
+            source_group: z.string().nullable()
+                .describe("若该实体是从某群体中提升出的独立个体（原文中该群体成员有独立戏份），填来源群体名称（如'士兵们'）；否则填 null。有 source_group 的实体不进全局登记册，只在本场景内有独立视觉描述"),
+            origin: z.string().nullable()
+                .describe("出生方式，仅 prop/set 需要填写，character/light 填 null。值为以下之一：'scene'=场景固有（开场即存在于空间中的物件）；'character:角色名'=由该角色带入/持有/掏出/催生的道具。原文没说且无法判断时填'scene'（宁可归入场景）"),
         })
-    ).describe("原文中真实出现的所有可见实体清单，忠实抽取，不遗漏也不臆造"),
+    ).describe("原文中真实出现的所有可见实体清单，忠实抽取，不遗漏也不臆造；群体中有独立戏份的成员须单独建条目并标注 source_group；prop/set 必须标注 origin"),
     spatial_layout: z.string().nullable()
         .describe("开场瞬间所有实体相对位置与姿态的自然语言整体描述，仅基于原文可支撑的信息(谁在谁左右/前后/上下，谁跪谁站，谁持有什么及哪只手，谁盘绕/倚靠/包围谁)；可自由使用任意方位词；原文完全没有空间信息则填 null"),
 });
@@ -54,6 +58,17 @@ function buildRoster(entities: Array<{ name: string; kind: string; count: number
     }).join("\n");
 }
 
+/** 解析 origin 字符串为 EntityOrigin 类型 */
+function parseOrigin(raw: string | null, kind: string): EntityOrigin {
+    if (kind === "character" || kind === "light") return "scene";
+    if (!raw) return "scene";
+    if (raw === "scene" || raw === "场景固有") return "scene";
+    // "character:角色名" 或 "持有者：角色名"
+    const charMatch = raw.match(/^(?:character:|持有者[：:]\s*)(.+)/);
+    if (charMatch) return `character:${charMatch[1].trim()}`;
+    return "scene";
+}
+
 /** RawStaticStage → SceneStage */
 function toSceneStage(raw: RawStaticStage, sceneId: string): SceneStage {
     const world: StageWorld = {
@@ -67,6 +82,8 @@ function toSceneStage(raw: RawStaticStage, sceneId: string): SceneStage {
         appearance: e.appearance ?? null,
         humanoid: e.humanoid ?? false,
         count: e.count ?? 1,
+        source_group: e.source_group ?? null,
+        origin: parseOrigin(e.origin, e.kind),
     }));
     return { world, entities, spatial_layout: raw.spatial_layout ?? null };
 }
@@ -75,26 +92,16 @@ function toSceneStage(raw: RawStaticStage, sceneId: string): SceneStage {
 // 代词残留检测（Pass C 用）
 // ============================================================
 
-// (?<![「\w其]) 排除：紧跟规范名标记「后、英文单词字符后，以及"其他/其它"中的"其"后。
 const PRONOUN_PATTERN = /(?<![「\w其])(?:他|她|它|他们|她们|它们|此人|此物|该人|那人|那把|那个|这把|这个|对方|前者|后者)(?![」\w])/g;
 
-// 节拍格式固定字段标记：台词字段内容从"台词："起，到下一字段标记 / 换行 / 文末为止。
 const DIALOGUE_SPAN_PATTERN = /台词：[\s\S]*?(?=状态变化：|情绪：|来源群体：|动作：|\n|$)/g;
 
 interface PronounOccurrence {
-    /** 代词所在句/行的前后文片段（含代词本身） */
     context: string;
-    /** 代词词 */
     pronoun: string;
-    /** 在原文本中的字符偏移（用于定位） */
     offset: number;
 }
 
-/**
- * 识别被扫描文本自身中的"台词"字段区间（字符偏移，含起排除对话内代词）。
- * beat 格式固定：… 台词：<对话内容> 状态变化：… —— 台词内容天然可正则圈定。
- * 直接在被扫描文本上计算，偏移与代词检测同源，不会错位。
- */
 function findDialogueSpans(text: string): Array<{ start: number; end: number }> {
     const spans: Array<{ start: number; end: number }> = [];
     for (const m of text.matchAll(DIALOGUE_SPAN_PATTERN)) {
@@ -104,10 +111,6 @@ function findDialogueSpans(text: string): Array<{ start: number; end: number }> 
     return spans;
 }
 
-/**
- * 在文本中找出所有代词残留，并提取每个代词的"前后文片段"（各 40 字），
- * 但排除位于"台词"字段内的代词（对话内代词保持原样，不需消解）。
- */
 function findPronounOccurrences(text: string, maxResults = 20): PronounOccurrence[] {
     if (!text) return [];
 
@@ -118,11 +121,9 @@ function findPronounOccurrences(text: string, maxResults = 20): PronounOccurrenc
         const pronoun = match[0];
         const offset = match.index ?? 0;
 
-        // 位于台词字段内 → 跳过（对话内代词不消解）
         const inDialogue = dialogueSpans.some(s => offset >= s.start && offset < s.end);
         if (inDialogue) continue;
 
-        // 提取前后各 40 字的上下文片段
         const ctxStart = Math.max(0, offset - 40);
         const ctxEnd = Math.min(text.length, offset + pronoun.length + 40);
         const ctxFragment = text.slice(ctxStart, ctxEnd)
@@ -143,7 +144,6 @@ function findPronounOccurrences(text: string, maxResults = 20): PronounOccurrenc
 
 // ============================================================
 // Pass C：名称对齐 + 代词消解（ReAct 闭环）
-// 最终产出：名称对齐后的场景原文
 // ============================================================
 
 const MAX_ALIGN_RETRIES = 3;
@@ -183,7 +183,6 @@ async function runPassC(
             prompt: NAME_ALIGNER_PROMPT.user(roster, currentInput) + feedbackSection,
         });
 
-        // 提取代词残留位置 + 上下文（自动排除台词字段内代词）
         const occurrences = findPronounOccurrences(alignedNl);
 
         if (occurrences.length === 0) {
@@ -193,7 +192,6 @@ async function runPassC(
         }
 
         ctx.info(`[PassC] ${sceneId} 第${attempt + 1}次对齐残留 ${occurrences.length} 处代词（已排除台词内）`);
-        // 日志：前 3 条上下文
         for (const occ of occurrences.slice(0, 3)) {
             ctx.info(`[PassC]   "${occ.pronoun}" @ "...${occ.context}..."`);
         }
@@ -204,7 +202,6 @@ async function runPassC(
             break;
         }
 
-        // 构造反馈：编号列表 + 上下文片段
         const feedback = formatPronounFeedback(occurrences, alignedNl);
         currentInput = feedback;
     }
@@ -219,10 +216,6 @@ async function runPassC(
     return alignedText;
 }
 
-/**
- * 把代词残留列表格式化为带上下文片段的反馈 prompt。
- * 反馈结构：编号 + 代词 + 上下文片段 + 提示 LLM 用「规范名」替换。
- */
 function formatPronounFeedback(occurrences: PronounOccurrence[], originalNl: string): string {
     const lines: string[] = [
         `你的上一次输出中仍有以下代词未被消解（这些代词均不在"台词："字段内）。`,
@@ -356,4 +349,4 @@ export async function buildSceneStage(
     await runPassC(ctx, sceneId, stage, sceneText);
 
     ctx.info(`[buildSceneStage] ${sceneId} 三Pass完成`);
-}
+}            

@@ -3,6 +3,7 @@ import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText } from "ai";
+import type { StageEntity } from "../align-entities/types.js";
 import { buildRefsheetStyleSection } from "./prompts/refsheet-style.js";
 import { SCENE_SHOT_PROMPT } from "./prompts/scene-shot.js";
 import { RefImgStorage } from "./storage.js";
@@ -13,8 +14,13 @@ const P = "#video:";
 /**
  * 为单个场景生成逐镜头提示词。
  *
- * 源头设计：本函数每个场景独立调用，输入只来自该场景的数据。
- * 相同角色在不同场景有独立的镜头提示词，每个 prompt 都引用对应的参考图。
+ * 参考图引用规则（按 render decision）：
+ * - individual_refsheet（含 source_group 个体）→ 引用个体参考图
+ * - uniform_refsheet → 引用制服三视图
+ * - group_photo → 引用群体合照
+ * - prompt_only + 场景初始 set/prop → inline（融入环境图，不重复外观）
+ * - prompt_only + character → 不处理（交给视频生成阶段）
+ * - source_group 个体无参考图 → inline 文字描述
  */
 export async function generateSceneShotPrompts(
     ctx: IRunnerContext,
@@ -63,10 +69,18 @@ export async function generateSceneShotPrompts(
         `整体：${lighting.summary}`,
     ].join("\n");
 
-    // 场景内所有实体的 local→global 映射，用于识别镜头中引用的实体
+    // 场景实体映射
     const localToGlobal = new Map<string, string>();
+    const initialSetProps = new Set<string>();
+    const stageEntityByLocal = new Map<string, StageEntity>();
+
     for (const e of stage.entities) {
-        localToGlobal.set(e.name, store.resolveToGlobalName(sceneId, e.name));
+        const globalName = store.resolveToGlobalName(sceneId, e.name);
+        localToGlobal.set(e.name, globalName);
+        stageEntityByLocal.set(e.name, e);
+        if (e.kind === "set" || e.kind === "prop") {
+            initialSetProps.add(globalName);
+        }
     }
 
     const shotIds: number[] = [];
@@ -75,7 +89,7 @@ export async function generateSceneShotPrompts(
         const shotIndex = i + 1;
         const shotDesc = shots[i];
 
-        const referencedLocalNames = extractEntityReferences(shotDesc.text);
+        const referencedLocalNames = extractEntityReferences(shotDesc);
         const referenceImages: Array<{ entity_name: string; role: string }> = [];
         const inlineForShot: Array<{ name: string; description: string }> = [];
 
@@ -84,29 +98,51 @@ export async function generateSceneShotPrompts(
 
         for (const localName of referencedLocalNames) {
             const globalName = localToGlobal.get(localName) ?? localName;
+            const stageEntity = stageEntityByLocal.get(localName);
             const entity = store.getGlobalEntity(globalName);
+            // source_group 提升个体（不在全局登记册）
+            if (!entity && stageEntity?.source_group) {
+                const decision = store.getRenderDecision(stageEntity.name);
+                if (decision?.strategy === "individual_refsheet") {
+                    referenceImages.push({
+                        entity_name: stageEntity.name,
+                        role: "face_and_appearance_reference（严格保持脸部特征、五官比例、服装外观）",
+                    });
+                } else {
+                    pushInlineForSourceGroup(sceneId, stageEntity, store, inlineForShot);
+                }
+                continue;
+            }
             if (!entity || entity.kind === "light") continue;
-
             const decision = store.getRenderDecision(globalName);
-
             if (decision?.strategy === "individual_refsheet") {
+                // 包括动态道具（有独立参考图）—— 统一走参考图路径
                 referenceImages.push({
                     entity_name: globalName,
-                    role: refRole(entity.kind, entity.humanoid),
+                    role: refRole(entity.kind, entity.humanoid, entity.origin),
                 });
             } else if (decision?.strategy === "uniform_refsheet" && decision.uniform_name) {
                 referenceImages.push({
                     entity_name: decision.uniform_name,
-                    role: "costume_reference（参考制服款式）",
+                    role: "costume_reference（参考制服款式，群体成员统一着装）",
                 });
+            } else if (decision?.strategy === "group_photo") {
+                referenceImages.push({
+                    entity_name: globalName,
+                    role: "group_reference（参考群体整体视觉风格与人数，成员着装体型统一）",
+                });
+            } else if (decision?.strategy === "skip") {
+                continue;
             } else {
-                // 源头：无参考图时，**必须**以 scene_delta + base_description 形式写入本镜
-                const asset = store.getEntityAssetForScene(sceneId, globalName);
-                const base = asset?.base_description || entity.appearance || "";
-                const delta = asset?.scene_delta || "";
-                const light = asset?.lighting_effect || "";
-                const desc = [base, delta, light].filter(Boolean).join("；");
-                if (desc) inlineForShot.push({ name: globalName, description: desc });
+                // prompt_only：仅场景初始 set/prop 进 inline（融入环境图）
+                // 动态道具 origin≠"scene" 已经有独立参考图，不会进入此分支
+                if ((entity.kind === "set" || entity.kind === "prop")
+                    && initialSetProps.has(globalName)) {
+                    const asset = store.getEntityAssetForScene(sceneId, globalName);
+                    const desc = asset?.base_description || entity.appearance || "";
+                    if (desc) inlineForShot.push({ name: globalName, description: desc });
+                }
+                // prompt_only character → 不内联
             }
         }
 
@@ -116,7 +152,7 @@ export async function generateSceneShotPrompts(
             prompt: SCENE_SHOT_PROMPT.user({
                 sceneId,
                 shotIndex,
-                shotDescription: shotDesc.text,
+                shotDescription: shotDesc,
                 referenceImages,
                 lightingText,
                 inlineEntities: inlineForShot,
@@ -129,9 +165,9 @@ export async function generateSceneShotPrompts(
             prompt: text.trim(),
             reference_images: referenceImages,
             shot_meta: {
-                shot_type: shotDesc.shot_type,
-                camera_movement: shotDesc.camera_movement,
-                duration_estimate: shotDesc.duration,
+                shot_type: extractShotType(shotDesc),
+                camera_movement: extractCameraMovement(shotDesc),
+                duration_estimate: extractDuration(shotDesc),
             },
         };
 
@@ -143,39 +179,40 @@ export async function generateSceneShotPrompts(
     ctx.info(`[generateSceneShotPrompts] ${sceneId} 完成 ${shotIds.length} 个镜头提示词`);
 }
 
-interface ParsedShot {
-    text: string;
-    shot_type: string;
-    camera_movement: string;
-    duration: string;
-}
-
-function splitShots(design: string): ParsedShot[] {
-    const blocks = design.split(/^###\s+镜头/m).slice(1);
-    const shots: ParsedShot[] = [];
-
-    for (const block of blocks) {
-        const text = ("镜头" + block).trim();
-        shots.push({
-            text,
-            shot_type: pickField(text, "景别") || "MS",
-            camera_movement: pickField(text, "运镜") || "固定",
-            duration: extractDuration(text),
-        });
+function pushInlineForSourceGroup(
+    sceneId: string,
+    stageEntity: StageEntity,
+    store: RefImgStorage,
+    inlineForShot: Array<{ name: string; description: string }>,
+): void {
+    const asset = store.getEntityAssetForScene(sceneId, stageEntity.name);
+    const desc = asset?.base_description || stageEntity.appearance || "";
+    if (desc) {
+        inlineForShot.push({ name: stageEntity.name, description: desc });
     }
-
-    return shots;
 }
 
-function pickField(text: string, label: string): string {
-    const m = text.match(new RegExp(`${label}[：:]\\s*([^\\n｜]+)`));
-    return m ? m[1].trim() : "";
+function splitShots(design: string): string[] {
+    return design.split(/^###\s+镜头/m).slice(1).map(b => "镜头" + b);
+}
+
+function extractShotType(text: string): string {
+    return pickField(text, "景别") || "MS";
+}
+
+function extractCameraMovement(text: string): string {
+    return pickField(text, "运镜") || "固定";
 }
 
 function extractDuration(text: string): string {
     const header = text.split("\n")[0] ?? "";
     const m = header.match(/约?\s*(\d+)\s*秒/);
     return m ? `约${m[1]}秒` : "约3秒";
+}
+
+function pickField(text: string, label: string): string {
+    const m = text.match(new RegExp(`${label}[：:]\\s*([^\\n｜]+)`));
+    return m ? m[1].trim() : "";
 }
 
 function extractEntityReferences(text: string): string[] {
@@ -188,13 +225,17 @@ function extractEntityReferences(text: string): string[] {
     return Array.from(found);
 }
 
-function refRole(kind: string, humanoid: boolean): string {
+function refRole(kind: string, humanoid: boolean, origin?: string): string {
     if (kind === "character") {
         return humanoid
             ? "face_and_appearance_reference（严格保持脸部特征、五官比例、服装外观）"
             : "creature_reference（严格保持形态、体表、比例）";
     }
-    if (kind === "prop") return "prop_reference（作为道具，保持材质与细节不变）";
+    if (kind === "prop") {
+        return origin && origin.startsWith("character:")
+            ? "prop_reference（动态道具，保持材质/细节/形状在跨镜头中一致）"
+            : "prop_reference（保持陈设外观）";
+    }
     if (kind === "set") return "set_reference（保持陈设外观）";
     return "reference";
 }

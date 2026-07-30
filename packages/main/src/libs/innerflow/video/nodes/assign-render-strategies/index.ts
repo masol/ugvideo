@@ -1,15 +1,25 @@
 // nodes/assign-render-strategies/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
-import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
-import { generateText } from "ai";
 import type { GlobalEntity } from "../align-entities/types.js";
-import type { EntityRenderDecision, RenderStrategy } from "../design-characters/types.js";
-import { RENDER_STRATEGY_PROMPT } from "./prompts/render-strategy.js";
+import type { EntityRenderDecision } from "../design-characters/types.js";
 import { RenderStratStorage } from "./storage.js";
 
 const P = "#video:";
 
+/**
+ * 渲染策略判定（纯计算）。
+ *
+ * 核心规则（基于 origin）：
+ * - origin="scene" 的 prop/set → 进环境图（prompt_only / environment inline）
+ * - origin="character:..." 的 prop（动态道具）：
+ *   - 被 ≥1 个镜头引用 → individual_refsheet（保证跨镜头一致性）
+ *   - 仅在 stage 列出但 0 镜头引用 → prompt_only
+ * - 静态陈设（set）→ prompt_only 或 environment inline
+ *
+ * 注意：这里不再依赖启发式"是否在 stage 出现"判断动态性——
+ * 直接读 entity.origin（在 align-entities Pass A 已经标好）。
+ */
 export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void> {
     const store = new RenderStratStorage(ctx);
     const entities = store.allGlobalEntities();
@@ -25,6 +35,8 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
             `${P}shots:idx:scenes`,
             ...entities.map(e => `${P}stage:registry:${e.name}`),
             ...store.designedSceneIds().map(id => `${P}shots:design_${id}`),
+            ...store.designedSceneIds().map(id => `${P}state:stage_${id}`),
+            ...store.designedSceneIds().map(id => `${P}stage:align:${id}`),
         ],
         outputKeys: entities.map(e => store.decisionKey(e.name)),
     })) {
@@ -32,145 +44,313 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         return;
     }
 
-    const entityRegistry = entities.map(e => {
-        const countLabel = e.count === 0 ? "群体(数量不定)" : e.count === 1 ? "个体" : `群体(${e.count}个)`;
-        const humanoidLabel = e.kind === "character" ? (e.humanoid ? "类人" : "非类人") : "—";
-        return `- ${e.name}（${e.kind}｜${countLabel}｜${humanoidLabel}）外观：${e.appearance || "无"}｜出场场景：${e.scenes.join("、")}`;
-    }).join("\n");
+    // 1. 扫描所有分镜
+    const sceneRefs = collectEntityReferencesAcrossScenes(store);
+    const initialPresence = collectInitialPresence(store);
 
-    const sceneShotDesigns = collectShotDesigns(store, 1500);
-
-    const { text } = await generateText({
-        model: getSmartModel(undefined, ctx),
-        instructions: RENDER_STRATEGY_PROMPT.system,
-        prompt: RENDER_STRATEGY_PROMPT.user({ entityRegistry, sceneShotDesigns }),
-    });
-
-    const parsed = parseDecisions(text, entities);
-
-    const finalDecisions: EntityRenderDecision[] = [];
+    // 2. 全局实体判定
+    const decisions: EntityRenderDecision[] = [];
     for (const e of entities) {
-        let decision = parsed.get(e.name);
-        if (!decision) decision = fallbackDecision(e);
+        const ref = sceneRefs.get(e.name);
+        const referencedShotCount = ref?.referencedShotCount ?? 0;
+        const referencedSceneCount = ref?.referencedScenes.size ?? 0;
+        const isStaticInAnyScene = (initialPresence.get(e.name)?.size ?? 0) > 0;
 
-        // 硬规则 1：跨场景 ≥ 2 且是 humanoid character → 强制 individual_refsheet
-        if (e.kind === "character" && e.count === 1 && e.humanoid && e.scenes.length >= 2) {
-            decision.strategy = "individual_refsheet";
-            decision.importance = Math.max(decision.importance, 8);
-            decision.rationale = `${e.scenes.length} 个场景跨镜头出现，需定妆照保障一致性`;
-        }
-
-        // 硬规则 2：跨场景 set → 强制出图
-        if (e.kind === "set" && e.scenes.length >= 2) {
-            decision.strategy = "individual_refsheet";
-            decision.importance = Math.max(decision.importance, 6);
-            decision.rationale = `跨场景陈设，需参考图保障视觉一致`;
-        }
-
-        // 硬规则 3：跨场景 prop 且显著使用 → 强制出图
-        if (e.kind === "prop" && e.scenes.length >= 2) {
-            decision.strategy = "individual_refsheet";
-            decision.importance = Math.max(decision.importance, 7);
-            decision.rationale = `跨场景道具，需参考图保障视觉一致`;
-        }
-
-        // 硬规则 4：单场景 prop / set 即便被判定为 prompt_only，
-        // 其描述也必须进入场景环境图 prompt（由环境生成器源头保证，不在此处理）
-
+        const decision = decideStrategy(e, referencedShotCount, referencedSceneCount, isStaticInAnyScene);
         store.saveDecision(decision);
-        finalDecisions.push(decision);
+        decisions.push(decision);
     }
 
-    ctx.info(`[assignRenderStrategies] 完成，${finalDecisions.length} 个决策`);
-    for (const d of finalDecisions) {
-        ctx.info(`[assignRenderStrategies]   ${d.name}: ${d.strategy}｜重要度 ${d.importance}`);
+    // 3. source_group 提升个体 pass
+    const sourceGroupDecisions = decideSourceGroupIndividuals(store, sceneRefs);
+    for (const d of sourceGroupDecisions) {
+        store.saveDecision(d);
+        decisions.push(d);
+    }
+
+    decisions.sort(compareImportance);
+
+    ctx.info(`[assignRenderStrategies] 完成，${decisions.length} 个决策`);
+    for (const d of decisions) {
+        ctx.info(`[assignRenderStrategies]   ${d.name}: ${d.strategy}｜origin=${d.origin}｜shot=${d.referenced_shot_count}｜scenes=${d.referenced_scene_count}`);
     }
 }
 
-function collectShotDesigns(store: RenderStratStorage, limit: number): string {
-    return store.designedSceneIds().map(id => {
-        const design = store.getShotDesign(id);
-        if (!design) return "";
-        return `【场景 ${id} 分镜】\n${design.slice(0, limit)}`;
-    }).filter(Boolean).join("\n\n");
+// ============================================================
+// 扫描分镜
+// ============================================================
+
+interface EntityRefStats {
+    referencedShotCount: number;
+    referencedScenes: Set<string>;
+    closeUpShots: number;
 }
 
-function parseDecisions(text: string, entities: GlobalEntity[]): Map<string, EntityRenderDecision> {
-    const decisions = new Map<string, EntityRenderDecision>();
+interface ParsedShot {
+    text: string;
+    shotType: string;
+    entities: string[];
+}
 
-    for (const rawLine of text.split("\n")) {
-        const line = rawLine.trim();
-        const mainMatch = line.match(/^[-*]\s*(.+?)｜/);
-        if (!mainMatch || !/策略[：:]/.test(line)) continue;
+function collectEntityReferencesAcrossScenes(store: RenderStratStorage): Map<string, EntityRefStats> {
+    const result = new Map<string, EntityRefStats>();
 
-        const rawName = mainMatch[1].replace(/[「」[\]【】]/g, "").trim();
-        const entity = entities.find(
-            e => e.name === rawName || rawName.includes(e.name) || e.name.includes(rawName),
-        );
-        if (!entity) continue;
+    for (const sceneId of store.designedSceneIds()) {
+        const design = store.getShotDesign(sceneId);
+        if (!design) continue;
 
-        const strategy = parseStrategy(pickField(line, "策略"));
-        const importance = parseImportance(pickField(line, "重要度"));
-        const rationale = pickField(line, "理由") || "无";
-
-        const decision: EntityRenderDecision = {
-            name: entity.name,
-            kind: entity.kind,
-            strategy,
-            importance,
-            rationale,
-        };
-
-        if (strategy === "uniform_refsheet") {
-            const uMatch = line.match(/制服名称[：:]\s*(.+)/);
-            if (uMatch) decision.uniform_name = uMatch[1].trim();
+        const shots = parseAllShots(design);
+        for (const shot of shots) {
+            const uniqueInShot = new Set<string>();
+            for (const localName of shot.entities) {
+                const globalName = store.resolveToGlobalName(sceneId, localName);
+                uniqueInShot.add(globalName);
+            }
+            const isCloseUp = isCloseUpShotType(shot.shotType);
+            for (const name of uniqueInShot) {
+                const existing = result.get(name) ?? {
+                    referencedShotCount: 0,
+                    referencedScenes: new Set<string>(),
+                    closeUpShots: 0,
+                };
+                existing.referencedShotCount += 1;
+                existing.referencedScenes.add(sceneId);
+                if (isCloseUp) existing.closeUpShots += 1;
+                result.set(name, existing);
+            }
         }
+    }
 
-        decisions.set(entity.name, decision);
+    return result;
+}
+
+function parseAllShots(design: string): ParsedShot[] {
+    const blocks = design.split(/^###\s+镜头/m).slice(1);
+    return blocks.map(block => {
+        const text = "镜头" + block;
+        return {
+            text,
+            shotType: pickField(text, "景别"),
+            entities: extractEntityReferences(text),
+        };
+    });
+}
+
+function isCloseUpShotType(shotType: string): boolean {
+    const s = shotType.toUpperCase();
+    return /\b(CU|ECU|MCU)\b/.test(s) || /近景|特写|中近景/.test(shotType);
+}
+
+function pickField(text: string, label: string): string {
+    const m = text.match(new RegExp(`${label}[：:]\\s*([^\\n｜]+)`));
+    return m ? m[1].trim() : "";
+}
+
+function extractEntityReferences(text: string): string[] {
+    const pattern = /「([^」]+)」/g;
+    const found = new Set<string>();
+    for (const match of text.matchAll(pattern)) {
+        const name = match[1].trim();
+        if (name) found.add(name);
+    }
+    return Array.from(found);
+}
+
+function collectInitialPresence(store: RenderStratStorage): Map<string, Set<string>> {
+    const result = new Map<string, Set<string>>();
+    for (const sceneId of store.designedSceneIds()) {
+        const stage = store.getStage(sceneId);
+        if (!stage) continue;
+        const stageAlign = store.getStageAlign(sceneId) ?? {};
+        for (const entity of stage.entities) {
+            const globalName = stageAlign[entity.name] ?? entity.name;
+            const set = result.get(globalName) ?? new Set<string>();
+            set.add(sceneId);
+            result.set(globalName, set);
+        }
+    }
+    return result;
+}
+
+// ============================================================
+// source_group 提升个体 pass
+// ============================================================
+
+function decideSourceGroupIndividuals(
+    store: RenderStratStorage,
+    sceneRefs: Map<string, EntityRefStats>,
+): EntityRenderDecision[] {
+    const decisions: EntityRenderDecision[] = [];
+    const processed = new Set<string>();
+
+    for (const sceneId of store.designedSceneIds()) {
+        const stage = store.getStage(sceneId);
+        if (!stage) continue;
+
+        for (const entity of stage.entities) {
+            if (!entity.source_group) continue;
+            if (processed.has(entity.name)) continue;
+            processed.add(entity.name);
+
+            const ref = sceneRefs.get(entity.name);
+            const referencedShotCount = ref?.referencedShotCount ?? 0;
+            const closeUpShots = ref?.closeUpShots ?? 0;
+
+            // 有特写镜头 → 独立参考图
+            if (closeUpShots >= 1) {
+                decisions.push({
+                    name: entity.name,
+                    kind: entity.kind,
+                    strategy: "individual_refsheet",
+                    importance: computeImportance(7, referencedShotCount, 1),
+                    rationale: `提升个体有 ${closeUpShots} 个特写镜头，需独立参考图`,
+                    referenced_shot_count: referencedShotCount,
+                    referenced_scene_count: 1,
+                    is_static_in_scene: true,
+                    source_group: entity.source_group,
+                    origin: "scene",
+                });
+            }
+        }
     }
 
     return decisions;
 }
 
-function pickField(line: string, label: string): string {
-    const m = line.match(new RegExp(`${label}[：:]\\s*([^｜]+)`));
-    return m ? m[1].trim() : "";
-}
+// ============================================================
+// 全局实体判定（核心：基于 origin）
+// ============================================================
 
-function parseStrategy(raw: string): RenderStrategy {
-    const s = raw.toLowerCase();
-    if (s.includes("individual")) return "individual_refsheet";
-    if (s.includes("uniform")) return "uniform_refsheet";
-    if (s.includes("prompt")) return "prompt_only";
-    if (s.includes("skip")) return "skip";
-    return "prompt_only";
-}
+function decideStrategy(
+    e: GlobalEntity,
+    referencedShotCount: number,
+    referencedSceneCount: number,
+    isStaticInAnyScene: boolean,
+): EntityRenderDecision {
+    const meta = {
+        referenced_shot_count: referencedShotCount,
+        referenced_scene_count: referencedSceneCount,
+        is_static_in_scene: isStaticInAnyScene,
+        origin: e.origin,
+    };
 
-function parseImportance(raw: string): number {
-    const m = raw.match(/\d+/);
-    if (!m) return 3;
-    return Math.max(0, Math.min(10, parseInt(m[0], 10)));
-}
-
-function fallbackDecision(e: GlobalEntity): EntityRenderDecision {
     if (e.kind === "light") {
-        return { name: e.name, kind: e.kind, strategy: "skip", importance: 0, rationale: "光源" };
+        return { name: e.name, kind: e.kind, strategy: "skip", importance: 0, rationale: "光源", ...meta };
     }
-    if (e.kind === "character" && e.count === 1) {
+
+    // ===== prop 判定（核心改动）=====
+    if (e.kind === "prop") {
+        if (e.origin !== "scene") {
+            // 动态道具（角色带入/持有）—— 只要在镜头中出现就必须有独立参考图
+            if (referencedShotCount >= 1) {
+                return {
+                    name: e.name, kind: e.kind,
+                    strategy: "individual_refsheet",
+                    importance: computeImportance(8, referencedShotCount, referencedSceneCount),
+                    rationale: `动态道具（origin=${e.origin}）跨 ${referencedShotCount} 镜头，需独立参考图保持一致性`,
+                    ...meta,
+                };
+            }
+            // 0 镜头引用 → prompt_only（仅在 stage 列出但不出现）
+            return {
+                name: e.name, kind: e.kind,
+                strategy: "prompt_only",
+                importance: 2,
+                rationale: `动态道具未在镜头引用`,
+                ...meta,
+            };
+        }
+        // scene prop → 融入环境图
         return {
             name: e.name, kind: e.kind,
             strategy: "prompt_only",
             importance: 3,
-            rationale: "兜底：单场景角色",
+            rationale: "场景固有道具融入环境图",
+            ...meta,
         };
     }
-    if (e.kind === "character") {
-        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 2, rationale: "兜底：群体" };
+
+    // ===== set 判定 =====
+    if (e.kind === "set") {
+        if (referencedSceneCount >= 2) {
+            return {
+                name: e.name, kind: e.kind,
+                strategy: "individual_refsheet",
+                importance: computeImportance(6, referencedShotCount, referencedSceneCount),
+                rationale: "跨场景陈设",
+                ...meta,
+            };
+        }
+        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 3, rationale: "静态陈设融入环境图", ...meta };
     }
-    return {
-        name: e.name, kind: e.kind,
-        strategy: "prompt_only",
-        importance: 2,
-        rationale: "兜底：单场景陈设/道具",
-    };
+
+    // ===== character 判定（保留原有逻辑）=====
+    if (e.kind === "character" && e.count === 1 && e.humanoid) {
+        if (referencedShotCount >= 1) {
+            return {
+                name: e.name, kind: e.kind,
+                strategy: "individual_refsheet",
+                importance: computeImportance(referencedShotCount >= 2 ? 10 : 7, referencedShotCount, referencedSceneCount),
+                rationale: `${referencedShotCount} 镜头、${referencedSceneCount} 场景`,
+                ...meta,
+            };
+        }
+        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 1, rationale: "未在镜头引用", ...meta };
+    }
+
+    if (e.kind === "character" && e.humanoid) {
+        const hasUniform = hasUniformDescription(e);
+        if (referencedShotCount >= 2 || referencedSceneCount >= 2) {
+            if (hasUniform) {
+                const d: EntityRenderDecision = {
+                    name: e.name, kind: e.kind,
+                    strategy: "uniform_refsheet",
+                    importance: computeImportance(7, referencedShotCount, referencedSceneCount),
+                    rationale: `制式服装群体 ${referencedShotCount} 镜头`,
+                    ...meta,
+                };
+                d.uniform_name = `${e.name}制服`;
+                return d;
+            }
+            return {
+                name: e.name, kind: e.kind,
+                strategy: "group_photo",
+                importance: computeImportance(6, referencedShotCount, referencedSceneCount),
+                rationale: `无制式服装群体 ${referencedShotCount} 镜头，需群体合照`,
+                ...meta,
+            };
+        }
+        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 2, rationale: "群体单镜头", ...meta };
+    }
+
+    if (e.kind === "character") {
+        if (referencedShotCount >= 2 || referencedSceneCount >= 2) {
+            return {
+                name: e.name, kind: e.kind,
+                strategy: "individual_refsheet",
+                importance: computeImportance(8, referencedShotCount, referencedSceneCount),
+                rationale: `非类人 ${referencedShotCount} 镜头`,
+                ...meta,
+            };
+        }
+        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 3, rationale: "单镜头非类人", ...meta };
+    }
+
+    return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 2, rationale: "兜底", ...meta };
+}
+
+function hasUniformDescription(e: GlobalEntity): boolean {
+    const text = (e.appearance ?? "").toLowerCase();
+    return ["披甲", "甲胄", "制服", "统一", "制式", "袍", "披风", "盔甲", "uniform", "armor"]
+        .some(k => text.includes(k));
+}
+
+function computeImportance(base: number, shots: number, scenes: number): number {
+    return Math.max(0, Math.min(10, base + shots * 2 + scenes * 3));
+}
+
+function compareImportance(a: EntityRenderDecision, b: EntityRenderDecision): number {
+    if (a.referenced_shot_count !== b.referenced_shot_count) return b.referenced_shot_count - a.referenced_shot_count;
+    if (a.referenced_scene_count !== b.referenced_scene_count) return b.referenced_scene_count - a.referenced_scene_count;
+    return b.importance - a.importance;
 }

@@ -35,7 +35,6 @@ export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): P
 
     // 反向审计 ReAct 循环
     for (let round = 1; round <= MAX_AUDIT_ROUNDS; round++) {
-        // gate：登记册审计仍新鲜则整轮跳过
         const auditInputKeys = [
             `${P}stage:registry:idx`,
             ...sceneIds.map(id => store.alignKey(id)),
@@ -85,6 +84,15 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
         const name = (entity.name ?? "").trim();
         if (!name) {
             ctx.warn(`[alignScene] ${sceneId} 实体名称缺失，跳过`);
+            continue;
+        }
+
+        // 群体提升个体：不进全局登记册，不参与跨场景身份对齐。
+        // 仅在场景静态舞台表里有视觉描述，design-shots 为其产出独立素材。
+        // 在镜头提示词中以 inlineForShot 文字渲染，无需定妆照。
+        if (entity.source_group) {
+            mapping[name] = name;
+            counted++;
             continue;
         }
 
@@ -139,6 +147,7 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
             scenes: [sceneId],
             humanoid: entity.humanoid,
             count: entity.count,
+            origin: entity.origin ?? "scene",
         });
         mapping[name] = canonicalName;
         counted++;
@@ -232,7 +241,10 @@ async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolea
     const entities = store.allGlobalEntities();
     if (entities.length === 0) return false;
 
-    const registryText = renderRegistryForAudit(entities);
+    // 收集每个实体的场景语义摘要（用于审计消歧）
+    const sceneSummaries = collectSceneSummaries(store);
+
+    const registryText = renderRegistryForAudit(entities, sceneSummaries);
 
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx),
@@ -260,7 +272,63 @@ async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolea
     return fixedCount > 0 || issues.length > 0;
 }
 
-function renderRegistryForAudit(entities: GlobalEntity[]): string {
+/**
+ * 收集每个实体在每个出场场景的语义摘要（场景元信息 + 首行摘要）。
+ * 用于审计 prompt 注入，帮助消歧。
+ */
+function collectSceneSummaries(store: Storage): Map<string, string[]> {
+    const map = new Map<string, string[]>();
+    for (const sceneId of store.sceneIds()) {
+        const meta = store.getSceneMeta(sceneId);
+        if (!meta) continue;
+        const firstLineMatch = meta.match(/概述：(.+)/);
+        const locationMatch = meta.match(/地点：(.+)/);
+        const timeMatch = meta.match(/时间：(.+)/);
+        const parts: string[] = [];
+        if (locationMatch) parts.push(`地点：${locationMatch[1].trim()}`);
+        if (timeMatch) parts.push(`时间：${timeMatch[1].trim()}`);
+        if (firstLineMatch) parts.push(`首行：${firstLineMatch[1].trim()}`);
+        const summary = parts.length > 0 ? parts.join("；") : "（无元信息）";
+
+        const aligned = store.getAlignedText(sceneId);
+        // 从对齐后原文取前 80 字作为行为线索
+        const actionHint = aligned ? aligned.slice(0, 80).replace(/\s+/g, " ").trim() : "";
+
+        for (const [entityName, scenes] of mapOfEntityScenes(store, sceneId)) {
+            void (scenes)
+            const list = map.get(entityName) ?? [];
+            list.push(actionHint
+                ? `${sceneId}（${summary}）｜行为线索：${actionHint}`
+                : `${sceneId}（${summary}）`);
+            map.set(entityName, list);
+        }
+    }
+    return map;
+}
+
+/**
+ * 返回本场景内有该实体引用的实体名集合（简化：从 align 映射反查）。
+ */
+function mapOfEntityScenes(_store: Storage, _sceneId: string): Map<string, string[]> {
+    // 实际实现：从 stage.entities 与对齐后文本中提取。
+    // 此处给出最简形式：返回空 map，由 renderRegistryForAudit 兜底不显示场景行为。
+    // 真实数据从 stage 提取更准，这里改为直接读 stage：
+    return _collectEntitiesInScene(_store, _sceneId);
+}
+
+function _collectEntitiesInScene(store: Storage, sceneId: string): Map<string, string[]> {
+    const result = new Map<string, string[]>();
+    const stage = store.getStage(sceneId);
+    if (!stage) return result;
+    for (const e of stage.entities) {
+        if (e.source_group) continue; // 提升个体不参与全局表审计
+        const globalName = store.getStageAlign(sceneId)?.[e.name] ?? e.name;
+        result.set(globalName, [sceneId]);
+    }
+    return result;
+}
+
+function renderRegistryForAudit(entities: GlobalEntity[], sceneSummaries: Map<string, string[]>): string {
     const lines: string[] = [];
     for (const e of entities) {
         const name = e.name || "（无名）";
@@ -268,7 +336,16 @@ function renderRegistryForAudit(entities: GlobalEntity[]): string {
         const humanoidLabel = e.kind === "character" ? (e.humanoid ? "类人" : "非类人") : "—";
         lines.push(`- ${name}（${e.kind}｜${countLabel}｜${humanoidLabel}）`);
         lines.push(`  首次外观：${e.appearance || "无"}`);
-        lines.push(`  出场场景：${e.scenes.join("、") || "（无）"}`);
+
+        const summaries = sceneSummaries.get(name);
+        if (summaries && summaries.length > 0) {
+            lines.push(`  场景语义（每场的行为线索）：`);
+            for (const s of summaries) {
+                lines.push(`    · ${s}`);
+            }
+        } else {
+            lines.push(`  场景语义：（无）`);
+        }
     }
     return lines.join("\n");
 }
@@ -321,10 +398,6 @@ function parseNamesFromLine(line: string): string[] {
     return matches.map(m => m.replace(/[「[【」\]】]/g, "").trim()).filter(Boolean);
 }
 
-/**
- * 执行合并：把所有 entries 合并到 target，
- * 合并后删除 entries 中除 target 外的其他条目。
- */
 function doMerge(ctx: IRunnerContext, store: Storage, entries: string[], target: string): boolean {
     if (entries.length < 2 || !target) return false;
 
@@ -341,17 +414,12 @@ function doMerge(ctx: IRunnerContext, store: Storage, entries: string[], target:
         const otherEntity = store.getGlobalEntity(other);
         if (!otherEntity) continue;
 
-        // 合并 scenes
         for (const sid of otherEntity.scenes) allSceneIds.add(sid);
 
-        // 删除旧条目
         store.removeGlobalEntity(other);
-
-        // 更新所有场景的 align 映射
         store.renameInAllAligns(other, target);
     }
 
-    // 写回 target
     store.upsertGlobalEntity({
         ...targetEntity,
         scenes: Array.from(allSceneIds).sort(),
@@ -361,11 +429,6 @@ function doMerge(ctx: IRunnerContext, store: Storage, entries: string[], target:
     return true;
 }
 
-/**
- * 执行拆分：把 entries[0] 从全局登记册中删除，
- * 让它重新在下次对齐时被识别为新实体。
- * 当前实现：删除目标实体，相关场景的 align 映射会在下次 Pass D 重跑时回填。
- */
 function doSplit(ctx: IRunnerContext, store: Storage, entries: string[]): boolean {
     if (entries.length === 0) return false;
     const target = entries[0];

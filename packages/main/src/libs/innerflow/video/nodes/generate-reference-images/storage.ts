@@ -1,7 +1,7 @@
 // nodes/generate-reference-images/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
-import type { GlobalEntity, SceneStage } from "../align-entities/types.js";
+import type { GlobalEntity, SceneStage, StageEntity } from "../align-entities/types.js";
 import type {
     CharacterIdentity,
     CostumeDesign,
@@ -33,7 +33,6 @@ export class RefImgStorage {
         this.prjdb.set(key, value);
     }
 
-    // 上游数据
     sceneIds(): string[] {
         return this.read<string[]>(`${P}parse:idx:scenes`) ?? [];
     }
@@ -72,6 +71,16 @@ export class RefImgStorage {
         return mapping[localName] ?? localName;
     }
 
+    findSourceGroupEntity(entityName: string): { sceneId: string; stageEntity: StageEntity } | null {
+        for (const sceneId of this.sceneIds()) {
+            const stage = this.getStage(sceneId);
+            if (!stage) continue;
+            const stageEntity = stage.entities.find(e => e.name === entityName && e.source_group);
+            if (stageEntity) return { sceneId, stageEntity };
+        }
+        return null;
+    }
+
     getEntityAssetForScene(sceneId: string, entityName: string): EntityAsset | null {
         return this.read<EntityAsset>(`${P}shots:asset_${sceneId}_${entityName}`);
     }
@@ -92,9 +101,19 @@ export class RefImgStorage {
     }
 
     allRenderDecisions(): EntityRenderDecision[] {
-        return this.entityNames()
+        const fromRegistry = this.entityNames()
             .map(n => this.getRenderDecision(n))
             .filter((v): v is EntityRenderDecision => v != null);
+
+        const sourceGroupDecisions = this.sourceGroupDecisionNames()
+            .map(n => this.getRenderDecision(n))
+            .filter((v): v is EntityRenderDecision => v != null);
+
+        return [...fromRegistry, ...sourceGroupDecisions];
+    }
+
+    sourceGroupDecisionNames(): string[] {
+        return this.read<string[]>(`${P}char:idx:source_group_decisions`) ?? [];
     }
 
     getUniform(uniformName: string): UniformDesign | null {
@@ -171,7 +190,6 @@ export class RefImgStorage {
         return this.read<string[]>(`${P}refimg:idx:scenes`) ?? [];
     }
 
-    // 场景镜头提示词
     shotPromptKey(sceneId: string, shotIndex: number): string {
         return `${P}refimg:shot_${sceneId}_${shotIndex}`;
     }
@@ -220,5 +238,13 @@ export class RefImgStorage {
 
     saveOverview(text: string): void {
         this.write(this.overviewKey(), text);
+    }
+
+    /**
+     * 读取场景的节拍 NL（用于判定 prop 是否在开场就在场）。
+     * 对应 align-entities 节点产出的 #video:state:beat_nl_{sceneId}。
+     */
+    getBeatNl(sceneId: string): string | null {
+        return this.read<string>(`${P}state:beat_nl_${sceneId}`);
     }
 }

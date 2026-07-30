@@ -52,6 +52,15 @@ export const REFSHEET_SKILLS = {
 第5步：足部头饰配件。
 第6步：风格收尾 —— "costume design reference, all garment details clearly visible"。
 注意：禁止面部特征、光照、meta 声明。`,
+
+    group_photo: `第1步：群体规模 —— 若已知人数则写明"exactly N individuals"，未知则"a small consistent group"。
+第2步：共享着装 —— 描述这群人共同的服装类型 + 材质 + 主色调（群体统一视觉，不区分个体细微差异）。
+第3步：体型发型区间 —— 用"range"表达群体的体型与发型跨度（如 varied heights, mixed hair lengths），不锁定单一个体。
+第4步：族裔基调 —— 若群体族裔一致则写明；混杂则写"mixed ethnicity"。
+第5步：站位排列 —— "standing together in a natural loose arrangement facing the camera"。
+第6步：姿态 —— "neutral standing poses, arms at sides"。
+第7步：风格收尾 —— 按全局风格追加。
+注意：群体合照不追求个体面部精确一致，只需整体视觉风格统一；禁止光照方向、场景、动作、meta 声明。`,
 } as const;
 
 export type RefsheetSkillKind = keyof typeof REFSHEET_SKILLS;

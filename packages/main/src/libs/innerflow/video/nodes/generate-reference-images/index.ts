@@ -5,6 +5,7 @@ import pMap from "p-map";
 import { generateSceneEnvironment } from "./environment-generator.js";
 import {
     generateEntityRefsheet,
+    generateGroupPhoto,
     generateUniformRefsheet,
 } from "./refsheet-generator.js";
 import { defaultRender } from "./render/default-renderer.js";
@@ -16,6 +17,7 @@ import type {
     RenderResult,
     RenderTask,
     SceneEnvironmentPrompt,
+    SceneShotPrompt,
 } from "./types.js";
 
 const MAX_CONCURRENT_RENDER = 12;
@@ -33,6 +35,10 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         .filter(d => d.strategy === "individual_refsheet")
         .map(d => d.name);
 
+    const groupPhotoEntities = decisions
+        .filter(d => d.strategy === "group_photo")
+        .map(d => d.name);
+
     const uniforms = new Set<string>();
     for (const d of decisions) {
         if (d.strategy === "uniform_refsheet" && d.uniform_name) {
@@ -40,7 +46,7 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         }
     }
 
-    // Phase 1: 全局参考图（纯白背景）
+    // Phase 1: 个体参考图（含 source_group 个体，大头+全身三视图）
     if (individualEntities.length > 0) {
         ctx.info(`[generateReferenceImages] 生成 ${individualEntities.length} 个实体参考图`);
         await pMap(individualEntities, name => generateEntityRefsheet(ctx, name), { concurrency: 4 });
@@ -52,23 +58,29 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         await pMap(Array.from(uniforms), name => generateUniformRefsheet(ctx, name), { concurrency: 2 });
     }
 
-    // Phase 3: 场景环境图（无人物，含所有 set/prop 描述）
+    // Phase 3: 群体合照（无制式服装的群体角色）
+    if (groupPhotoEntities.length > 0) {
+        ctx.info(`[generateReferenceImages] 生成 ${groupPhotoEntities.length} 个群体合照`);
+        await pMap(groupPhotoEntities, name => generateGroupPhoto(ctx, name), { concurrency: 3 });
+    }
+
+    // Phase 4: 场景环境图
     const sceneIds = store.sceneIds();
     if (sceneIds.length > 0) {
         ctx.info(`[generateReferenceImages] 生成 ${sceneIds.length} 个场景环境图`);
         await pMap(sceneIds, id => generateSceneEnvironment(ctx, id), { concurrency: 3 });
     }
 
-    // Phase 4: 渲染参考图与环境图
+    // Phase 5: 渲染
     const refTasks = buildReferenceTasks(store);
     const eligibleTasks = applyImportanceCutoff(refTasks);
 
     if (eligibleTasks.length > 0) {
-        ctx.info(`[generateReferenceImages] 渲染 ${eligibleTasks.length}/${refTasks.length} 个参考图/环境图`);
+        ctx.info(`[generateReferenceImages] 渲染 ${eligibleTasks.length}/${refTasks.length} 个参考图/环境图（环境图全保留）`);
         await dispatchRenderTasks(ctx, eligibleTasks, defaultRender);
     }
 
-    // Phase 5: 场景镜头提示词（按场景按镜头，引用已渲染的参考图）
+    // Phase 6: 场景镜头提示词
     if (sceneIds.length > 0) {
         ctx.info(`[generateReferenceImages] 生成逐场景镜头提示词`);
         await pMap(sceneIds, id => generateSceneShotPrompts(ctx, id), { concurrency: 3 });
@@ -84,11 +96,14 @@ function buildReferenceTasks(store: RefImgStorage): RenderTask[] {
         const prompt = store.getEntityRefsheet(name);
         if (!prompt) continue;
         const asset = store.getEntityAsset(name);
+        const taskType = prompt.layout === "group_photo" ? "group_photo" : "entity_refsheet";
         tasks.push({
             id: name,
-            type: "entity_refsheet",
+            type: taskType,
             prompt: prompt.prompt,
             importance: prompt.importance,
+            referenced_shot_count: prompt.referenced_shot_count,
+            referenced_scene_count: prompt.referenced_scene_count,
             asset_info: asset ? {
                 entity_name: name,
                 kind: asset.kind,
@@ -96,6 +111,7 @@ function buildReferenceTasks(store: RefImgStorage): RenderTask[] {
                 humanoid: prompt.humanoid,
                 base_description: asset.base_description,
             } : undefined,
+            group_info: taskType === "group_photo" ? { group_entity_name: name } : undefined,
         });
     }
 
@@ -107,6 +123,8 @@ function buildReferenceTasks(store: RefImgStorage): RenderTask[] {
             type: "uniform_turnaround",
             prompt: prompt.prompt,
             importance: prompt.importance,
+            referenced_shot_count: prompt.referenced_shot_count,
+            referenced_scene_count: prompt.referenced_scene_count,
             uniform_info: {
                 uniform_name: uniformName,
                 group_entity_name: store.getUniform(uniformName)?.group_entity_name ?? "",
@@ -125,6 +143,8 @@ function buildReferenceTasks(store: RefImgStorage): RenderTask[] {
             type: "scene_environment",
             prompt: env.prompt,
             importance: env.importance,
+            referenced_shot_count: env.referenced_shot_count,
+            referenced_scene_count: env.referenced_scene_count,
             scene_info: stage && lighting ? {
                 scene_id: sceneId,
                 environment: stage.world.environment,
@@ -138,13 +158,24 @@ function buildReferenceTasks(store: RefImgStorage): RenderTask[] {
 }
 
 function applyImportanceCutoff(tasks: RenderTask[]): RenderTask[] {
-    if (tasks.length <= MAX_CONCURRENT_RENDER) return tasks;
-    const sorted = [...tasks].sort((a, b) => {
-        if (a.type === "scene_environment" && b.type !== "scene_environment") return -1;
-        if (b.type === "scene_environment" && a.type !== "scene_environment") return 1;
+    const envTasks = tasks.filter(t => t.type === "scene_environment");
+    const otherTasks = tasks.filter(t => t.type !== "scene_environment");
+
+    const remainingSlots = Math.max(0, MAX_CONCURRENT_RENDER - envTasks.length);
+
+    const sortedOthers = [...otherTasks].sort((a, b) => {
+        const aShot = a.referenced_shot_count ?? 0;
+        const bShot = b.referenced_shot_count ?? 0;
+        if (aShot !== bShot) return bShot - aShot;
+
+        const aScene = a.referenced_scene_count ?? 0;
+        const bScene = b.referenced_scene_count ?? 0;
+        if (aScene !== bScene) return bScene - aScene;
+
         return b.importance - a.importance;
     });
-    return sorted.slice(0, MAX_CONCURRENT_RENDER);
+
+    return [...envTasks, ...sortedOthers.slice(0, remainingSlots)];
 }
 
 async function buildOverview(ctx: IRunnerContext): Promise<void> {
@@ -217,15 +248,18 @@ function renderEntitySection(
     result: RenderResult | null,
 ): string {
     const layoutLabel = {
-        four_column: "16:9 四列（正/左45/右45/背）",
+        four_column: "16:9 四列（左侧大头 + 右侧全身正/左45/背）",
         three_column: "16:9 三列（正/侧/背）",
         magazine_grid: "16:9 杂志网格",
         uniform_turnaround: "16:9 制服三视图",
+        group_photo: "16:9 群体合照（自然站位）",
     }[prompt.layout];
 
+    const srcGroupLabel = prompt.source_group ? `｜提升自群体：${prompt.source_group}` : "";
+
     return [
-        `## ${name}（${prompt.kind}${prompt.humanoid ? "·类人" : ""}）`,
-        `布局：${layoutLabel}｜重要度：${prompt.importance}`,
+        `## ${name}（${prompt.kind}${prompt.humanoid ? "·类人" : ""}${srcGroupLabel}）`,
+        `布局：${layoutLabel}｜重要度：${prompt.importance}｜跨镜头：${prompt.referenced_shot_count}｜跨场景：${prompt.referenced_scene_count}`,
         result?.file_path ? `渲染结果：${result.file_path}` : `渲染结果：（未渲染）`,
         ``,
         `### 参考图提示词（纯白背景）`,
@@ -242,15 +276,17 @@ function renderSceneEnvSection(
         `## 场景 ${sceneId} 环境图`,
         `现实参照：${env.real_world_references.join("、") || "（无）"}`,
         `含参考图的陈设/道具：${env.refsheet_entities.join("、") || "（无）"}`,
-        `内联描述的陈设/道具：${env.inline_entities.map(e => e.name).join("、") || "（无）"}`,
+        `内联描述的陈设：${env.inline_entities.map(e => e.name).join("、") || "（无）"}`,
+        `排除的动态道具：${env.excluded_dynamic_props.join("、") || "（无）"}`,
+        `评审轮次：${env.review_round}（${env.review_history.map(r => r.verdict).join(" → ")}）`,
         result?.file_path ? `渲染结果：${result.file_path}` : `渲染结果：（未渲染）`,
         ``,
-        `### 环境提示词`,
+        `### 最终环境提示词`,
         env.prompt,
     ].join("\n");
 }
 
-function renderShotSection(shot: import("./types.js").SceneShotPrompt): string {
+function renderShotSection(shot: SceneShotPrompt): string {
     const refList = shot.reference_images.map(r => `${r.entity_name}(${r.role})`).join("、");
     return [
         `### 镜头 ${shot.shot_index}｜${shot.shot_meta.shot_type}｜${shot.shot_meta.camera_movement}｜${shot.shot_meta.duration_estimate}`,

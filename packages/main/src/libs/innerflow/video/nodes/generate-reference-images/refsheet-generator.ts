@@ -14,9 +14,9 @@ const P = "#video:";
 
 /**
  * 为单个实体生成全局参考图提示词。
- *
- * 源头约束：只读 entity 的 base_description（跨场景不变部分）。
- * 不读 scene_delta，不读 lighting_effect——从源头切断了"本场景变化"污染。
+ * 支持两类：
+ * - 全局登记册实体（individual_refsheet）
+ * - source_group 提升个体（不在登记册，从 stage / design-shots 素材取描述，引用所属群体制服）
  */
 export async function generateEntityRefsheet(
     ctx: IRunnerContext,
@@ -24,18 +24,29 @@ export async function generateEntityRefsheet(
 ): Promise<EntityRefsheetPrompt | null> {
     const store = new RefImgStorage(ctx);
 
+    const decision = store.getRenderDecision(entityName);
+    if (!decision || decision.strategy !== "individual_refsheet") {
+        return null;
+    }
+
+    const globalStyle = store.getGlobalStyle();
+    const styleSection = buildRefsheetStyleSection({
+        style: globalStyle.style,
+        color_tone: globalStyle.color_tone,
+    });
+
+    // 分支 1：source_group 提升个体
+    if (decision.source_group) {
+        return generateSourceGroupIndividualRefsheet(ctx, store, entityName, decision, styleSection);
+    }
+
+    // 分支 2：全局登记册实体
     const entity = store.getGlobalEntity(entityName);
     if (!entity) {
         ctx.warn(`[generateEntityRefsheet] 实体不存在：${entityName}`);
         return null;
     }
-
     if (entity.kind === "light") return null;
-
-    const decision = store.getRenderDecision(entityName);
-    if (!decision || decision.strategy !== "individual_refsheet") {
-        return null;
-    }
 
     if (!checkExpiry(ctx, {
         inputKeys: [
@@ -57,17 +68,9 @@ export async function generateEntityRefsheet(
     }
 
     const identity = store.getIdentity(entityName);
-
-    const globalStyle = store.getGlobalStyle();
-    const styleSection = buildRefsheetStyleSection({
-        style: globalStyle.style,
-        color_tone: globalStyle.color_tone,
-    });
-
     const layout = decideLayout(entity.kind, entity.humanoid, asset.base_description);
     const skill = getRefsheetSkill(pickRefsheetSkill(entity.kind, entity.humanoid));
 
-    // 源头：只传 base_description，不传 scene_delta / lighting_effect
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx),
         instructions: ENTITY_REFSHEET_PROMPT.system(styleSection, skill),
@@ -89,10 +92,177 @@ export async function generateEntityRefsheet(
         prompt: text.trim(),
         source_scene: entity.scenes[0],
         importance: decision.importance,
+        referenced_shot_count: decision.referenced_shot_count,
+        referenced_scene_count: decision.referenced_scene_count,
     };
 
     store.saveEntityRefsheet(refsheet);
     ctx.info(`[generateEntityRefsheet] ${entityName} 参考图提示词完成（${layout}）`);
+    return refsheet;
+}
+
+/**
+ * source_group 提升个体的参考图。
+ * 描述来源：stage.entities 的 appearance + design-shots Pass D 的 base_description。
+ * 服装依赖：若所属群体有制服，引用制服设计确保一致。
+ */
+async function generateSourceGroupIndividualRefsheet(
+    ctx: IRunnerContext,
+    store: RefImgStorage,
+    entityName: string,
+    decision: { source_group?: string; importance: number; referenced_shot_count: number; referenced_scene_count: number },
+    styleSection: string,
+): Promise<EntityRefsheetPrompt | null> {
+    // 找到该个体所在的场景与描述
+    const found = store.findSourceGroupEntity(entityName);
+    if (!found) {
+        ctx.warn(`[generateEntityRefsheet] source_group 个体未找到：${entityName}`);
+        return null;
+    }
+    const { sceneId, stageEntity } = found;
+
+    if (!checkExpiry(ctx, {
+        inputKeys: [
+            `${P}state:stage_${sceneId}`,
+            `${P}shots:asset_${sceneId}_${entityName}`,
+            "config:style",
+            "config:colorTone",
+        ],
+        outputKeys: store.entityRefsheetKey(entityName),
+    })) {
+        const cached = store.getEntityRefsheet(entityName);
+        if (cached) return cached;
+    }
+
+    const asset = store.getEntityAssetForScene(sceneId, entityName);
+    const baseDescription = asset?.base_description || stageEntity.appearance || "";
+    if (!baseDescription) {
+        ctx.warn(`[generateEntityRefsheet] source_group 个体 ${entityName} 无外观描述，跳过`);
+        return null;
+    }
+
+    // 服装依赖：所属群体制服
+    let uniformReference = "";
+    const uniformName = decision.source_group ? `${decision.source_group}制服` : "";
+    if (uniformName) {
+        const uniform = store.getUniform(uniformName);
+        if (uniform) {
+            uniformReference = [
+                uniform.description,
+                ...uniform.items.map(it => `- ${it.item}：${it.material}，${it.color}`),
+            ].join("\n");
+        }
+    }
+
+    const skill = getRefsheetSkill("character_humanoid");
+    const { text } = await generateText({
+        model: getSmartModel(undefined, ctx),
+        instructions: ENTITY_REFSHEET_PROMPT.system(styleSection, skill),
+        prompt: ENTITY_REFSHEET_PROMPT.user({
+            entityName,
+            kind: "character",
+            humanoid: true,
+            ethnicity: "东亚汉族面部特征",
+            layout: "four_column",
+            baseDescription,
+            uniformReference: uniformReference || undefined,
+        }),
+    });
+
+    const refsheet: EntityRefsheetPrompt = {
+        entity_name: entityName,
+        kind: "character",
+        humanoid: true,
+        layout: "four_column",
+        prompt: text.trim(),
+        source_scene: sceneId,
+        importance: decision.importance,
+        referenced_shot_count: decision.referenced_shot_count,
+        referenced_scene_count: decision.referenced_scene_count,
+        source_group: decision.source_group,
+    };
+
+    store.saveEntityRefsheet(refsheet);
+    ctx.info(`[generateEntityRefsheet] source_group 个体 ${entityName} 参考图完成${uniformReference ? "（含制服依赖）" : ""}`);
+    return refsheet;
+}
+
+/**
+ * 群体合照参考图（无制式服装的群体角色）。
+ */
+export async function generateGroupPhoto(
+    ctx: IRunnerContext,
+    groupName: string,
+): Promise<EntityRefsheetPrompt | null> {
+    const store = new RefImgStorage(ctx);
+
+    const entity = store.getGlobalEntity(groupName);
+    if (!entity) {
+        ctx.warn(`[generateGroupPhoto] 群体不存在：${groupName}`);
+        return null;
+    }
+
+    const decision = store.getRenderDecision(groupName);
+    if (!decision || decision.strategy !== "group_photo") return null;
+
+    if (!checkExpiry(ctx, {
+        inputKeys: [
+            `${P}shots:asset_${entity.scenes[0]}_${groupName}`,
+            `${P}stage:registry:${groupName}`,
+            "config:style",
+            "config:colorTone",
+        ],
+        outputKeys: store.entityRefsheetKey(groupName),
+    })) {
+        const cached = store.getEntityRefsheet(groupName);
+        if (cached) return cached;
+    }
+
+    const asset = store.getEntityAsset(groupName);
+    const baseDescription = asset?.base_description || entity.appearance || "";
+    if (!baseDescription) {
+        ctx.warn(`[generateGroupPhoto] ${groupName} 无外观描述，跳过`);
+        return null;
+    }
+
+    const identity = store.getIdentity(groupName);
+    const globalStyle = store.getGlobalStyle();
+    const styleSection = buildRefsheetStyleSection({
+        style: globalStyle.style,
+        color_tone: globalStyle.color_tone,
+    });
+
+    const countLabel = entity.count === 0 ? "群体" : `${entity.count}`;
+    const skill = getRefsheetSkill("group_photo");
+
+    const { text } = await generateText({
+        model: getSmartModel(undefined, ctx),
+        instructions: ENTITY_REFSHEET_PROMPT.system(styleSection, skill),
+        prompt: ENTITY_REFSHEET_PROMPT.user({
+            entityName: groupName,
+            kind: "character",
+            humanoid: true,
+            ethnicity: identity?.ethnicity ?? "东亚汉族面部特征",
+            layout: "group_photo",
+            baseDescription,
+            groupCount: countLabel,
+        }),
+    });
+
+    const refsheet: EntityRefsheetPrompt = {
+        entity_name: groupName,
+        kind: "character",
+        humanoid: true,
+        layout: "group_photo",
+        prompt: text.trim(),
+        source_scene: entity.scenes[0],
+        importance: decision.importance,
+        referenced_shot_count: decision.referenced_shot_count,
+        referenced_scene_count: decision.referenced_scene_count,
+    };
+
+    store.saveEntityRefsheet(refsheet);
+    ctx.info(`[generateGroupPhoto] ${groupName} 群体合照提示词完成`);
     return refsheet;
 }
 
@@ -143,14 +313,17 @@ export async function generateUniformRefsheet(
         }),
     });
 
+    const groupEntity = store.getGlobalEntity(uniform.group_entity_name);
     const refsheet: EntityRefsheetPrompt = {
         entity_name: uniformName,
         kind: "character",
         humanoid: true,
         layout: "uniform_turnaround",
         prompt: text.trim(),
-        source_scene: store.getGlobalEntity(uniform.group_entity_name)?.scenes[0] ?? "unknown",
+        source_scene: groupEntity?.scenes[0] ?? "unknown",
         importance: 7,
+        referenced_shot_count: 0,
+        referenced_scene_count: groupEntity ? groupEntity.scenes.length : 0,
     };
 
     store.saveUniformPrompt(refsheet);

@@ -3,9 +3,11 @@
 /**
  * 全局实体参考图提示词。
  *
- * 源头设计：参考图只描述"纯白背景下的跨场景不变外观"。
- * system 中**没有任何 meta 声明要求**；
- * user 中**不传 scene_delta / lighting_effect**（源头切断）。
+ * 布局类型：
+ * - four_column：类人角色（左侧大头特写 + 右侧全身三视图）
+ * - three_column：非类人角色 / 道具 / 陈设
+ * - magazine_grid：长形生物（龙/蛇/虫）
+ * - group_photo：群体合照（自然站位，不分列，白背景）
  */
 export const ENTITY_REFSHEET_PROMPT = {
     system: (styleSection: string, translationSkill: string) =>
@@ -27,7 +29,7 @@ ${translationSkill}
 
 1. **纯白背景**：提示词必须包含 "plain white background"，绝不描述任何环境、空间、场景
 2. **无场景光照**：只用 "soft even studio lighting"，绝不写任何方向性光影（斜射/逆光/侧光/顶光/体积光）
-3. **无任何动作姿态**：只用 "neutral standing pose, arms at sides"（类人）或 "neutral position"（非类人），绝不写场景动作（跪地/持物/奔跑/凝视）
+3. **无任何动作姿态**：全身区域用 "neutral standing pose, arms at sides"（类人）或 "neutral position"（非类人），大头区域表情中性视线平视；群体合照用自然站立排列；绝不写场景动作
 4. **无空间定位**：绝不写"左侧"/"桌面"/"墙上"/"中间"等场景位置词
 5. **绝不输出 meta 声明**：不要写"serves as reference for..."/"visual reference for..."等自引用声明
 6. **绝不输出编号**：不要 [1] [2] [3] 段号
@@ -43,16 +45,23 @@ ${translationSkill}
         kind: string;
         humanoid: boolean;
         ethnicity: string;
-        layout: "four_column" | "three_column" | "magazine_grid";
+        layout: "four_column" | "three_column" | "magazine_grid" | "group_photo";
         baseDescription: string;
+        groupCount?: string;
+        uniformReference?: string;
     }) => {
-        const layoutInstruction = getLayoutInstruction(params.layout, params.humanoid, params.kind);
+        const layoutInstruction = getLayoutInstruction(params.layout, params.humanoid, params.kind, params.groupCount);
 
         let prompt = `【实体】${params.entityName}（${params.kind}）\n`;
         prompt += `【族裔】${params.ethnicity}\n`;
         prompt += `【构图模板（直接使用，不要修改）】\n${layoutInstruction.template}\n\n`;
         prompt += `【跨场景不变的基础外观描述】\n${params.baseDescription}\n\n`;
-        prompt += `请直接输出提示词。记住：纯白背景、无场景光照（仅 studio lighting）、无任何动作（仅中性站姿）、无空间定位、无 meta 声明、无编号、无场景变化。`;
+
+        if (params.uniformReference) {
+            prompt += `【所属群体的制服设计（本个体服装必须与此制服一致）】\n${params.uniformReference}\n\n`;
+        }
+
+        prompt += `请直接输出提示词。记住：纯白背景、无场景光照（仅 studio lighting）、无任何动作（仅中性站姿；大头区域表情中性视线平视；群体合照自然站立排列）、无空间定位、无 meta 声明、无编号、无场景变化。`;
         return prompt;
     },
 };
@@ -63,14 +72,25 @@ interface LayoutInstruction {
 }
 
 function getLayoutInstruction(
-    layout: "four_column" | "three_column" | "magazine_grid",
+    layout: "four_column" | "three_column" | "magazine_grid" | "group_photo",
     humanoid: boolean,
     kind: string,
+    groupCount?: string,
 ): LayoutInstruction {
     if (layout === "four_column") {
         return {
-            label: "16:9 四列布局（正面/左45°/右45°/背面）",
-            template: `cinematic photorealistic character reference sheet, standard 16:9 widescreen composition, four-column turnaround — front view, left three-quarter view, right three-quarter view, back view, same person consistently across all four views, identical face and proportions, plain white background, neutral standing pose, arms at sides, soft even studio lighting, natural skin tones, full-frame DSLR photograph, ultra realistic skin texture, real human`,
+            label: "16:9 四列布局（左侧大头特写 + 右侧全身正面/左45°/背面）",
+            template: `cinematic photorealistic character reference sheet, standard 16:9 widescreen composition, four-panel layout — left panel: large close-up headshot, face fills 70 percent of the panel, eyes looking straight ahead, neutral expression, hair and headwear fully visible from front, top of shoulders included at bottom edge; right three panels: full-body turnaround — front view, left three-quarter view, back view, same person consistently across all four panels, identical face proportions and skin tone and hair and clothing, plain white background, neutral standing pose, arms at sides, soft even studio lighting, natural skin tones, full-frame DSLR photograph, ultra realistic skin texture with visible pores, real human`,
+        };
+    }
+
+    if (layout === "group_photo") {
+        const countHint = groupCount && groupCount !== "群体"
+            ? `exactly ${groupCount} individuals`
+            : "a small consistent group of individuals";
+        return {
+            label: "16:9 群体合照（自然站位，不分列）",
+            template: `photorealistic group photograph, standard 16:9 widescreen composition, ${countHint} standing together in a natural loose arrangement facing the camera, full body visible for the front row, consistent shared visual style across all members — same clothing type and material and color palette, same overall body type range and hair style range, plain white background, neutral standing poses, arms at sides, soft even studio lighting, natural skin tones, full-frame DSLR photograph, ultra realistic skin and fabric texture, real humans`,
         };
     }
 

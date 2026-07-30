@@ -3,21 +3,30 @@ import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText } from "ai";
-import { ENVIRONMENT_BASE_PROMPT } from "./prompts/environment-base.js";
+import {
+    ENVIRONMENT_BASE_PROMPT,
+    ENVIRONMENT_REFINE_PROMPT,
+    ENVIRONMENT_REVIEW_PROMPT,
+} from "./prompts/environment-base.js";
 import { buildRefsheetStyleSection } from "./prompts/refsheet-style.js";
 import { RefImgStorage } from "./storage.js";
 import type { SceneEnvironmentPrompt } from "./types.js";
 
 const P = "#video:";
+const MAX_ENV_REVIEW_ROUNDS = 2;
 
 /**
- * 为单个场景生成环境基底图提示词。
+ * 为单个场景生成环境基底图提示词（带细化+评审 ReAct）。
  *
- * 源头治理：
- * 1. 不调用 character/light 实体的任何描述字段
- * 2. 所有 set/prop 实体的描述**都进 prompt 输入**——有独立参考图的用于
- *    渲染时上传参考图，无独立参考图的描述必须进入环境提示词正文（否则丢失）
- * 3. prompt 不接收任何"inlineCharacterDescriptions"之类的字段——从接口设计源头切断
+ * 三阶段：
+ * 1. 初次设计（DESIGN）—— 空间结构 + 固定陈设 + 光照基线
+ * 2. 细化（REFINE）—— 沿场景氛围补充痕迹、细节、材质老化
+ * 3. 评审（REVIEW）—— 检查设计是否能承载后续剧情（ReAct，最多 2 轮）
+ *
+ * 道具判定（基于 origin）：
+ * - origin="scene" 的 prop/set → 进环境图（fixed_set / inline）
+ * - origin="character:..." 的 prop → 不进环境图（dynamic_prop，由镜头提示词消费）
+ * - kind="character" / "light" → 一律不进环境图
  */
 export async function generateSceneEnvironment(
     ctx: IRunnerContext,
@@ -30,6 +39,8 @@ export async function generateSceneEnvironment(
             `${P}state:stage_${sceneId}`,
             `${P}shots:lighting_${sceneId}`,
             `${P}output:aligned_text_${sceneId}`,
+            `${P}state:beat_nl_${sceneId}`,
+            `${P}shots:design_${sceneId}`,
             "config:style",
             "config:colorTone",
         ],
@@ -43,8 +54,9 @@ export async function generateSceneEnvironment(
     const stage = store.getStage(sceneId);
     const lighting = store.getLighting(sceneId);
     const alignedText = store.getAlignedText(sceneId);
+    const shotDesign = store.getShotDesign(sceneId);
 
-    if (!stage || !lighting || !alignedText) {
+    if (!stage || !lighting || !alignedText || !shotDesign) {
         ctx.warn(`[generateSceneEnvironment] ${sceneId} 缺少上游输入，跳过`);
         return null;
     }
@@ -55,29 +67,38 @@ export async function generateSceneEnvironment(
         color_tone: globalStyle.color_tone,
     });
 
+    // ===== 实体分类（基于 origin）=====
     const allDecisions = store.allRenderDecisions();
-
-    // 源头：只遍历 set/prop，character/light 完全不进入
-    const setForPrompt: Array<{ name: string; appearance: string }> = [];
-    const propForPrompt: Array<{ name: string; appearance: string }> = [];
+    const fixedSetForPrompt: Array<{ name: string; appearance: string }> = [];
     const refsheetEntities: string[] = [];
+    const excludedDynamicProps: string[] = [];
 
     for (const e of stage.entities) {
-        if (e.kind !== "set" && e.kind !== "prop") continue;
+        // character / light 一律不进环境图
+        if (e.kind === "character" || e.kind === "light") continue;
 
         const globalName = store.resolveToGlobalName(sceneId, e.name);
         const decision = allDecisions.find(d => d.name === globalName);
         const asset = store.getEntityAssetForScene(sceneId, globalName);
-        // 源头：有参考图时也保留描述（用于环境图正文中定位它），不丢
         const description = asset?.base_description || e.appearance || "";
 
-        if (decision?.strategy === "individual_refsheet") {
-            refsheetEntities.push(globalName);
+        // 核心判定：基于 origin
+        const origin = e.origin ?? "scene";
+        const isDynamic = origin.startsWith("character:");
+
+        if (isDynamic) {
+            // 动态道具 → 不进环境图
+            excludedDynamicProps.push(globalName);
+            ctx.info(`[generateSceneEnvironment] ${sceneId} 动态道具排除：${globalName}（origin=${origin}）`);
+            continue;
         }
 
-        // 源头：无论是否有参考图，描述都进 prompt 输入
-        const bucket = e.kind === "set" ? setForPrompt : propForPrompt;
-        bucket.push({ name: globalName, appearance: description });
+        // 场景固有 prop/set → 进环境图
+        if (decision?.strategy === "individual_refsheet") {
+            refsheetEntities.push(globalName);
+        } else {
+            fixedSetForPrompt.push({ name: globalName, appearance: description });
+        }
     }
 
     const lightingSection = [
@@ -87,44 +108,139 @@ export async function generateSceneEnvironment(
         `整体效果：${lighting.summary}`,
     ].join("\n");
 
-    // 源头：prompt 输入只传空间/陈设/道具/光照，不传任何人物/角色字段
-    const { text } = await generateText({
+    // ===== Phase 1: 初次设计 =====
+    const { text: designText } = await generateText({
         model: getSmartModel(undefined, ctx),
         instructions: ENVIRONMENT_BASE_PROMPT.system(styleSection),
         prompt: ENVIRONMENT_BASE_PROMPT.user({
             sceneId,
             environment: stage.world.environment,
-            setEntities: setForPrompt,
-            propEntities: propForPrompt,
+            fixedSetEntities: fixedSetForPrompt,
             lighting: lightingSection,
             sceneText: alignedText,
         }),
     });
+    const designNl = designText.trim();
+    ctx.info(`[generateSceneEnvironment] ${sceneId} Phase1 初次设计完成`);
 
-    const prompt = text.trim();
-    const realWorldRefs = extractRealWorldReferences(prompt);
+    // ===== Phase 2: 细化 =====
+    const moodContext = extractMoodContext(alignedText, stage.spatial_layout);
+    const { text: refineText } = await generateText({
+        model: getSmartModel(undefined, ctx),
+        instructions: ENVIRONMENT_REFINE_PROMPT.system(styleSection),
+        prompt: ENVIRONMENT_REFINE_PROMPT.user({
+            sceneId,
+            designPrompt: designNl,
+            moodContext,
+        }),
+    });
+    const refineNl = refineText.trim();
+    ctx.info(`[generateSceneEnvironment] ${sceneId} Phase2 细化完成`);
 
-    // 内联实体 = 无独立参考图的 set/prop（在场景提示词中以文字描述它们）
-    const inlineEntities = [
-        ...setForPrompt, ...propForPrompt,
-    ]
-        .filter(e => !refsheetEntities.includes(e.name))
-        .map(e => ({ name: e.name, description: e.appearance }));
+    // ===== Phase 3: 评审 ReAct =====
+    const reviewHistory: SceneEnvironmentPrompt["review_history"] = [];
+    let currentPrompt = refineNl;
+
+    for (let round = 1; round <= MAX_ENV_REVIEW_ROUNDS; round++) {
+        const { text: reviewText } = await generateText({
+            model: getSmartModel(undefined, ctx),
+            instructions: ENVIRONMENT_REVIEW_PROMPT.system,
+            prompt: ENVIRONMENT_REVIEW_PROMPT.user({
+                sceneId,
+                designPrompt: currentPrompt,
+                sceneText: alignedText,
+                shotDesign,
+            }),
+        });
+
+        const verdict = parseReviewVerdict(reviewText);
+        const feedback = parseReviewFeedback(reviewText);
+
+        reviewHistory.push({ round, verdict, feedback });
+
+        if (verdict === "PASS") {
+            ctx.info(`[generateSceneEnvironment] ${sceneId} Phase3 评审通过（第${round}轮）`);
+            break;
+        }
+
+        if (round === MAX_ENV_REVIEW_ROUNDS) {
+            ctx.warn(`[generateSceneEnvironment] ${sceneId} 达到最大评审轮次 ${MAX_ENV_REVIEW_ROUNDS}，强制通过`);
+            break;
+        }
+
+        // REVISE：把反馈作为约束再次细化
+        const { text: reviseText } = await generateText({
+            model: getSmartModel(undefined, ctx),
+            instructions: ENVIRONMENT_REFINE_PROMPT.system(styleSection),
+            prompt: ENVIRONMENT_REFINE_PROMPT.user({
+                sceneId,
+                designPrompt: currentPrompt,
+                moodContext: `${moodContext}\n\n【评审反馈（必须修正）】\n${feedback}`,
+            }),
+        });
+        currentPrompt = reviseText.trim();
+        ctx.info(`[generateSceneEnvironment] ${sceneId} Phase3 评审未通过（第${round}轮），已重新细化`);
+    }
+
+    const realWorldRefs = extractRealWorldReferences(currentPrompt);
+    const inlineEntities = fixedSetForPrompt.map(e => ({
+        name: e.name,
+        description: e.appearance,
+    }));
+    const referencedShotCount = countReferencedShots(sceneId, store);
 
     const env: SceneEnvironmentPrompt = {
         scene_id: sceneId,
-        prompt,
+        design_nl: designNl,
+        refine_nl: refineNl,
+        prompt: currentPrompt,
+        review_history: reviewHistory,
         real_world_references: realWorldRefs,
         importance: 8,
         refsheet_entities: refsheetEntities,
         inline_entities: inlineEntities,
+        excluded_dynamic_props: excludedDynamicProps,
+        review_round: reviewHistory.length,
+        referenced_shot_count: referencedShotCount,
+        referenced_scene_count: 1,
     };
 
     store.saveSceneEnvironment(env);
     ctx.info(
-        `[generateSceneEnvironment] ${sceneId} 环境图完成（参考图实体 ${refsheetEntities.length}，内联实体 ${inlineEntities.length}）`,
+        `[generateSceneEnvironment] ${sceneId} 完成：固定陈设 ${fixedSetForPrompt.length} 个，参考图陈设 ${refsheetEntities.length} 个，动态道具排除 ${excludedDynamicProps.length} 个，评审轮次 ${reviewHistory.length}`,
     );
     return env;
+}
+
+/** 提取场景氛围/剧情上下文（用于细化的合理性推断） */
+function extractMoodContext(alignedText: string, spatialLayout: string | null): string {
+    const parts: string[] = [];
+    parts.push(`【场景原文摘要】\n${alignedText.slice(0, 800)}`);
+    if (spatialLayout) {
+        parts.push(`【开场站位】\n${spatialLayout}`);
+    }
+    return parts.join("\n\n");
+}
+
+/** 解析评审最后一行 PASS / REVISE */
+function parseReviewVerdict(text: string): "PASS" | "REVISE" {
+    const lastLine = text.trim().split(/\n+/).filter(Boolean).pop() ?? "";
+    const upper = lastLine.toUpperCase();
+    if (/\bPASS\b/.test(upper) && !/\bREVISE\b/.test(upper)) return "PASS";
+    return "REVISE";
+}
+
+/** 提取评审反馈（除最后一行外的所有内容） */
+function parseReviewFeedback(text: string): string {
+    const lines = text.trim().split("\n");
+    if (lines.length <= 1) return "（无具体反馈）";
+    return lines.slice(0, -1).join("\n").trim();
+}
+
+function countReferencedShots(sceneId: string, store: RefImgStorage): number {
+    const design = store.getShotDesign(sceneId);
+    if (!design) return 0;
+    return design.split(/^###\s+镜头/m).length - 1;
 }
 
 function extractRealWorldReferences(prompt: string): string[] {
