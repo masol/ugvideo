@@ -2,8 +2,19 @@
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import type { GlobalEntity, SceneStage } from "../align-entities/types.js";
+import type {
+    CharacterIdentity,
+    CostumeDesign,
+    EntityRenderDecision,
+    UniformDesign,
+} from "../design-characters/types.js";
 import type { EntityAsset, SceneLighting } from "../design-shots/types.js";
-import type { EntityRefsheetPrompt, RenderResult, SceneEnvironmentPrompt } from "./types.js";
+import type {
+    EntityRefsheetPrompt,
+    RenderResult,
+    SceneEnvironmentPrompt,
+    SceneShotPrompt,
+} from "./types.js";
 
 const P = "#video:";
 
@@ -22,10 +33,7 @@ export class RefImgStorage {
         this.prjdb.set(key, value);
     }
 
-    // --------------------------------------------------------
-    // 上游数据（只读）
-    // --------------------------------------------------------
-
+    // 上游数据
     sceneIds(): string[] {
         return this.read<string[]>(`${P}parse:idx:scenes`) ?? [];
     }
@@ -50,44 +58,58 @@ export class RefImgStorage {
         return this.read<string>(`${P}output:aligned_text_${sceneId}`);
     }
 
-    /** 获取实体的素材描述（从首次出现的场景读取） */
+    getShotDesign(sceneId: string): string | null {
+        return this.read<string>(`${P}shots:design_${sceneId}`);
+    }
+
+    getStageAlign(sceneId: string): Record<string, string> | null {
+        return this.read<Record<string, string>>(`${P}stage:align:${sceneId}`);
+    }
+
+    resolveToGlobalName(sceneId: string, localName: string): string {
+        const mapping = this.getStageAlign(sceneId);
+        if (!mapping) return localName;
+        return mapping[localName] ?? localName;
+    }
+
+    getEntityAssetForScene(sceneId: string, entityName: string): EntityAsset | null {
+        return this.read<EntityAsset>(`${P}shots:asset_${sceneId}_${entityName}`);
+    }
+
     getEntityAsset(entityName: string): EntityAsset | null {
         const entity = this.getGlobalEntity(entityName);
         if (!entity || !entity.scenes.length) return null;
-
         const firstScene = entity.scenes[0];
         return this.read<EntityAsset>(`${P}shots:asset_${firstScene}_${entityName}`);
     }
 
-    // --------------------------------------------------------
-    // 全局视觉准则（配置项读取）
-    // --------------------------------------------------------
+    getIdentity(name: string): CharacterIdentity | null {
+        return this.read<CharacterIdentity>(`${P}char:identity_${name}`);
+    }
+
+    getRenderDecision(name: string): EntityRenderDecision | null {
+        return this.read<EntityRenderDecision>(`${P}char:render_decision_${name}`);
+    }
+
+    allRenderDecisions(): EntityRenderDecision[] {
+        return this.entityNames()
+            .map(n => this.getRenderDecision(n))
+            .filter((v): v is EntityRenderDecision => v != null);
+    }
+
+    getUniform(uniformName: string): UniformDesign | null {
+        return this.read<UniformDesign>(`${P}char:uniform_${uniformName}`);
+    }
+
+    getCostume(name: string, sceneId: string): CostumeDesign | null {
+        return this.read<CostumeDesign>(`${P}char:costume_${name}_${sceneId}`);
+    }
 
     getGlobalStyle(): { style: string; color_tone: string } {
         const style = this.read<string>("config:style") ?? "cinematic";
         const colorTone = this.read<string>("config:colorTone") ?? "neutral";
         return { style, color_tone: colorTone };
     }
-
-    // --------------------------------------------------------
-    // SKILL（翻译步骤）
-    // --------------------------------------------------------
-
-    refsheetSkillKey(entityName: string): string {
-        return `${P}refimg:skill_entity_${entityName}`;
-    }
-
-    getRefsheetSkill(entityName: string): string | null {
-        return this.read<string>(this.refsheetSkillKey(entityName));
-    }
-
-    saveRefsheetSkill(entityName: string, skill: string): void {
-        this.write(this.refsheetSkillKey(entityName), skill);
-    }
-
-    // --------------------------------------------------------
-    // 实体定妆照提示词
-    // --------------------------------------------------------
 
     entityRefsheetKey(entityName: string): string {
         return `${P}refimg:entity_${entityName}`;
@@ -109,9 +131,25 @@ export class RefImgStorage {
         return this.read<string[]>(`${P}refimg:idx:entities`) ?? [];
     }
 
-    // --------------------------------------------------------
-    // 场景环境图提示词
-    // --------------------------------------------------------
+    uniformPromptKey(uniformName: string): string {
+        return `${P}refimg:uniform_${uniformName}`;
+    }
+
+    getUniformPrompt(uniformName: string): EntityRefsheetPrompt | null {
+        return this.read<EntityRefsheetPrompt>(this.uniformPromptKey(uniformName));
+    }
+
+    saveUniformPrompt(prompt: EntityRefsheetPrompt): void {
+        this.write(this.uniformPromptKey(prompt.entity_name), prompt);
+        const idx = this.uniformPromptIdx();
+        if (!idx.includes(prompt.entity_name)) {
+            this.write(`${P}refimg:idx:uniforms`, [...idx, prompt.entity_name]);
+        }
+    }
+
+    uniformPromptIdx(): string[] {
+        return this.read<string[]>(`${P}refimg:idx:uniforms`) ?? [];
+    }
 
     sceneEnvironmentKey(sceneId: string): string {
         return `${P}refimg:env_${sceneId}`;
@@ -133,9 +171,36 @@ export class RefImgStorage {
         return this.read<string[]>(`${P}refimg:idx:scenes`) ?? [];
     }
 
-    // --------------------------------------------------------
-    // 渲染结果（图片文件路径）
-    // --------------------------------------------------------
+    // 场景镜头提示词
+    shotPromptKey(sceneId: string, shotIndex: number): string {
+        return `${P}refimg:shot_${sceneId}_${shotIndex}`;
+    }
+
+    getShotPrompt(sceneId: string, shotIndex: number): SceneShotPrompt | null {
+        return this.read<SceneShotPrompt>(this.shotPromptKey(sceneId, shotIndex));
+    }
+
+    saveShotPrompt(sceneId: string, shotIndex: number, prompt: SceneShotPrompt): void {
+        this.write(this.shotPromptKey(sceneId, shotIndex), prompt);
+    }
+
+    shotPromptIdxKey(sceneId: string): string {
+        return `${P}refimg:idx:shots_${sceneId}`;
+    }
+
+    getShotPromptIdx(sceneId: string): number[] {
+        return this.read<number[]>(this.shotPromptIdxKey(sceneId)) ?? [];
+    }
+
+    saveShotPromptIdx(sceneId: string, shotIds: number[]): void {
+        this.write(this.shotPromptIdxKey(sceneId), shotIds);
+    }
+
+    getSceneShotPrompts(sceneId: string): SceneShotPrompt[] {
+        return this.getShotPromptIdx(sceneId)
+            .map(i => this.getShotPrompt(sceneId, i))
+            .filter((v): v is SceneShotPrompt => v != null);
+    }
 
     renderResultKey(id: string): string {
         return `${P}refimg:rendered_${id}`;
@@ -148,10 +213,6 @@ export class RefImgStorage {
     saveRenderResult(result: RenderResult): void {
         this.write(this.renderResultKey(result.id), result);
     }
-
-    // --------------------------------------------------------
-    // 总览
-    // --------------------------------------------------------
 
     overviewKey(): string {
         return `${P}output:refimg_overview`;

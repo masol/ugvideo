@@ -1,83 +1,70 @@
 // nodes/generate-reference-images/prompts/environment-base.ts
 
 /**
- * 场景环境基底图提示词生成的 System Prompt。
- * 风格/色调约束由外部注入。
+ * 场景环境基底图提示词。
+ *
+ * 源头设计：
+ * - 输入字段**不含**任何人物/角色描述的字段位
+ * - system 明确禁止把人物活动/角色动作纳入环境图
+ * - 所有 set/prop 描述**都进 prompt**（无论是否有独立参考图）
  */
 export const ENVIRONMENT_BASE_PROMPT = {
     system: (styleSection: string) =>
-        `你是一名环境摄影提示词翻译工程师，专精把场景描述转为无人物的环境基底图提示词。
-
-你的唯一职责是翻译，不做任何新设计。
+        `你是一名环境摄影提示词工程师。为场景生成无人物的环境基底图提示词。
 
 ${styleSection}
 
 ---
 
-**核心原则**：
+**铁律**：
 
-1. **无人物（最高优先级）**：
-   - 提示词中必须强调"无人物、无角色、无人、空场景"
-   - 禁止写到任何出场人物（包括他们的痕迹、活动、姿态）
-   - 只描述空间、陈设、光影、氛围
+1. **绝对无人物**：提示词内容层面不得出现任何人物/角色/生物的描述。
+   - 不要写"无人"（负面词），而是从内容上确保不提及人物
+   - 不要从原文提取人物活动、角色动作、对话内容
+   - 角色面部的五官、服装的穿戴状态、表情姿态——这些都不属于环境图
+2. **所有陈设/道具必须出现**：本场景中的每个 set/prop 都在输入中列出，每个都必须在提示词中有视觉描述
+3. **现实案例参照**：从空间环境推断 1-2 个现实世界地点/建筑作为视觉锚点
+4. **光照完整**：包含主光/补光/环境氛围/整体效果四层
+5. **AI 引擎友好**：用建筑摄影术语，不写学术精度数值
+6. **不开头写 no humans/empty scene 等负面词**——而是从内容上排除人物
 
-2. **现实案例参照（必须提供）**：
-   - 每个环境图提供 1-2 个现实世界地点/建筑作为视觉锚点
-   - 示例：
-     - "中式禅院" → "参考苏州拙政园庭院布局、京都龙安寺石庭"
-     - "老旧公寓" → "参考上海1980年代老公房室内、香港九龙城寨单元"
-   - 现实案例参照帮助 AI 引擎锁定美学方向
-
-3. **AI 引擎友好性**：
-   - 用建筑摄影/室内设计领域的常见术语
-   - 禁止学术精度描述
-   - 光影用自然语言，不写数值
-
-4. **四层光照完整**：
-   - [L1] 主光：方向 + 色温 + 软硬 + 投影形态
-   - [L2] 补光：来源面 + 色调 + 强度
-   - [L3] 轮廓光：位置 + 色调
-   - [L4] 环境散射与体积感
-
-**输出格式**（纯自然语言，不输出 JSON）：
-
-[1] 图像类型与构图锚定（含16:9横构图 + 环境摄影 + 无人物强调）
-[2] 现实案例参照（1-2个真实地点）
-[3] 空间环境描述（来自stage.world.environment）
-[4] 固定地标与陈设（来自stage.entities中的set类，剥离人物活动痕迹）
-[5] 四层光照方案（来自shots:lighting）
-[6] 色彩与氛围
-[7] 参考图依赖：@{场景内实体}, @{场景内实体}, ...
-[8] 真实照片级收尾（肯定句）
-
-[1] 锚定段模板：
-"cinematic environmental photograph, standard 16:9 widescreen composition, wide establishing shot capturing the full breadth of the space, no characters, no people, no figures, no humans, empty scene, uninhabited, architectural photography, location scouting reference, natural light, photorealistic, real photography"
-
-[8] 收尾：
-"professional location scouting reference, photorealistic, real photograph, no illustration, no anime, no concept art, no cgi, no 3d render"`,
+**输出**：直接输出提示词短语（逗号分隔），不编号不分段。开头必须是构图锚定模板。`,
 
     user: (params: {
         sceneId: string;
         environment: string;
-        entities: string;
+        setEntities: Array<{ name: string; appearance: string }>;
+        propEntities: Array<{ name: string; appearance: string }>;
         lighting: string;
         sceneText: string;
-        dependencies: string[];
     }) => {
         let prompt = `【场景 ${params.sceneId}】\n\n`;
 
-        prompt += `【空间环境（来自stage.world.environment）】\n${params.environment}\n\n`;
+        prompt += `【空间环境（只描述空间结构、陈设布局、光照氛围，不提取任何人物活动）】\n${params.environment}\n\n`;
 
-        prompt += `【场景内实体清单（仅set类用于环境描述，character/prop仅作依赖项）】\n${params.entities}\n\n`;
+        if (params.setEntities.length > 0) {
+            prompt += `【固定陈设（每个都必须出现在提示词中，给出位置+材质+色彩）】\n`;
+            for (const e of params.setEntities) {
+                prompt += `- ${e.name}：${e.appearance || "无原文描写，根据场景合理补充视觉细节"}\n`;
+            }
+            prompt += `\n`;
+        }
 
-        prompt += `【光照方案（来自shots:lighting）】\n${params.lighting}\n\n`;
+        if (params.propEntities.length > 0) {
+            prompt += `【道具（每个都必须出现在提示词中，给出位置+材质+色彩+状态）】\n`;
+            for (const e of params.propEntities) {
+                prompt += `- ${e.name}：${e.appearance || "无原文描写，根据场景合理补充视觉细节"}\n`;
+            }
+            prompt += `\n`;
+        }
 
-        prompt += `【场景原文（用于推断现实案例参照）】\n${params.sceneText.slice(0, 500)}\n\n`;
+        prompt += `【光照方案】\n${params.lighting}\n\n`;
 
-        prompt += `请按 [1]-[8] 顺序组装环境提示词。特别注意：\n`;
-        prompt += `1. 从原文推断 1-2 个现实案例参照\n`;
-        prompt += `2. 必须强调"无人物"\n`;
-        prompt += `3. 引用依赖占位符：${params.dependencies.map(d => `@{${d}}`).join(", ")}\n`;
+        prompt += `【场景原文（仅用于推断空间类型和现实案例参照，不从中提取人物描述）】\n${params.sceneText.slice(0, 500)}\n\n`;
+
+        prompt += `请生成环境基底图提示词。开头使用以下构图模板：\n`;
+        prompt += `"cinematic environmental photograph, standard 16:9 widescreen composition, wide establishing shot, architectural photography, location scouting reference, photorealistic, real photography"\n\n`;
+        prompt += `确保每个 set/prop 都有具体视觉描述（位置+材质+色彩），不可遗漏。`;
 
         return prompt;
     },

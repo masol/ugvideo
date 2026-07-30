@@ -12,7 +12,6 @@ export class ParseStorage {
         this.prjdb = PrjDB.ensure(ctx.prj);
     }
 
-    // ===== 入口：剧本正文分片（按 identified array 的 id 读取）=====
     getScriptPart(id: string): string | null {
         return this.prjdb.get<string>(`script_${id}`);
     }
@@ -36,6 +35,31 @@ export class ParseStorage {
         return this.prjdb.get<GlobalItem[]>(`${P}parse:global_items`) ?? [];
     }
 
+    // ===== Synopsis / World Context =====
+    /**
+     * 把剧本梗概/序言/编者按等"非场景内容"拼接为世界观摘要。
+     * 来源：global_items 中 kind ∈ {synopsis, preface, note} 的条目，按 line_start 排序拼接 summary。
+     * 若全部缺失，返回 null。
+     */
+    loadSynopsis(): string | null {
+        const items = this.loadGlobalItems()
+            .filter(g => /synopsis|preface|note/i.test(g.kind))
+            .sort((a, b) => a.line_start - b.line_start);
+
+        if (items.length === 0) return null;
+
+        const merged = items.map(g => g.summary).filter(Boolean).join("\n\n");
+        const trimmed = merged.trim();
+        return trimmed.length > 0 ? trimmed : null;
+    }
+
+    saveSynopsis(text: string): void {
+        this.prjdb.set(`${P}parse:synopsis`, text);
+    }
+    getCachedSynopsis(): string | null {
+        return this.prjdb.get<string>(`${P}parse:synopsis`) ?? null;
+    }
+
     // ===== Scenes =====
     saveScene(scene: PersistedScene): void {
         this.prjdb.set(`${P}parse:scene:${scene.scene_id}`, scene);
@@ -51,7 +75,6 @@ export class ParseStorage {
         return this.prjdb.get<string[]>(`${P}parse:idx:scenes`) ?? [];
     }
 
-    /** 按 line_start 重排场景索引，保证下游遍历为叙事顺序 */
     reorderScenesByLine(): void {
         const ordered = this.listSceneIds()
             .slice()

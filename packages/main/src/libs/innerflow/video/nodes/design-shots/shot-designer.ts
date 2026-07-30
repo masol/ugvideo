@@ -8,25 +8,18 @@ import pMap from "p-map";
 import type { SceneStage, StageEntity } from "../align-entities/types.js";
 import { ASSET_DESIGNER_PROMPT } from "./prompts/asset-designer.js";
 import { ASSET_REVIEWER_PROMPT } from "./prompts/asset-reviewer.js";
+import { getAssetSkill, pickAssetSkill } from "./prompts/asset-skills.js";
 import { INTENT_EXTRACTOR_PROMPT } from "./prompts/intent-extractor.js";
 import { LIGHTING_DESIGNER_PROMPT } from "./prompts/lighting-designer.js";
 import { SHOT_DESIGNER_PROMPT } from "./prompts/shot-designer.js";
-import { SKILL_GENERATOR_PROMPT } from "./prompts/skill-generator.js";
+import { getShotSkill, SHOT_SKILLS, type ShotSkillKind } from "./prompts/shot-skills.js";
 import { buildStyleDirectives } from "./prompts/style-directives.js";
 import { ShotStorage } from "./storage.js";
-import type { EntityAsset, GlobalStyle, SceneLighting } from "./types.js";
+import type { EntityAsset, SceneLighting } from "./types.js";
 
 const P = "#video:";
 const MAX_REVIEW_ROUNDS = 2;
 const MAX_SHOT_ENTITY_CHECK_ROUNDS = 3;
-
-async function queryShotSkill(_query: string): Promise<string | null> {
-    return null;
-}
-
-async function queryAssetSkill(_query: string): Promise<string | null> {
-    return null;
-}
 
 export function initAssetConstraints(ctx: IRunnerContext): void {
     const store = new ShotStorage(ctx);
@@ -56,6 +49,7 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
             store.assetConstraintsKey(),
             `${P}stage:registry:idx`,
             `${P}stage:align:${sceneId}`,
+            `${P}shots:intent_${sceneId}`,
             "config:pace",
             "config:aspectRatio",
             "config:style",
@@ -71,7 +65,7 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
 
     const alignedText = store.getAlignedText(sceneId);
     if (!alignedText) {
-        throwPrecondition("无法获取指代消解完毕的文本。")
+        throwPrecondition("无法获取指代消解完毕的文本。");
     }
     const stage = store.getStage(sceneId);
     if (!stage) throwPrecondition(`[designScene] ${sceneId} 缺少舞台信息`);
@@ -86,16 +80,14 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
         aspect_ratio: globalStyle.aspect_ratio,
     });
 
-    // 构建跨场景时间线索（用于年龄推断）
     const timelineContext = buildTimelineContext(ctx, sceneId, store);
 
     const intent = await extractIntent(ctx, sceneId, alignedText, stage);
-    const { intentSection, riskSection } = splitIntent(intent);
-    const ragQuery = buildRagQuery(intentSection);
-    const configForSkill = formatConfigForSkill(globalStyle);
+    const { intentSection } = splitIntent(intent);
 
-    const shotSkill = await ensureShotSkill(ctx, sceneId, ragQuery, intentSection, riskSection, configForSkill);
-    const assetSkill = await ensureAssetSkill(ctx, sceneId, ragQuery, intentSection, riskSection, configForSkill);
+    const shotSkillKind = pickShotSkillKind(intentSection, globalStyle.pacing);
+    const shotSkill = getShotSkill(shotSkillKind);
+    ctx.info(`[designScene] ${sceneId} 分镜 SKILL=${shotSkillKind}`);
 
     const lighting = await designLighting(ctx, sceneId, stage, intentSection, styleDirectives);
     const lightingText = formatLighting(lighting);
@@ -105,17 +97,30 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
     });
 
     await designAssetsForScene(ctx, sceneId, {
-        alignedText, stage, styleDirectives, assetSkill, lightingText, timelineContext,
+        alignedText, stage, styleDirectives, lightingText, timelineContext,
     });
 
     store.markSceneDesigned(sceneId);
     ctx.info(`[designScene] ${sceneId} 完成`);
 }
 
-/**
- * 构建跨场景时间线索，用于年龄/外观推断。
- * 收集：当前场景元信息（episode/act/location/timeOfDay）+ 已登记的全局实体历史出场摘要。
- */
+function pickShotSkillKind(intentSection: string, pacing: string): ShotSkillKind {
+    const coreAction = extractField(intentSection, "核心动作");
+    const participants = extractField(intentSection, "参与人数");
+    const rhythm = extractField(intentSection, "内在节奏");
+
+    const actionLow = (coreAction + " " + intentSection).toLowerCase();
+
+    if (/回忆|梦境|心理|内心|独白|回想|记忆/.test(actionLow)) return "psychological_abstract";
+    if (/仪式|祭祀|典礼|朝拜|加冕|祈祷/.test(actionLow)) return "ceremonial_slow";
+    if (/移动|奔跑|追逐|飞行|车|船|骑马|赶路|逃|追/.test(actionLow)) return "motion_continuous";
+    if (/打|斗|战|搏|厮杀|冲突|攻|防/.test(actionLow)) return "action_fast";
+    if (/群体|多人|会议|宴会|聚|围观/.test(participants) || /3\+|群体/.test(participants)) return "ensemble_wide";
+    if (rhythm === "快" || pacing === "fast") return "dialogue_fast";
+    if (rhythm === "慢" || pacing === "slow") return "dialogue_slow";
+    return "default_normal";
+}
+
 function buildTimelineContext(
     _ctx: IRunnerContext,
     sceneId: string,
@@ -124,16 +129,15 @@ function buildTimelineContext(
     const meta = store.getSceneMeta(sceneId);
     if (!meta) return "";
 
-    const ctx = meta.context as Record<string, unknown> | undefined;
+    const ctxData = meta.context as Record<string, unknown> | undefined;
     const parts: string[] = [];
 
-    if (ctx?.episode) parts.push(`集：${ctx.episode}`);
-    if (ctx?.act) parts.push(`幕：${ctx.act}`);
-    if (ctx?.location) parts.push(`地点：${ctx.location}`);
-    if (ctx?.timeOfDay) parts.push(`时间：${ctx.timeOfDay}`);
-    if (typeof ctx?.first_line_summary === "string") parts.push(`摘要：${ctx.first_line_summary}`);
+    if (ctxData?.episode) parts.push(`集：${ctxData.episode}`);
+    if (ctxData?.act) parts.push(`幕：${ctxData.act}`);
+    if (ctxData?.location) parts.push(`地点：${ctxData.location}`);
+    if (ctxData?.timeOfDay) parts.push(`时间：${ctxData.timeOfDay}`);
+    if (typeof ctxData?.first_line_summary === "string") parts.push(`摘要：${ctxData.first_line_summary}`);
 
-    // 收集所有场景的元信息供 LLM 理解整部剧的时间线
     const allSceneIds = store.sceneIds();
     const sceneTimeline: string[] = [];
     for (const sid of allSceneIds) {
@@ -178,76 +182,6 @@ async function extractIntent(
 
     store.saveIntent(sceneId, text);
     ctx.info(`[PassA] ${sceneId} 意图抽象完成`);
-    return text;
-}
-
-async function ensureShotSkill(
-    ctx: IRunnerContext,
-    sceneId: string,
-    ragQuery: string,
-    intentSection: string,
-    riskSection: string,
-    configForSkill: string,
-): Promise<string> {
-    const store = new ShotStorage(ctx);
-
-    if (!checkExpiry(ctx, {
-        inputKeys: store.intentKey(sceneId),
-        outputKeys: store.shotSkillKey(sceneId),
-    })) {
-        const cached = store.getShotSkill(sceneId);
-        if (cached) return cached;
-    }
-
-    const fromRag = await queryShotSkill(ragQuery);
-    if (fromRag) {
-        store.saveShotSkill(sceneId, fromRag);
-        return fromRag;
-    }
-
-    const { text } = await generateText({
-        model: getSmartModel(undefined, ctx),
-        instructions: SKILL_GENERATOR_PROMPT.shotSystem,
-        prompt: SKILL_GENERATOR_PROMPT.shotUser(intentSection, riskSection, configForSkill),
-    });
-
-    store.saveShotSkill(sceneId, text);
-    ctx.info(`[ShotSkill] ${sceneId} LLM 生成`);
-    return text;
-}
-
-async function ensureAssetSkill(
-    ctx: IRunnerContext,
-    sceneId: string,
-    ragQuery: string,
-    intentSection: string,
-    riskSection: string,
-    configForSkill: string,
-): Promise<string> {
-    const store = new ShotStorage(ctx);
-
-    if (!checkExpiry(ctx, {
-        inputKeys: store.intentKey(sceneId),
-        outputKeys: store.assetSkillKey(sceneId),
-    })) {
-        const cached = store.getAssetSkill(sceneId);
-        if (cached) return cached;
-    }
-
-    const fromRag = await queryAssetSkill(ragQuery);
-    if (fromRag) {
-        store.saveAssetSkill(sceneId, fromRag);
-        return fromRag;
-    }
-
-    const { text } = await generateText({
-        model: getSmartModel(undefined, ctx),
-        instructions: SKILL_GENERATOR_PROMPT.assetSystem,
-        prompt: SKILL_GENERATOR_PROMPT.assetUser(intentSection, riskSection, configForSkill),
-    });
-
-    store.saveAssetSkill(sceneId, text);
-    ctx.info(`[AssetSkill] ${sceneId} LLM 生成`);
     return text;
 }
 
@@ -297,7 +231,7 @@ async function designShotsForScene(
     const store = new ShotStorage(ctx);
 
     if (!checkExpiry(ctx, {
-        inputKeys: [store.shotSkillKey(sceneId), store.lightingKey(sceneId)],
+        inputKeys: [store.intentKey(sceneId), store.lightingKey(sceneId)],
         outputKeys: store.designKey(sceneId),
     })) {
         ctx.info(`[PassB] ${sceneId} 分镜仍新鲜，跳过`);
@@ -305,9 +239,7 @@ async function designShotsForScene(
     }
 
     const stageInfo = formatStageInfo(params.stage);
-    const entityList = params.stage.entities
-        .map(e => `- 「${e.name}」`)
-        .join("\n");
+    const entityList = params.stage.entities.map(e => `- 「${e.name}」`).join("\n");
 
     const allowedEntities = new Set(params.stage.entities.map(e => e.name));
 
@@ -362,12 +294,10 @@ async function designShotsForScene(
 function extractEntityReferences(text: string): string[] {
     const pattern = /「([^」]+)」/g;
     const found = new Set<string>();
-
     for (const match of text.matchAll(pattern)) {
         const entityName = match[1].trim();
         if (entityName) found.add(entityName);
     }
-
     return Array.from(found);
 }
 
@@ -381,9 +311,7 @@ function buildEntityCheckFeedback(invalidEntities: string[], allowedEntities: Se
         ...Array.from(allowedEntities).map(e => `- 「${e}」`),
         ``,
         `请检查你的分镜文本，将所有非法引用替换为清单内的实体，或删除相关描述。`,
-        `特别注意：不要引用原文中括号标注的别名（如"豢龙氏（长腿美女）"中的"长腿美女"若不在清单里，不得引用）。`,
     ];
-
     return lines.join("\n");
 }
 
@@ -394,7 +322,6 @@ async function designAssetsForScene(
         alignedText: string;
         stage: SceneStage;
         styleDirectives: string;
-        assetSkill: string;
         lightingText: string;
         timelineContext: string;
     },
@@ -406,12 +333,16 @@ async function designAssetsForScene(
     await pMap(
         params.stage.entities,
         async (entity) => {
-            // 关键：用 align 映射把局部名转为全局规范名，再去查/写约束
             const globalName = store.resolveToGlobalName(sceneId, entity.name);
+
+            const decision = store.getRenderDecision(globalName);
+            if (decision?.strategy === "skip") return;
+
+            const assetSkill = getAssetSkill(pickAssetSkill(entity.kind, entity.humanoid));
 
             await designSingleAsset(ctx, sceneId, entity, globalName, {
                 styleDirectives: params.styleDirectives,
-                assetSkill: params.assetSkill,
+                assetSkill,
                 lightingText: params.lightingText,
                 sceneContext,
                 timelineContext: params.timelineContext,
@@ -437,14 +368,39 @@ async function designSingleAsset(
     },
 ): Promise<void> {
     const store = new ShotStorage(ctx);
-    // 用全局规范名查 constraint
     const existingConstraint = findConstraint(store, globalName);
     const countLabel = entity.count === 0 ? "群体" : entity.count === 1 ? "个体" : `${entity.count}个`;
+
+    const identity = store.getIdentity(globalName);
+    const identityInfo = identity
+        ? [
+            `身份：${identity.identity}`,
+            `族裔：${identity.ethnicity}`,
+            `年龄段：${identity.age_stage}`,
+            `性别：${identity.gender}`,
+            `体型：${identity.body_type}`,
+        ].join("\n")
+        : "";
+
+    const costume = store.getCostume(globalName, sceneId) ?? store.getFirstCostume(globalName);
+    const costumeInfo = costume
+        ? [
+            costume.description,
+            ...costume.items.map(it => `- ${it.item}：${it.material}，${it.color}`),
+        ].join("\n")
+        : "";
+
+    const decision = store.getRenderDecision(globalName);
+    const renderStrategy = decision?.strategy ?? "prompt_only";
 
     let assetNl: string | null = null;
     let feedback: string | undefined;
 
     for (let round = 0; round <= MAX_REVIEW_ROUNDS; round++) {
+        const reviewFeedbackWithConstraint = feedback
+            ? `${feedback}\n\n【必须严格保留的约束原文（来自首次出场的基准描述，不可修改）】\n${existingConstraint}`
+            : undefined;
+
         const { text } = await generateText({
             model: getSmartModel(undefined, ctx),
             instructions: ASSET_DESIGNER_PROMPT.system(params.styleDirectives, params.assetSkill),
@@ -453,11 +409,12 @@ async function designSingleAsset(
                 entityKind: entity.kind,
                 entityCount: countLabel,
                 originalAppearance: entity.appearance ?? "无",
-                existingConstraint,
+                identityInfo,
+                costumeInfo,
+                renderStrategy,
                 sceneLighting: params.lightingText,
                 sceneContext: params.sceneContext,
-                timelineContext: params.timelineContext || undefined,
-                reviewFeedback: feedback,
+                reviewFeedback: reviewFeedbackWithConstraint,
             }),
         });
         assetNl = text;
@@ -468,7 +425,7 @@ async function designSingleAsset(
             const baseDesc = extractSection(text, "基础描述");
             const verdict = await reviewAssetConflict(ctx, globalName, existingConstraint, baseDesc);
             if (verdict.passed) break;
-            feedback = verdict.issues.join("\n");
+            feedback = verdict.feedback;
             ctx.info(`[PassD] ${sceneId}/${globalName} 冲突：${feedback}`);
         } else {
             ctx.warn(`[PassD] ${sceneId}/${globalName} 达到最大评审轮次，强制通过`);
@@ -478,7 +435,9 @@ async function designSingleAsset(
     if (!assetNl) return;
 
     const asset = parseEntityAsset(globalName, entity.kind, assetNl);
-    // 用全局规范名落盘
+    if (decision) {
+        asset.importance = decision.strategy === "individual_refsheet" ? "primary" : "secondary";
+    }
     store.saveEntityAsset(sceneId, { ...asset, entity_name: globalName });
 
     if (!existingConstraint && asset.base_description) {
@@ -491,33 +450,35 @@ async function reviewAssetConflict(
     entityName: string,
     existingConstraint: string,
     baseDescription: string,
-): Promise<{ passed: boolean; issues: string[] }> {
+): Promise<{ passed: boolean; feedback: string }> {
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx),
         instructions: ASSET_REVIEWER_PROMPT.system,
         prompt: ASSET_REVIEWER_PROMPT.user({ entityName, existingConstraint, baseDescription }),
     });
 
-    const lines = text.trim().split(/\n+/).filter(Boolean);
-    const lastLine = (lines.pop() ?? "").toUpperCase();
-    const passed = /\bPASS\b/.test(lastLine) && !/\bREVISE\b/.test(lastLine);
+    const trimmed = text.trim();
+    const lastLine = trimmed.split(/\n+/).filter(Boolean).pop() ?? "";
+    const lastUpper = lastLine.toUpperCase();
+    const passed = /\bPASS\b/.test(lastUpper) && !/\bREVISE\b/.test(lastUpper);
 
-    const issues: string[] = [];
-    if (!passed) {
-        const resultIdx = text.indexOf("## 检查结果");
-        if (resultIdx >= 0) {
-            const section = text.slice(resultIdx + "## 检查结果".length).trim();
-            const resultLines = section.split(/\n/).filter(Boolean);
-            resultLines.pop();
-            for (const line of resultLines) {
-                const trimmed = line.replace(/^[-*]\s*/, "").trim();
-                if (trimmed && trimmed !== "无冲突") issues.push(trimmed);
-            }
+    if (passed) return { passed: true, feedback: "" };
+
+    const conflictItems: string[] = [];
+    const sectionMatch = trimmed.match(/##\s*冲突项\s*\n([\s\S]*?)(?=\n##|\n*$)/);
+    if (sectionMatch) {
+        const lines = sectionMatch[1].split("\n");
+        for (const line of lines) {
+            const m = line.match(/^\s*\d+\.\s*(.+)/);
+            if (m) conflictItems.push(m[1].trim());
         }
-        if (issues.length === 0) issues.push("评审报冲突但未给出具体项");
     }
 
-    return { passed, issues };
+    const feedback = conflictItems.length > 0
+        ? `以下是与约束的硬冲突（仅限物种/性别/年龄段/骨骼结构/五官硬性特征）：\n${conflictItems.map((c, i) => `${i + 1}. ${c}`).join("\n")}`
+        : `评审检测到冲突但未给出具体项。请确保基础描述中物种、性别、年龄段、骨骼结构、五官硬性特征与约束完全一致。`;
+
+    return { passed: false, feedback };
 }
 
 function splitIntent(intent: string): { intentSection: string; riskSection: string } {
@@ -525,16 +486,6 @@ function splitIntent(intent: string): { intentSection: string; riskSection: stri
     const idx = intent.indexOf(riskMarker);
     if (idx < 0) return { intentSection: intent.trim(), riskSection: "（无特别风险点）" };
     return { intentSection: intent.slice(0, idx).trim(), riskSection: intent.slice(idx).trim() };
-}
-
-function buildRagQuery(intentSection: string): string {
-    return [
-        extractField(intentSection, "核心动作"),
-        extractField(intentSection, "情绪基调"),
-        extractField(intentSection, "参与人数"),
-        extractField(intentSection, "空间类型"),
-        extractField(intentSection, "内在节奏"),
-    ].filter(Boolean).join("｜");
 }
 
 function extractField(text: string, label: string): string {
@@ -546,17 +497,6 @@ function extractSection(text: string, heading: string): string {
     const re = new RegExp(`##\\s*${heading}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`);
     const m = text.match(re);
     return m ? m[1].trim() : "";
-}
-
-function formatConfigForSkill(style: GlobalStyle): string {
-    return [
-        `画幅：${style.aspect_ratio}`,
-        `运镜风格：${style.camera_movement}`,
-        `节奏基调：${style.pacing}`,
-        `视觉风格：${style.style}`,
-        `受众分级：${style.audience}`,
-        `色调：${style.color_tone}`,
-    ].join("\n");
 }
 
 function formatStageInfo(stage: SceneStage): string {
@@ -600,6 +540,15 @@ function parseLighting(text: string): SceneLighting {
     };
 }
 
+/**
+ * 解析实体素材 LLM 输出。
+ *
+ * 源头切分：基础描述 = 跨场景不变部分（族裔/五官/体型/物种/服装默认形态），
+ * 本场景变化 = 仅本场景独有的变化（脏污/伤痕/姿态/表情/换装），
+ * 光影效果 = 本场景光照对实体的影响。
+ *
+ * 参考图节点只读 base_description；镜头提示词节点组合三者。
+ */
 function parseEntityAsset(name: string, kind: string, text: string): EntityAsset {
     const base = extractSection(text, "基础描述");
     const delta = extractSection(text, "本场景变化");
@@ -617,3 +566,5 @@ function parseEntityAsset(name: string, kind: string, text: string): EntityAsset
         lighting_effect: light,
     };
 }
+
+export { SHOT_SKILLS };

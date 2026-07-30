@@ -2,6 +2,11 @@
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import type { GlobalEntity, SceneStage } from "../align-entities/types.js";
+import type {
+    CharacterIdentity,
+    CostumeDesign,
+    EntityRenderDecision,
+} from "../design-characters/types.js";
 import type { AssetConstraint, EntityAsset, GlobalStyle, SceneLighting } from "./types.js";
 
 const P = "#video:";
@@ -52,6 +57,32 @@ export class ShotStorage {
     }
 
     // --------------------------------------------------------
+    // design-characters 产出（只读）
+    // --------------------------------------------------------
+
+    getIdentity(name: string): CharacterIdentity | null {
+        return this.read<CharacterIdentity>(`${P}char:identity_${name}`);
+    }
+
+    getCostume(name: string, sceneId: string): CostumeDesign | null {
+        return this.read<CostumeDesign>(`${P}char:costume_${name}_${sceneId}`);
+    }
+
+    getFirstCostume(name: string): CostumeDesign | null {
+        const entity = this.getGlobalEntity(name);
+        if (!entity) return null;
+        for (const sceneId of entity.scenes) {
+            const c = this.getCostume(name, sceneId);
+            if (c) return c;
+        }
+        return null;
+    }
+
+    getRenderDecision(name: string): EntityRenderDecision | null {
+        return this.read<EntityRenderDecision>(`${P}char:render_decision_${name}`);
+    }
+
+    // --------------------------------------------------------
     // 场景对齐映射（align-entities 产出，本节点只读）
     // --------------------------------------------------------
 
@@ -59,10 +90,6 @@ export class ShotStorage {
         return this.read<Record<string, string>>(`${P}stage:align:${sceneId}`);
     }
 
-    /**
-     * 把场景局部名转为全局规范名。
-     * 如果映射表中没有该局部名，原样返回。
-     */
     resolveToGlobalName(sceneId: string, localName: string): string {
         const mapping = this.getStageAlign(sceneId);
         if (!mapping) return localName;
@@ -162,18 +189,6 @@ export class ShotStorage {
         this.write(this.shotSkillKey(sceneId), skill);
     }
 
-    assetSkillKey(sceneId: string): string {
-        return `${P}shots:asset_skill_${sceneId}`;
-    }
-
-    getAssetSkill(sceneId: string): string | null {
-        return this.read<string>(this.assetSkillKey(sceneId));
-    }
-
-    saveAssetSkill(sceneId: string, skill: string): void {
-        this.write(this.assetSkillKey(sceneId), skill);
-    }
-
     // --------------------------------------------------------
     // Pass B：分镜设计
     // --------------------------------------------------------
@@ -222,7 +237,6 @@ export class ShotStorage {
         this.write(this.entityAssetKey(sceneId, asset.entity_name), asset);
     }
 
-    /** 获取某场景所有实体素材 */
     getSceneAssets(sceneId: string): EntityAsset[] {
         const stage = this.getStage(sceneId);
         if (!stage) return [];

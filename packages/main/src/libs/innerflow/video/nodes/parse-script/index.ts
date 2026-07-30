@@ -10,9 +10,6 @@ import { prepareLines } from "./line-prep.js";
 import { reactParse } from "./react-orchestrator.js";
 import { ParseStorage } from "./storage.js";
 
-/**
- * ReAct 解析剧本
- */
 export async function parseScript(ctx: IRunnerContext): Promise<void> {
     const ioInfo = getIOByKeys(ctx, {
         inputs: "script",
@@ -50,6 +47,16 @@ export async function parseScript(ctx: IRunnerContext): Promise<void> {
     const chunks = splitIntoChunks(ctx, lines);
 
     await reactParse(ctx, lines, chunks);
+
+    // ===== 落盘 synopsis（供下游 design-characters 提取世界观）=====
+    const cached = storage.getCachedSynopsis();
+    const synopsis = storage.loadSynopsis();
+    if (synopsis && cached !== synopsis) {
+        storage.saveSynopsis(synopsis);
+        ctx.info(`[parseScript] synopsis 落盘，${synopsis.length}字`);
+    } else if (!synopsis) {
+        ctx.info(`[parseScript] 无 synopsis，下游将从前几场环境推断世界观`);
+    }
 
     const ids = storage.listSceneIds();
     if (ids.length === 0) {
