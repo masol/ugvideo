@@ -1,3 +1,4 @@
+// nodes/assign-render-strategies/index.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // nodes/assign-render-strategies/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
@@ -26,7 +27,7 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         return;
     }
 
-    // 收集所有 (sceneId, entityName) 对应扫描
+    // 收集所有 (sceneId, entityName) 对
     const pairs: Array<{ sceneId: string; entity: GlobalEntity; stageEntity: any }> = [];
 
     for (const sceneId of sceneIds) {
@@ -35,17 +36,13 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         const stageAlign = store.getStageAlign(sceneId) ?? {};
 
         for (const stageEntity of stage.entities) {
-            // 跳过 light（不入决策表）
             if (stageEntity.kind === "light") continue;
             const globalName = stageAlign[stageEntity.name] ?? stageEntity.name;
-
-            // source_group 提升个体：global entity 不存在，直接用 stageEntity.name
             const entity = store.getGlobalEntity(globalName);
 
             if (entity) {
                 pairs.push({ sceneId, entity, stageEntity });
             } else if (stageEntity.source_group) {
-                // 提升个体：构造一个临时 entity 表示
                 pairs.push({
                     sceneId,
                     entity: {
@@ -64,24 +61,34 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         }
     }
 
+    if (!pairs.length) {
+        ctx.info("[assignRenderStrategies] 无可决策的 (scene, entity) 对，跳过");
+        return;
+    }
+
+    // ===== 修复：gate 的 input/output keys 排序以稳定顺序 =====
+    const outputKeys = pairs
+        .map(p => store.decisionKey(p.sceneId, p.entity.name))
+        .sort();
+
+    const inputKeys = [
+        `${P}stage:registry:idx`,
+        `${P}shots:idx:scenes`,
+        ...entities.map(e => `${P}stage:registry:${e.name}`),
+        ...sceneIds.map(id => `${P}shots:design_${id}`),
+        ...sceneIds.map(id => `${P}state:stage_${id}`),
+        ...sceneIds.map(id => `${P}stage:align:${id}`),
+    ].sort();
+
     if (!checkExpiry(ctx, {
-        inputKeys: [
-            `${P}stage:registry:idx`,
-            `${P}shots:idx:scenes`,
-            ...entities.map(e => `${P}stage:registry:${e.name}`),
-            ...sceneIds.map(id => `${P}shots:design_${id}`),
-            ...sceneIds.map(id => `${P}state:stage_${id}`),
-            ...sceneIds.map(id => `${P}stage:align:${id}`),
-        ],
-        outputKeys: pairs.map(p => store.decisionKey(p.sceneId, p.entity.name)),
+        inputKeys,
+        outputKeys,
     })) {
         ctx.info("[assignRenderStrategies] 所有策略决策仍新鲜，跳过");
         return;
     }
 
-    // 扫描所有分镜
     const sceneRefs = collectEntityReferencesAcrossScenes(store);
-
     const decisions: EntityRenderDecision[] = [];
 
     for (const { sceneId, entity, stageEntity } of pairs) {
@@ -211,7 +218,6 @@ function decideStrategy(
         return { name: e.name, kind: e.kind, strategy: "skip", importance: 0, rationale: "光源", ...meta } as any;
     }
 
-    // ===== prop 判定（按场景）=====
     if (e.kind === "prop") {
         if (e.origin !== "scene") {
             if (referencedShotCount >= 1) {
@@ -240,7 +246,6 @@ function decideStrategy(
         } as any;
     }
 
-    // ===== set 判定（按场景）=====
     if (e.kind === "set") {
         return {
             name: e.name, kind: e.kind,
@@ -251,7 +256,6 @@ function decideStrategy(
         } as any;
     }
 
-    // ===== character 判定（按场景）=====
     if (e.kind === "character" && e.count === 1 && e.humanoid) {
         if (referencedShotCount >= 1) {
             return {
@@ -272,7 +276,6 @@ function decideStrategy(
     }
 
     if (e.kind === "character" && e.humanoid) {
-        // 群体：本场景是否需要制服三视图/合照？
         if (referencedShotCount >= 2) {
             const hasUniform = hasUniformDescription(e);
             if (hasUniform) {

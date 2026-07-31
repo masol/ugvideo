@@ -1,4 +1,4 @@
-// src/workflows/script-to-video/run.ts
+// run.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
@@ -8,16 +8,8 @@ import { designCharacterAssets } from "./nodes/design-characters/index.js";
 import { designShots } from './nodes/design-shots/index.js';
 import { generateReferenceImages } from "./nodes/generate-reference-images/index.js";
 import { parseScript } from "./nodes/parse-script/index.js";
+import { renderImages } from "./nodes/render-images/index.js";
 
-/**
- * 剧本 -> 视频 全自动工作流
- *
- * pipeline:
- *   parseScript → alignEntities → designCharacterAssets（身份+服装+制服）
- *     → designShots（分镜+光照+素材扩写，render decision 此时默认 prompt_only）
- *     → assignRenderStrategies（基于分镜数据判定渲染策略）
- *     → generateReferenceImages（依赖分镜 + render decision）
- */
 export async function run(ctx: IRunnerContext): Promise<void> {
     const prjdb = PrjDB.ensure(ctx.prj);
 
@@ -36,6 +28,7 @@ export async function run(ctx: IRunnerContext): Promise<void> {
 
     await assignRenderStrategies(ctx);
     await generateReferenceImages(ctx);
+    await renderImages(ctx);
 
     // await generateBaseImages(ctx);
     // await vlmConsistencyEval(ctx);

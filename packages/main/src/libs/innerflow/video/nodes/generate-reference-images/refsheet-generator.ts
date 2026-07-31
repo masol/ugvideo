@@ -55,6 +55,9 @@ export async function generateEntityRefsheet(
     }
     if (entity.kind === "light") return null;
 
+    // 查询同一实体在前序场景的参考图（跨场景一致性索引）
+    const previousSceneRefs = store.getPreviousSceneRefs(entityName, sceneId);
+
     if (!checkExpiry(ctx, {
         inputKeys: [
             `${P}shots:asset_${sceneId}_${entityName}`,
@@ -63,6 +66,7 @@ export async function generateEntityRefsheet(
             `${P}char:render_decision_${sceneId}_${entityName}`,
             "config:style",
             "config:colorTone",
+            ...previousSceneRefs.map(id => store.entityRefsheetKeyFromId(id)),
         ],
         outputKeys: store.entityRefsheetKey(sceneId, entityName),
     })) {
@@ -114,9 +118,10 @@ export async function generateEntityRefsheet(
         importance: decision.importance,
         referenced_shot_count: decision.referenced_shot_count,
         referenced_scene_count: decision.referenced_scene_count,
+        previous_scene_refs: previousSceneRefs,
     };
     store.saveEntityRefsheet(refsheet);
-    ctx.info(`[generateEntityRefsheet] ${sceneId}/${entityName} 参考图提示词完成（${layout}）`);
+    ctx.info(`[generateEntityRefsheet] ${sceneId}/${entityName} 参考图提示词完成（${layout}）${previousSceneRefs.length ? `，关联前序场景 ${previousSceneRefs.length} 个` : ""}`);
     return refsheet;
 }
 
@@ -215,6 +220,7 @@ async function generateSourceGroupIndividualRefsheet(
         referenced_shot_count: decision.referenced_shot_count,
         referenced_scene_count: decision.referenced_scene_count,
         source_group: decision.source_group,
+        previous_scene_refs: [],
     };
     store.saveEntityRefsheet(refsheet);
     ctx.info(
@@ -248,6 +254,28 @@ export async function generateGroupPhoto(
     const decision = store.getRenderDecision(sceneId, groupName);
     if (!decision || decision.strategy !== "group_photo") return null;
 
+    // 注入该场景已独立生成的提升个体作为成员参考（确保视觉一致）
+    // 此时 Phase 1 已完成，可以安全读取
+    const stage = store.getStage(sceneId);
+    const individualMembers: Array<{ name: string; appearance: string; refId: string }> = [];
+    if (stage) {
+        for (const e of stage.entities) {
+            if (e.source_group === groupName) {
+                const memberAsset = store.getEntityAsset(sceneId, e.name);
+                if (memberAsset?.base_description) {
+                    const refId = `${sceneId}__${e.name}`;
+                    individualMembers.push({
+                        name: e.name,
+                        appearance: memberAsset.base_description,
+                        refId,
+                    });
+                }
+            }
+        }
+    }
+
+    const individualRefIds = individualMembers.map(m => m.refId);
+
     if (!checkExpiry(ctx, {
         inputKeys: [
             `${P}shots:asset_${sceneId}_${groupName}`,
@@ -255,6 +283,7 @@ export async function generateGroupPhoto(
             `${P}char:render_decision_${sceneId}_${groupName}`,
             "config:style",
             "config:colorTone",
+            ...individualRefIds.map(id => store.entityRefsheetKeyFromId(id)),
         ],
         outputKeys: store.entityRefsheetKey(sceneId, groupName),
     })) {
@@ -280,20 +309,6 @@ export async function generateGroupPhoto(
     const styleAnchor = getRefsheetStyleAnchor(globalStyle.style, "group_photo");
     const layoutTemplate = buildLayoutTemplate("group_photo", true, "character", styleAnchor, countLabel);
 
-    // 注入该场景已独立生成的提升个体作为成员参考（确保视觉一致）
-    // 此时 Phase 1 已完成，可以安全读取
-    const stage = store.getStage(sceneId);
-    const individualMembers: Array<{ name: string; appearance: string }> = [];
-    if (stage) {
-        for (const e of stage.entities) {
-            if (e.source_group === groupName) {
-                const memberAsset = store.getEntityAsset(sceneId, e.name);
-                if (memberAsset?.base_description) {
-                    individualMembers.push({ name: e.name, appearance: memberAsset.base_description });
-                }
-            }
-        }
-    }
     const memberAnchor = individualMembers.length > 0
         ? `【已独立抽取的成员（必须在合照中保持外观一致）】\n${individualMembers.map(m => `- ${m.name}：${m.appearance.slice(0, 200)}`).join("\n")}`
         : "";
@@ -325,9 +340,10 @@ export async function generateGroupPhoto(
         importance: decision.importance,
         referenced_shot_count: decision.referenced_shot_count,
         referenced_scene_count: decision.referenced_scene_count,
+        previous_scene_refs: individualRefIds,
     };
     store.saveEntityRefsheet(refsheet);
-    ctx.info(`[generateGroupPhoto] ${sceneId}/${groupName} 群体合照提示词完成${memberAnchor ? "（含提升个体锚点）" : ""}`);
+    ctx.info(`[generateGroupPhoto] ${sceneId}/${groupName} 群体合照提示词完成${memberAnchor ? `（含提升个体锚点 ${individualMembers.length} 个）` : ""}`);
     return refsheet;
 }
 
@@ -387,6 +403,7 @@ export async function generateUniformRefsheet(
         importance: 7,
         referenced_shot_count: 0,
         referenced_scene_count: groupEntity ? groupEntity.scenes.length : 0,
+        previous_scene_refs: [],
     };
     store.saveUniformPrompt(refsheet);
     ctx.info(`[generateUniformRefsheet] ${uniformName} 制服三视图提示词完成`);

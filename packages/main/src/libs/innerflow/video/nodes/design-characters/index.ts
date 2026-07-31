@@ -144,8 +144,6 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
 
             const existingCostumeText = (isTimeSkip || isFirstScene) ? "" : previousCostume;
 
-            // 修复：去掉 `stage:registry:${entity.name}`（本节点会回写这个 key，导致下游误判"output 永远比 input 新"）。
-            // costume 的上游真正依赖：identity + aligned_text + stage(环境/站位) + beat_nl（保证对齐稳定）。
             if (!checkExpiry(ctx, {
                 inputKeys: [
                     store.identityKey(entity.name),
@@ -158,11 +156,8 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
                 const cached = store.getCostume(entity.name, sceneId);
                 if (cached) {
                     previousCostume = formatCostume(cached);
-                    alignStore.upsertSceneSnapshot(entity.name, {
-                        scene_id: sceneId,
-                        costume_ref: store.costumeKey(entity.name, sceneId),
-                        requires_redress: isTimeSkip,
-                    });
+                    // 修复：cache 命中分支不再调用 upsertSceneSnapshot（snapshot 已在 cache miss 时登记），
+                    // 避免每次执行重复写入 align-entities registry 触发 isDeepStrictEqual 比较。
                     continue;
                 }
             }
@@ -223,8 +218,6 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
 
     await pMap(groupCharacters, async (entity) => {
         const uniformName = `${entity.name}制服`;
-
-        // 修复：补齐 inputKeys：身份推断、首场对齐文本、首场服装（群体的制服参考首场服装）、首场舞台。
         const firstScene = entity.scenes[0];
         if (!firstScene) return;
 

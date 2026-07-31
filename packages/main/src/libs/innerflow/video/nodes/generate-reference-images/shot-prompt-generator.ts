@@ -17,32 +17,21 @@ export async function generateSceneShotPrompts(
 ): Promise<void> {
     const store = new RefImgStorage(ctx);
 
-    if (!checkExpiry(ctx, {
-        inputKeys: [
-            `${P}shots:design_${sceneId}`,
-            `${P}shots:lighting_${sceneId}`,
-            store.sceneEnvironmentKey(sceneId),
-            "config:style",
-            "config:colorTone",
-        ],
-        outputKeys: store.shotPromptIdxKey(sceneId),
-    })) {
-        ctx.info(`[generateSceneShotPrompts] ${sceneId} 镜头提示词仍新鲜，跳过`);
-        return;
-    }
-
     const design = store.getShotDesign(sceneId);
-    const lighting = store.getLighting(sceneId);
-    const stage = store.getStage(sceneId);
-
-    if (!design || !lighting || !stage) {
-        ctx.warn(`[generateSceneShotPrompts] ${sceneId} 缺少上游数据，跳过`);
+    if (!design) {
+        ctx.warn(`[generateSceneShotPrompts] ${sceneId} 缺少分镜设计，跳过`);
         return;
     }
-
     const shots = splitShots(design);
     if (shots.length === 0) {
         ctx.warn(`[generateSceneShotPrompts] ${sceneId} 未解析出镜头`);
+        return;
+    }
+
+    const lighting = store.getLighting(sceneId);
+    const stage = store.getStage(sceneId);
+    if (!lighting || !stage) {
+        ctx.warn(`[generateSceneShotPrompts] ${sceneId} 缺少上游数据，跳过`);
         return;
     }
 
@@ -78,12 +67,30 @@ export async function generateSceneShotPrompts(
     for (let i = 0; i < shots.length; i++) {
         const shotIndex = i + 1;
         const shotDesc = shots[i];
+        const shotKey = store.shotPromptKey(sceneId, shotIndex);
+
+        // ===== 每个镜头独立 gate =====
+        // 之前整个 scene 一次 gate + saveShotPromptIdx 短路，导致再次执行时
+        // 整体判定不可靠（input 中 sceneEnvironmentKey 的时间戳可能晚于 idx，
+        // 而 idx 在 isDeepStrictEqual 短路下不再刷新时间戳）。
+        // 改为按镜头判断：已写过的镜头独立命中跳过，未生成的才调 LLM。
+        if (!checkExpiry(ctx, {
+            inputKeys: [
+                `${P}shots:design_${sceneId}`,
+                `${P}shots:lighting_${sceneId}`,
+                store.sceneEnvironmentKey(sceneId),
+                "config:style",
+                "config:colorTone",
+            ],
+            outputKeys: shotKey,
+        })) {
+            ctx.info(`[generateSceneShotPrompts] ${sceneId} 镜头${shotIndex} 仍新鲜，跳过`);
+            shotIds.push(shotIndex);
+            continue;
+        }
 
         const referencedLocalNames = extractEntityReferences(shotDesc);
 
-        // 注意：这里用 raw 的 entity_name 即可（同一实体名在不同场景是不同图）。
-        // 下游 I2I 引擎拿到 name 后，自行通过 (sceneId, name) 复合键查正确图片。
-        // 简化做法：entity_name 不带 sceneId 前缀，但传 sceneId 在 prompt 中作上下文。
         const referenceImages: Array<{ entity_name: string; role: string }> = [];
         const inlineForShot: Array<{ name: string; description: string }> = [];
         const seenRefs = new Set<string>();
@@ -100,7 +107,6 @@ export async function generateSceneShotPrompts(
             inlineForShot.push({ name, description });
         };
 
-        // 环境参考图作为空间锚定
         pushRef(`env:${sceneId}`, "environment_reference（保持空间布局与光影基调）");
 
         for (const localName of referencedLocalNames) {
@@ -108,12 +114,11 @@ export async function generateSceneShotPrompts(
             const stageEntity = stageEntityByLocal.get(localName);
             const entity = store.getGlobalEntity(globalName);
 
-            // source_group 提升个体（不在全局登记册）
             if (!entity && stageEntity?.source_group) {
                 const decision = sceneDecisions.find(d => d.name === stageEntity.name);
                 if (decision?.strategy === "individual_refsheet") {
                     pushRef(
-                        stageEntity.name,
+                        `${sceneId}__${stageEntity.name}`,
                         "face_and_appearance_reference（严格保持脸部特征、五官比例、服装外观）",
                     );
                 } else {
@@ -127,22 +132,52 @@ export async function generateSceneShotPrompts(
             const decision = sceneDecisions.find(d => d.name === globalName);
 
             if (decision?.strategy === "individual_refsheet") {
-                // 同一 globalName 在不同场景是不同图；下游查图时需结合 sceneId
-                pushRef(globalName, refRole(entity.kind, entity.humanoid, entity.origin));
+                pushRef(
+                    `${sceneId}__${globalName}`,
+                    refRole(entity.kind, entity.humanoid, entity.origin),
+                );
+                const prevRefs = store.getPreviousSceneRefs(globalName, sceneId);
+                if (prevRefs.length > 0) {
+                    const latestPrevRef = prevRefs[prevRefs.length - 1];
+                    pushRef(
+                        latestPrevRef,
+                        `previous_scene_appearance_anchor（同一角色前序场景外观基准，确保跨场景面部/体型一致性；本场景如有换装/伤痕以本场景参考图为准）`,
+                    );
+                }
             } else if (decision?.strategy === "uniform_refsheet" && decision.uniform_name) {
                 pushRef(
-                    decision.uniform_name,
+                    `uniform:${decision.uniform_name}`,
                     "costume_reference（参考制服款式，群体成员统一着装）",
                 );
             } else if (decision?.strategy === "group_photo") {
                 pushRef(
-                    globalName,
+                    `${sceneId}__${globalName}`,
                     "group_reference（参考群体整体视觉风格与人数，成员着装体型统一）",
                 );
+                if (stage) {
+                    for (const e of stage.entities) {
+                        if (e.source_group === globalName) {
+                            const memberDecision = sceneDecisions.find(d => d.name === e.name);
+                            if (memberDecision?.strategy === "individual_refsheet") {
+                                pushRef(
+                                    `${sceneId}__${e.name}`,
+                                    `individual_member_of_group（${globalName}中已提升的独立成员，保持外观与群体一致）`,
+                                );
+                            }
+                        }
+                    }
+                }
             } else if (decision?.strategy === "skip") {
                 continue;
             } else {
-                if ((entity.kind === "set" || entity.kind === "prop")
+                const prevRefs = store.getPreviousSceneRefs(globalName, sceneId);
+                if (prevRefs.length > 0) {
+                    const latestPrevRef = prevRefs[prevRefs.length - 1];
+                    pushRef(
+                        latestPrevRef,
+                        `previous_scene_appearance_anchor（同一角色前序场景外观基准，本场景无独立参考图，依赖此图保持一致性）`,
+                    );
+                } else if ((entity.kind === "set" || entity.kind === "prop")
                     && initialSetProps.has(globalName)) {
                     const asset = store.getEntityAssetForScene(sceneId, globalName);
                     const desc = asset?.base_description || entity.appearance || "";

@@ -12,7 +12,7 @@ import type {
 import type { EntityAsset, SceneLighting } from "../design-shots/types.js";
 import type {
     EntityRefsheetPrompt,
-    RenderResult,
+    RenderTaskDescriptor,
     SceneEnvironmentPrompt,
     SceneShotPrompt,
 } from "./types.js";
@@ -30,14 +30,6 @@ export class RefImgStorage {
         return this.prjdb.get<T>(key) ?? null;
     }
 
-    /**
-     * 幂等写入：内容深度相等则跳过，不 bump 时间戳。
-     *
-     * 关键：持久化经过 JSON 序列化会丢弃值为 undefined 的键。
-     * 若直接用内存中的 value（可能带 `foo: undefined`）与已回读的 existing 比较，
-     * isDeepStrictEqual 会因"自有键集合不同"永远判为不等，导致每次都重写、
-     * 刷新时间戳、误使下游过期。因此比较与写入都基于归一化（JSON 往返）后的值。
-     */
     private write<T>(key: string, value: T): void {
         const normalized = JSON.parse(JSON.stringify(value)) as T;
         const existing = this.prjdb.get<T>(key);
@@ -116,7 +108,7 @@ export class RefImgStorage {
     }
 
     // --------------------------------------------------------
-    // 决策（通过 assign-render-strategies 维护的索引读取）
+    // 决策
     // --------------------------------------------------------
 
     private sceneDecisionIdxKey(sceneId: string): string {
@@ -134,9 +126,6 @@ export class RefImgStorage {
             .filter((v): v is EntityRenderDecision => v != null);
     }
 
-    /**
-     * 列出全部决策（通过已知的 designedSceneIds + 索引组合）。
-     */
     allRenderDecisions(): EntityRenderDecision[] {
         const out: EntityRenderDecision[] = [];
         const designedScenes = this.read<string[]>(`${P}shots:idx:scenes`) ?? [];
@@ -165,11 +154,17 @@ export class RefImgStorage {
     }
 
     // --------------------------------------------------------
-    // 实体参考图（按场景隔离）
+    // 实体参考图
     // --------------------------------------------------------
 
     entityRefsheetKey(sceneId: string, entityName: string): string {
         return `${P}refimg:entity_${sceneId}_${entityName}`;
+    }
+
+    entityRefsheetKeyFromId(refId: string): string {
+        const parsed = this.parseEntityRefsheetKey(refId);
+        if (!parsed) return refId;
+        return this.entityRefsheetKey(parsed.sceneId, parsed.entityName);
     }
 
     getEntityRefsheet(sceneId: string, entityName: string): EntityRefsheetPrompt | null {
@@ -195,9 +190,21 @@ export class RefImgStorage {
         return { sceneId: id.slice(0, sep), entityName: id.slice(sep + 2) };
     }
 
-    /**
-     * 列出某场景已生成的实体参考图（通过全局索引 + 过滤 sceneId 前缀）。
-     */
+    getPreviousSceneRefs(entityName: string, currentSceneId: string): string[] {
+        const entity = this.getGlobalEntity(entityName);
+        if (!entity) return [];
+
+        const refs: string[] = [];
+        for (const sceneId of entity.scenes) {
+            if (sceneId === currentSceneId) break;
+            const refId = `${sceneId}__${entityName}`;
+            if (this.read<EntityRefsheetPrompt>(this.entityRefsheetKeyFromId(refId))) {
+                refs.push(refId);
+            }
+        }
+        return refs;
+    }
+
     getSceneEntityRefsheets(sceneId: string): EntityRefsheetPrompt[] {
         const prefix = `${sceneId}__`;
         const out: EntityRefsheetPrompt[] = [];
@@ -281,18 +288,6 @@ export class RefImgStorage {
             .filter((v): v is SceneShotPrompt => v != null);
     }
 
-    renderResultKey(id: string): string {
-        return `${P}refimg:rendered_${id}`;
-    }
-
-    getRenderResult(id: string): RenderResult | null {
-        return this.read<RenderResult>(this.renderResultKey(id));
-    }
-
-    saveRenderResult(result: RenderResult): void {
-        this.write(this.renderResultKey(result.id), result);
-    }
-
     overviewKey(): string {
         return `${P}output:refimg_overview`;
     }
@@ -303,5 +298,21 @@ export class RefImgStorage {
 
     getBeatNl(sceneId: string): string | null {
         return this.read<string>(`${P}state:beat_nl_${sceneId}`);
+    }
+
+    // --------------------------------------------------------
+    // 渲染任务索引（供下游 render-images 节点读取）
+    // --------------------------------------------------------
+
+    renderTasksKey(): string {
+        return `${P}refimg:render_tasks`;
+    }
+
+    saveRenderTasks(tasks: RenderTaskDescriptor[]): void {
+        this.write(this.renderTasksKey(), tasks);
+    }
+
+    getRenderTasks(): RenderTaskDescriptor[] {
+        return this.read<RenderTaskDescriptor[]>(this.renderTasksKey()) ?? [];
     }
 }

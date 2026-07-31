@@ -16,7 +16,6 @@ export class ParseStorage {
         return this.prjdb.get<string>(`script_${id}`);
     }
 
-    // ===== Format =====
     saveFormat(fmt: ScriptFormat): void {
         this.prjdb.set(`${P}parse:format`, fmt);
     }
@@ -24,7 +23,6 @@ export class ParseStorage {
         return this.prjdb.get<ScriptFormat>(`${P}parse:format`) ?? null;
     }
 
-    // ===== Global Items（跨 chunk 累积）=====
     appendGlobalItem(item: GlobalItem): void {
         const list = this.prjdb.get<GlobalItem[]>(`${P}parse:global_items`) ?? [];
         if (!list.some((g) => g.line_start === item.line_start)) {
@@ -35,12 +33,6 @@ export class ParseStorage {
         return this.prjdb.get<GlobalItem[]>(`${P}parse:global_items`) ?? [];
     }
 
-    // ===== Synopsis / World Context =====
-    /**
-     * 把剧本梗概/序言/编者按等"非场景内容"拼接为世界观摘要。
-     * 来源：global_items 中 kind ∈ {synopsis, preface, note} 的条目，按 line_start 排序拼接 summary。
-     * 若全部缺失，返回 null。
-     */
     loadSynopsis(): string | null {
         const items = this.loadGlobalItems()
             .filter(g => /synopsis|preface|note/i.test(g.kind))
@@ -60,7 +52,6 @@ export class ParseStorage {
         return this.prjdb.get<string>(`${P}parse:synopsis`) ?? null;
     }
 
-    // ===== Scenes =====
     saveScene(scene: PersistedScene): void {
         this.prjdb.set(`${P}parse:scene:${scene.scene_id}`, scene);
         const idx = this.prjdb.get<string[]>(`${P}parse:idx:scenes`) ?? [];
@@ -75,6 +66,11 @@ export class ParseStorage {
         return this.prjdb.get<string[]>(`${P}parse:idx:scenes`) ?? [];
     }
 
+    /**
+     * 修复：幂等排序，仅当顺序与现存不一致时才落盘，
+     * 避免每次运行都刷新 #video:parse:idx:scenes 的时间戳
+     * （旧实现即使已排序也会 set 一次，被下游误判为"新写入"导致反复重算）。
+     */
     reorderScenesByLine(): void {
         const ordered = this.listSceneIds()
             .slice()
@@ -83,10 +79,13 @@ export class ParseStorage {
                 const sb = this.loadScene(b);
                 return (sa?.line_start ?? 0) - (sb?.line_start ?? 0);
             });
+        const current = this.prjdb.get<string[]>(`${P}parse:idx:scenes`) ?? [];
+        if (current.length === ordered.length && current.every((id, i) => id === ordered[i])) {
+            return;
+        }
         this.prjdb.set(`${P}parse:idx:scenes`, ordered);
     }
 
-    // ===== Cursor =====
     getCursor(): number {
         return this.prjdb.get<number>(`${P}parse:cursor`) ?? 1;
     }
