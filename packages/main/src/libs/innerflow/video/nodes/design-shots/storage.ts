@@ -25,12 +25,17 @@ export class ShotStorage {
 
     /**
      * 幂等写入：内容深度相等则跳过，不 bump 时间戳。
-     * 通用规律，消除相同内容重写导致的下游级联过期。
+     *
+     * 关键：持久化经过 JSON 序列化会丢弃值为 undefined 的键。
+     * 若直接用内存中的 value（可能带 `foo: undefined`）与已回读的 existing 比较，
+     * isDeepStrictEqual 会因"自有键集合不同"永远判为不等，导致每次都重写、
+     * 刷新时间戳、误使下游过期。因此比较与写入都基于归一化（JSON 往返）后的值。
      */
     private write<T>(key: string, value: T): void {
+        const normalized = JSON.parse(JSON.stringify(value)) as T;
         const existing = this.prjdb.get<T>(key);
-        if (isDeepStrictEqual(existing, value)) return;
-        this.prjdb.set(key, value);
+        if (isDeepStrictEqual(existing, normalized)) return;
+        this.prjdb.set(key, normalized);
     }
 
     sceneIds(): string[] {

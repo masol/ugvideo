@@ -64,7 +64,7 @@ export type ReducerName = keyof typeof Reducers;
 /**
  * 保存数据到指定输出 key。
  * reducer 可传内置策略名，或自定义 (older, newer) => merged 函数。
- * 默认 replace：直接覆盖，省去读取。
+ * 默认 merge(浅合并)；传 'replace' 走快路径，直接覆盖并省去一次读取。
  */
 export function saveToOutput(
     ctx: IRunnerContext,
