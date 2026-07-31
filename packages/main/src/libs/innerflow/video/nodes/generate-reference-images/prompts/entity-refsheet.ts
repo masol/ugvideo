@@ -47,14 +47,14 @@ ${translationSkill}
         ethnicity: string;
         layout: "four_column" | "three_column" | "magazine_grid" | "group_photo";
         baseDescription: string;
+        styleAnchor: string;
+        layoutTemplate: string;
         groupCount?: string;
         uniformReference?: string;
     }) => {
-        const layoutInstruction = getLayoutInstruction(params.layout, params.humanoid, params.kind, params.groupCount);
-
         let prompt = `【实体】${params.entityName}（${params.kind}）\n`;
         prompt += `【族裔】${params.ethnicity}\n`;
-        prompt += `【构图模板（直接使用，不要修改）】\n${layoutInstruction.template}\n\n`;
+        prompt += `【构图模板（直接使用，不要修改）】\n${params.layoutTemplate}\n\n`;
         prompt += `【跨场景不变的基础外观描述】\n${params.baseDescription}\n\n`;
 
         if (params.uniformReference) {
@@ -66,44 +66,32 @@ ${translationSkill}
     },
 };
 
-interface LayoutInstruction {
-    label: string;
-    template: string;
-}
-
-function getLayoutInstruction(
+/**
+ * 根据布局类型 + 风格锚定词生成构图模板文本。
+ * 模板中的风格词不再硬编码，由 styleAnchor 参数注入。
+ */
+export function buildLayoutTemplate(
     layout: "four_column" | "three_column" | "magazine_grid" | "group_photo",
     humanoid: boolean,
     kind: string,
+    styleAnchor: string,
     groupCount?: string,
-): LayoutInstruction {
+): string {
     if (layout === "four_column") {
-        return {
-            label: "16:9 四列布局（左侧大头特写 + 右侧全身正面/左45°/背面）",
-            template: `cinematic photorealistic character reference sheet, standard 16:9 widescreen composition, four-panel layout — left panel: large close-up headshot, face fills 70 percent of the panel, eyes looking straight ahead, neutral expression, hair and headwear fully visible from front, top of shoulders included at bottom edge; right three panels: full-body turnaround — front view, left three-quarter view, back view, same person consistently across all four panels, identical face proportions and skin tone and hair and clothing, plain white background, neutral standing pose, arms at sides, soft even studio lighting, natural skin tones, full-frame DSLR photograph, ultra realistic skin texture with visible pores, real human`,
-        };
+        return `character reference sheet, standard 16:9 widescreen composition, four-panel layout — left panel: large close-up headshot, face fills 70 percent of the panel, eyes looking straight ahead, neutral expression, hair and headwear fully visible from front, top of shoulders included at bottom edge; right three panels: full-body turnaround — front view, left three-quarter view, back view, same person consistently across all four panels, identical face proportions and skin tone and hair and clothing, plain white background, neutral standing pose, arms at sides, soft even studio lighting, natural skin tones, ${styleAnchor}`;
     }
 
     if (layout === "group_photo") {
         const countHint = groupCount && groupCount !== "群体"
             ? `exactly ${groupCount} individuals`
             : "a small consistent group of individuals";
-        return {
-            label: "16:9 群体合照（自然站位，不分列）",
-            template: `photorealistic group photograph, standard 16:9 widescreen composition, ${countHint} standing together in a natural loose arrangement facing the camera, full body visible for the front row, consistent shared visual style across all members — same clothing type and material and color palette, same overall body type range and hair style range, plain white background, neutral standing poses, arms at sides, soft even studio lighting, natural skin tones, full-frame DSLR photograph, ultra realistic skin and fabric texture, real humans`,
-        };
+        return `group reference image, standard 16:9 widescreen composition, ${countHint} standing together in a natural loose arrangement facing the camera, full body visible for the front row, consistent shared visual style across all members — same clothing type and material and color palette, same overall body type range and hair style range, plain white background, neutral standing poses, arms at sides, soft even studio lighting, natural skin tones, ${styleAnchor}`;
     }
 
     if (layout === "magazine_grid") {
-        return {
-            label: "16:9 杂志式网格（上方侧面大图 + 下方正背小图）",
-            template: `photorealistic creature reference sheet, standard 16:9 widescreen composition, magazine-style grid layout — upper panel: one large wide lateral side-view spanning the full width, complete body fully extended horizontally from head to tail without coiling or compression, entire body length visible; lower row: two equal-sized smaller panels side by side — left panel front view, right panel back view, same individual consistently across all panels, identical form and proportions and surface texture, plain white background, soft even diffused lighting revealing full surface detail, natural history specimen photograph, ultra realistic surface texture`,
-        };
+        return `creature reference sheet, standard 16:9 widescreen composition, magazine-style grid layout — upper panel: one large wide lateral side-view spanning the full width, complete body fully extended horizontally from head to tail without coiling or compression, entire body length visible; lower row: two equal-sized smaller panels side by side — left panel front view, right panel back view, same individual consistently across all panels, identical form and proportions and surface texture, plain white background, soft even diffused lighting revealing full surface detail, ${styleAnchor}`;
     }
 
     const entityType = kind === "character" ? "creature" : "object";
-    return {
-        label: "16:9 三列布局（正面/侧面/背面）",
-        template: `photorealistic ${entityType} reference sheet, standard 16:9 widescreen composition, three-column turnaround — front view, side view, back view, same ${entityType} consistently across all three views, identical form and surface, plain white background, neutral position, soft even studio lighting revealing material texture, professional photograph, ultra realistic surface detail`,
-    };
+    return `${entityType} reference sheet, standard 16:9 widescreen composition, three-column turnaround — front view, side view, back view, same ${entityType} consistently across all three views, identical form and surface, plain white background, neutral position, soft even studio lighting revealing material texture, ${styleAnchor}`;
 }

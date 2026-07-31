@@ -6,9 +6,6 @@ import { designScene, initAssetConstraints } from "./shot-designer.js";
 import { ShotStorage } from "./storage.js";
 import type { EntityAsset, SceneLighting } from "./types.js";
 
-/**
- * design-shots 节点：分镜序列 + 场景光照 + 逐实体素材扩写。
- */
 export async function designShots(ctx: IRunnerContext): Promise<void> {
     const store = new ShotStorage(ctx);
     const sceneIds = store.sceneIds();
@@ -37,6 +34,17 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
     const store = new ShotStorage(ctx);
     const sceneIds = store.designedSceneIds();
 
+    // 修复：补齐 entity asset keys（每个场景每个实体的素材扩写），保证 overview 反映全量资产。
+    const assetKeys: string[] = [];
+    for (const sceneId of sceneIds) {
+        const stage = store.getStage(sceneId);
+        if (!stage) continue;
+        for (const e of stage.entities) {
+            const globalName = store.resolveToGlobalName(sceneId, e.name);
+            assetKeys.push(store.entityAssetKey(sceneId, globalName));
+        }
+    }
+
     if (!checkExpiry(ctx, {
         inputKeys: [
             store.assetConstraintsKey(),
@@ -44,6 +52,7 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
                 store.designKey(id),
                 store.lightingKey(id),
             ]),
+            ...assetKeys,
         ],
         outputKeys: store.overviewKey(),
     })) {

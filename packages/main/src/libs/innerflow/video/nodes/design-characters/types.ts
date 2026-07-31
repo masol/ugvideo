@@ -46,12 +46,15 @@ export type RenderStrategy =
     | "skip";
 
 export interface EntityRenderDecision {
+    /** 实体规范名（不含 sceneId，sceneId 在外层管理） */
     name: string;
     kind: string;
     strategy: RenderStrategy;
     importance: number;
     uniform_name?: string;
     rationale: string;
+    /** 所属场景 id（按场景隔离时使用） */
+    scene_id?: string;
     referenced_shot_count: number;
     referenced_scene_count: number;
     is_static_in_scene: boolean;

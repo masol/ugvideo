@@ -11,17 +11,6 @@ import type { SceneShotPrompt } from "./types.js";
 
 const P = "#video:";
 
-/**
- * 为单个场景生成逐镜头提示词。
- *
- * 参考图引用规则（按 render decision）：
- * - individual_refsheet（含 source_group 个体）→ 引用个体参考图
- * - uniform_refsheet → 引用制服三视图
- * - group_photo → 引用群体合照
- * - prompt_only + 场景初始 set/prop → inline（融入环境图，不重复外观）
- * - prompt_only + character → 不处理（交给视频生成阶段）
- * - source_group 个体无参考图 → inline 文字描述
- */
 export async function generateSceneShotPrompts(
     ctx: IRunnerContext,
     sceneId: string,
@@ -69,7 +58,8 @@ export async function generateSceneShotPrompts(
         `整体：${lighting.summary}`,
     ].join("\n");
 
-    // 场景实体映射
+    const sceneDecisions = store.getSceneDecisions(sceneId);
+
     const localToGlobal = new Map<string, string>();
     const initialSetProps = new Set<string>();
     const stageEntityByLocal = new Map<string, StageEntity>();
@@ -90,59 +80,74 @@ export async function generateSceneShotPrompts(
         const shotDesc = shots[i];
 
         const referencedLocalNames = extractEntityReferences(shotDesc);
+
+        // 注意：这里用 raw 的 entity_name 即可（同一实体名在不同场景是不同图）。
+        // 下游 I2I 引擎拿到 name 后，自行通过 (sceneId, name) 复合键查正确图片。
+        // 简化做法：entity_name 不带 sceneId 前缀，但传 sceneId 在 prompt 中作上下文。
         const referenceImages: Array<{ entity_name: string; role: string }> = [];
         const inlineForShot: Array<{ name: string; description: string }> = [];
+        const seenRefs = new Set<string>();
+        const seenInline = new Set<string>();
+
+        const pushRef = (entityName: string, role: string): void => {
+            if (!entityName || seenRefs.has(entityName)) return;
+            seenRefs.add(entityName);
+            referenceImages.push({ entity_name: entityName, role });
+        };
+        const pushInline = (name: string, description: string): void => {
+            if (!name || !description || seenInline.has(name)) return;
+            seenInline.add(name);
+            inlineForShot.push({ name, description });
+        };
 
         // 环境参考图作为空间锚定
-        referenceImages.push({ entity_name: sceneId, role: "environment_reference（保持空间布局与光影基调）" });
+        pushRef(`env:${sceneId}`, "environment_reference（保持空间布局与光影基调）");
 
         for (const localName of referencedLocalNames) {
             const globalName = localToGlobal.get(localName) ?? localName;
             const stageEntity = stageEntityByLocal.get(localName);
             const entity = store.getGlobalEntity(globalName);
+
             // source_group 提升个体（不在全局登记册）
             if (!entity && stageEntity?.source_group) {
-                const decision = store.getRenderDecision(stageEntity.name);
+                const decision = sceneDecisions.find(d => d.name === stageEntity.name);
                 if (decision?.strategy === "individual_refsheet") {
-                    referenceImages.push({
-                        entity_name: stageEntity.name,
-                        role: "face_and_appearance_reference（严格保持脸部特征、五官比例、服装外观）",
-                    });
+                    pushRef(
+                        stageEntity.name,
+                        "face_and_appearance_reference（严格保持脸部特征、五官比例、服装外观）",
+                    );
                 } else {
-                    pushInlineForSourceGroup(sceneId, stageEntity, store, inlineForShot);
+                    pushInlineForSourceGroup(sceneId, stageEntity, store, pushInline);
                 }
                 continue;
             }
+
             if (!entity || entity.kind === "light") continue;
-            const decision = store.getRenderDecision(globalName);
+
+            const decision = sceneDecisions.find(d => d.name === globalName);
+
             if (decision?.strategy === "individual_refsheet") {
-                // 包括动态道具（有独立参考图）—— 统一走参考图路径
-                referenceImages.push({
-                    entity_name: globalName,
-                    role: refRole(entity.kind, entity.humanoid, entity.origin),
-                });
+                // 同一 globalName 在不同场景是不同图；下游查图时需结合 sceneId
+                pushRef(globalName, refRole(entity.kind, entity.humanoid, entity.origin));
             } else if (decision?.strategy === "uniform_refsheet" && decision.uniform_name) {
-                referenceImages.push({
-                    entity_name: decision.uniform_name,
-                    role: "costume_reference（参考制服款式，群体成员统一着装）",
-                });
+                pushRef(
+                    decision.uniform_name,
+                    "costume_reference（参考制服款式，群体成员统一着装）",
+                );
             } else if (decision?.strategy === "group_photo") {
-                referenceImages.push({
-                    entity_name: globalName,
-                    role: "group_reference（参考群体整体视觉风格与人数，成员着装体型统一）",
-                });
+                pushRef(
+                    globalName,
+                    "group_reference（参考群体整体视觉风格与人数，成员着装体型统一）",
+                );
             } else if (decision?.strategy === "skip") {
                 continue;
             } else {
-                // prompt_only：仅场景初始 set/prop 进 inline（融入环境图）
-                // 动态道具 origin≠"scene" 已经有独立参考图，不会进入此分支
                 if ((entity.kind === "set" || entity.kind === "prop")
                     && initialSetProps.has(globalName)) {
                     const asset = store.getEntityAssetForScene(sceneId, globalName);
                     const desc = asset?.base_description || entity.appearance || "";
-                    if (desc) inlineForShot.push({ name: globalName, description: desc });
+                    pushInline(globalName, desc);
                 }
-                // prompt_only character → 不内联
             }
         }
 
@@ -183,13 +188,11 @@ function pushInlineForSourceGroup(
     sceneId: string,
     stageEntity: StageEntity,
     store: RefImgStorage,
-    inlineForShot: Array<{ name: string; description: string }>,
+    pushInline: (name: string, description: string) => void,
 ): void {
     const asset = store.getEntityAssetForScene(sceneId, stageEntity.name);
     const desc = asset?.base_description || stageEntity.appearance || "";
-    if (desc) {
-        inlineForShot.push({ name: stageEntity.name, description: desc });
-    }
+    pushInline(stageEntity.name, desc);
 }
 
 function splitShots(design: string): string[] {

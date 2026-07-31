@@ -39,6 +39,7 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
     const store = new Storage(ctx);
     const sceneIds = store.sceneIds();
 
+    // 修复：补齐 inputKeys —— overview 反映 stage + aligned_text + align + beat_nl + registry 的全貌。
     if (!checkExpiry(ctx, {
         inputKeys: [
             `${P}stage:registry:idx`,
@@ -46,6 +47,7 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
                 store.stageKey(id),
                 store.alignedTextKey(id),
                 store.alignKey(id),
+                store.beatNlKey(id),
             ]),
         ],
         outputKeys: `${P}output:stage_overview`,

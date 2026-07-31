@@ -8,26 +8,13 @@ import {
     ENVIRONMENT_REFINE_PROMPT,
     ENVIRONMENT_REVIEW_PROMPT,
 } from "./prompts/environment-base.js";
-import { buildRefsheetStyleSection } from "./prompts/refsheet-style.js";
+import { buildRefsheetStyleSection, getEnvironmentStyleAnchor } from "./prompts/refsheet-style.js";
 import { RefImgStorage } from "./storage.js";
 import type { SceneEnvironmentPrompt } from "./types.js";
 
 const P = "#video:";
 const MAX_ENV_REVIEW_ROUNDS = 2;
 
-/**
- * 为单个场景生成环境基底图提示词（带细化+评审 ReAct）。
- *
- * 三阶段：
- * 1. 初次设计（DESIGN）—— 空间结构 + 固定陈设 + 光照基线
- * 2. 细化（REFINE）—— 沿场景氛围补充痕迹、细节、材质老化
- * 3. 评审（REVIEW）—— 检查设计是否能承载后续剧情（ReAct，最多 2 轮）
- *
- * 道具判定（基于 origin）：
- * - origin="scene" 的 prop/set → 进环境图（fixed_set / inline）
- * - origin="character:..." 的 prop → 不进环境图（dynamic_prop，由镜头提示词消费）
- * - kind="character" / "light" → 一律不进环境图
- */
 export async function generateSceneEnvironment(
     ctx: IRunnerContext,
     sceneId: string,
@@ -38,6 +25,7 @@ export async function generateSceneEnvironment(
         inputKeys: [
             `${P}state:stage_${sceneId}`,
             `${P}shots:lighting_${sceneId}`,
+            `${P}shots:intent_${sceneId}`,
             `${P}output:aligned_text_${sceneId}`,
             `${P}state:beat_nl_${sceneId}`,
             `${P}shots:design_${sceneId}`,
@@ -61,39 +49,38 @@ export async function generateSceneEnvironment(
         return null;
     }
 
+    const sceneMood = parseSceneMood(store.getIntent(sceneId));
+
     const globalStyle = store.getGlobalStyle();
     const styleSection = buildRefsheetStyleSection({
         style: globalStyle.style,
         color_tone: globalStyle.color_tone,
     });
+    const { imageType: envImageType, anchor: envStyleAnchor } = getEnvironmentStyleAnchor(globalStyle.style);
 
-    // ===== 实体分类（基于 origin）=====
-    const allDecisions = store.allRenderDecisions();
+    // ===== 实体分类（按场景决策）=====
+    const sceneDecisions = store.getSceneDecisions(sceneId);
     const fixedSetForPrompt: Array<{ name: string; appearance: string }> = [];
     const refsheetEntities: string[] = [];
     const excludedDynamicProps: string[] = [];
 
     for (const e of stage.entities) {
-        // character / light 一律不进环境图
         if (e.kind === "character" || e.kind === "light") continue;
 
         const globalName = store.resolveToGlobalName(sceneId, e.name);
-        const decision = allDecisions.find(d => d.name === globalName);
+        const decision = sceneDecisions.find(d => d.name === globalName);
         const asset = store.getEntityAssetForScene(sceneId, globalName);
         const description = asset?.base_description || e.appearance || "";
 
-        // 核心判定：基于 origin
         const origin = e.origin ?? "scene";
         const isDynamic = origin.startsWith("character:");
 
         if (isDynamic) {
-            // 动态道具 → 不进环境图
             excludedDynamicProps.push(globalName);
             ctx.info(`[generateSceneEnvironment] ${sceneId} 动态道具排除：${globalName}（origin=${origin}）`);
             continue;
         }
 
-        // 场景固有 prop/set → 进环境图
         if (decision?.strategy === "individual_refsheet") {
             refsheetEntities.push(globalName);
         } else {
@@ -111,9 +98,12 @@ export async function generateSceneEnvironment(
     // ===== Phase 1: 初次设计 =====
     const { text: designText } = await generateText({
         model: getSmartModel(undefined, ctx),
-        instructions: ENVIRONMENT_BASE_PROMPT.system(styleSection),
+        instructions: ENVIRONMENT_BASE_PROMPT.system(styleSection, envImageType, envStyleAnchor),
         prompt: ENVIRONMENT_BASE_PROMPT.user({
             sceneId,
+            sceneMood,
+            envImageType,
+            envStyleAnchor,
             environment: stage.world.environment,
             fixedSetEntities: fixedSetForPrompt,
             lighting: lightingSection,
@@ -124,7 +114,7 @@ export async function generateSceneEnvironment(
     ctx.info(`[generateSceneEnvironment] ${sceneId} Phase1 初次设计完成`);
 
     // ===== Phase 2: 细化 =====
-    const moodContext = extractMoodContext(alignedText, stage.spatial_layout);
+    const moodContext = buildMoodContext(sceneMood, alignedText, stage.spatial_layout);
     const { text: refineText } = await generateText({
         model: getSmartModel(undefined, ctx),
         instructions: ENVIRONMENT_REFINE_PROMPT.system(styleSection),
@@ -164,11 +154,10 @@ export async function generateSceneEnvironment(
         }
 
         if (round === MAX_ENV_REVIEW_ROUNDS) {
-            ctx.warn(`[generateSceneEnvironment] ${sceneId} 达到最大评审轮次 ${MAX_ENV_REVIEW_ROUNDS}，强制通过`);
+            ctx.warn(`[generateSceneEnvironment] ${sceneId} 达到最大评审轮次，强制通过`);
             break;
         }
 
-        // REVISE：把反馈作为约束再次细化
         const { text: reviseText } = await generateText({
             model: getSmartModel(undefined, ctx),
             instructions: ENVIRONMENT_REFINE_PROMPT.system(styleSection),
@@ -212,9 +201,28 @@ export async function generateSceneEnvironment(
     return env;
 }
 
-/** 提取场景氛围/剧情上下文（用于细化的合理性推断） */
-function extractMoodContext(alignedText: string, spatialLayout: string | null): string {
+function parseSceneMood(intentNl: string | null): string {
+    if (!intentNl) return "（未提供场景意图，请依据场景原文自行判断氛围）";
+
+    const mood = extractField(intentNl, "情绪基调");
+    const action = extractField(intentNl, "核心动作");
+    const space = extractField(intentNl, "空间类型");
+    const rhythm = extractField(intentNl, "内在节奏");
+
     const parts: string[] = [];
+    if (mood) parts.push(`情绪：${mood}`);
+    if (action) parts.push(`核心动作：${action}`);
+    if (space) parts.push(`空间类型：${space}`);
+    if (rhythm) parts.push(`节奏：${rhythm}`);
+
+    return parts.length > 0
+        ? parts.join("；")
+        : "（未能从意图中提取明确氛围，请依据原文判断）";
+}
+
+function buildMoodContext(sceneMood: string, alignedText: string, spatialLayout: string | null): string {
+    const parts: string[] = [];
+    parts.push(`【场景氛围基调（痕迹密度必须与此一致）】\n${sceneMood}`);
     parts.push(`【场景原文摘要】\n${alignedText.slice(0, 800)}`);
     if (spatialLayout) {
         parts.push(`【开场站位】\n${spatialLayout}`);
@@ -222,7 +230,11 @@ function extractMoodContext(alignedText: string, spatialLayout: string | null): 
     return parts.join("\n\n");
 }
 
-/** 解析评审最后一行 PASS / REVISE */
+function extractField(text: string, label: string): string {
+    const m = text.match(new RegExp(`${label}[：:]\\s*(.+)`));
+    return m ? m[1].trim() : "";
+}
+
 function parseReviewVerdict(text: string): "PASS" | "REVISE" {
     const lastLine = text.trim().split(/\n+/).filter(Boolean).pop() ?? "";
     const upper = lastLine.toUpperCase();
@@ -230,7 +242,6 @@ function parseReviewVerdict(text: string): "PASS" | "REVISE" {
     return "REVISE";
 }
 
-/** 提取评审反馈（除最后一行外的所有内容） */
 function parseReviewFeedback(text: string): string {
     const lines = text.trim().split("\n");
     if (lines.length <= 1) return "（无具体反馈）";

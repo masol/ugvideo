@@ -31,6 +31,23 @@ export interface GlobalEntity {
      * character/light 类固定为 "scene"（无意义但统一类型）。
      */
     origin: EntityOrigin;
+    /**
+     * 场景快照索引：每个出场场景对应一条快照记录（指向 design-characters 产出的 costume_ref）。
+     * 用于下游按场景隔离生成参考图。
+     */
+    scene_snapshots?: SceneSnapshotRef[];
+    /**
+     * 时间跳跃标记：key=sceneId, value=true 表示与上一场景存在显著时间间隔（换装/衰老/伤痕需要重新判定）。
+     */
+    time_skips?: Record<string, boolean>;
+}
+
+export interface SceneSnapshotRef {
+    scene_id: string;
+    /** design-characters 产出的 costume key（char:costume_{name}_{sceneId}） */
+    costume_ref: string;
+    /** 时间跳跃后是否需要换装/衰老/伤痕 */
+    requires_redress: boolean;
 }
 
 // ============================================================
@@ -50,18 +67,12 @@ export interface StageEntity {
     /**
      * 来源群体名称。若该实体是从某群体中提升出的独立个体，
      * 填来源群体的名称（如"士兵们"）；否则为 undefined/null。
-     *
-     * 有 source_group 的实体：
-     * - 不进全局登记册（不参与跨场景身份对齐）
-     * - 在本场景内有独立 EntityAsset（design-shots Pass D 会为其扩写）
-     * - 在镜头提示词中以 inlineForShot 文字描述渲染（不生成独立定妆照）
      */
     source_group?: string | null;
     /**
      * 出生方式（仅 prop/set 有意义）。
      * "scene" = 场景固有（开场即在，是环境的一部分）；
      * "character:角色名" = 由角色带入/持有/催生。
-     * character/light 类不填此字段。
      */
     origin?: EntityOrigin;
 }

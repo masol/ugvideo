@@ -1,6 +1,7 @@
-// parse-script/index.ts
+// nodes/parse-script/index.ts
 import { isIdentifiedArray } from "$libs/blueprint/blackboard/array.js";
 import { getIOByKeys } from "$libs/blueprint/glossary/ioinfo.js";
+import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { isString } from "radashi";
@@ -10,7 +11,33 @@ import { prepareLines } from "./line-prep.js";
 import { reactParse } from "./react-orchestrator.js";
 import { ParseStorage } from "./storage.js";
 
+/**
+ * 工作流首次启动时，把所有 config 默认值落盘一次。
+ * 下游所有 checkExpiry(inputKeys 含 config:*) 都依赖这些 key 存在；
+ * 若它们从未写过，checkExpiry 内部会把"input 不完整"视为过期，
+ * 导致下游反复触发 LLM 重算。
+ * 后续用户切风格时，dashboard 应主动 set 新值，config 时间戳自动更新，下游自然感知重算。
+ */
+function ensureDefaultConfig(prjdb: ReturnType<typeof PrjDB.ensure>): void {
+    const defaults: Record<string, string> = {
+        "config:pace": "normal",
+        "config:aspectRatio": "9:16",
+        "config:style": "cinematic",
+        "config:audience": "pg",
+        "config:colorTone": "neutral",
+        "config:cameraMovement": "smooth",
+    };
+    for (const [k, v] of Object.entries(defaults)) {
+        if (prjdb.get<string>(k) == null) {
+            prjdb.set(k, v);
+        }
+    }
+}
+
 export async function parseScript(ctx: IRunnerContext): Promise<void> {
+    const prjdb = PrjDB.ensure(ctx.prj);
+    ensureDefaultConfig(prjdb);
+
     const ioInfo = getIOByKeys(ctx, {
         inputs: "script",
         outputs: "#video:parse:idx:scenes",
@@ -48,7 +75,6 @@ export async function parseScript(ctx: IRunnerContext): Promise<void> {
 
     await reactParse(ctx, lines, chunks);
 
-    // ===== 落盘 synopsis（供下游 design-characters 提取世界观）=====
     const cached = storage.getCachedSynopsis();
     const synopsis = storage.loadSynopsis();
     if (synopsis && cached !== synopsis) {

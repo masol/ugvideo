@@ -17,37 +17,31 @@ function stripScriptSuffix(name: string): string {
 
 const FUSE_THRESHOLD = 0.2;
 const MAX_AUDIT_ROUNDS = 2;
-const P = "#video:";
 
-// ============================================================
-// Pass D 主入口：逐场景对齐 + 反向审计 ReAct
-// ============================================================
+const TIME_SKIP_KEYWORDS = /次日|翌日|数日后|数月后|数年后|多年后|翌日清晨|第二天|三天后|一周后|一月后|一年后|多年后/i;
+const SAME_LOCATION_KEYWORDS = /同一|同一地点|同一场景/i;
 
 export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): Promise<void> {
     const store = new Storage(ctx);
 
-    // 逐场景串行对齐
+    // 修复：收集"本次是否有任何场景被新对齐"的信号。
+    // 只有真正重写了 align 的场景才触发后续的审计 + 时间跳跃扫描。
+    let anyAlignChanged = false;
     for (const sceneId of sceneIds) {
-        await alignScene(ctx, sceneId);
+        const changed = await alignScene(ctx, sceneId);
+        if (changed) anyAlignChanged = true;
     }
 
-    ctx.info(`[alignAllScenes] 逐场景对齐完成，开始登记册审计`);
+    ctx.info(`[alignAllScenes] 逐场景对齐完成（本次变化：${anyAlignChanged}）`);
 
-    // 反向审计 ReAct 循环
+    if (!anyAlignChanged) {
+        // 没有任何场景被重新对齐 → registry 无变化 → 审计和 time_skips 都不会有变化，直接跳过
+        ctx.info(`[alignAllScenes] 无对齐变化，跳过审计与时间跳跃扫描`);
+        return;
+    }
+
+    // 有变化才执行审计 + 时间跳跃扫描
     for (let round = 1; round <= MAX_AUDIT_ROUNDS; round++) {
-        const auditInputKeys = [
-            `${P}stage:registry:idx`,
-            ...sceneIds.map(id => store.alignKey(id)),
-        ];
-
-        if (!checkExpiry(ctx, {
-            inputKeys: auditInputKeys,
-            outputKeys: `${P}stage:registry:idx`,
-        })) {
-            ctx.info(`[alignAllScenes] 登记册审计仍新鲜，跳过第${round}轮`);
-            break;
-        }
-
         const hasIssues = await auditRegistry(ctx, round);
         if (!hasIssues) {
             ctx.info(`[alignAllScenes] 登记册审计通过（第${round}轮）`);
@@ -57,13 +51,100 @@ export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): P
             ctx.warn(`[alignAllScenes] 达到最大审计轮次 ${MAX_AUDIT_ROUNDS}，仍有问题，继续`);
         }
     }
+
+    scanTimeSkips(ctx, store, sceneIds);
+    ctx.info(`[alignAllScenes] 时间跳跃标记完成`);
 }
 
-// ============================================================
-// 单场景对齐
-// ============================================================
+function scanTimeSkips(
+    ctx: IRunnerContext,
+    store: Storage,
+    sceneIds: string[],
+): void {
+    const sceneMetaMap = new Map<string, ReturnType<typeof store.getSceneMeta>>();
+    for (const id of sceneIds) {
+        sceneMetaMap.set(id, store.getSceneMeta(id));
+    }
 
-async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
+    const entityScenesMeta = new Map<string, Array<{
+        sceneId: string;
+        episode?: string;
+        act?: string;
+        location?: string;
+        timeOfDay?: string;
+        alignedText?: string;
+    }>>();
+
+    for (const e of store.allGlobalEntities()) {
+        if (e.kind === "set" || e.kind === "light") continue;
+        const seq: Array<{ sceneId: string; episode?: string; act?: string; location?: string; timeOfDay?: string; alignedText?: string }> = [];
+        for (const sid of e.scenes) {
+            const meta = store.getSceneMeta(sid);
+            const episodeAct = parseEpisodeAct(meta);
+            const location = parseField(meta, "地点");
+            const time = parseField(meta, "时间");
+            const alignedText = store.getAlignedText(sid) ?? "";
+            seq.push({
+                sceneId: sid,
+                episode: episodeAct.episode,
+                act: episodeAct.act,
+                location,
+                timeOfDay: time,
+                alignedText: alignedText.slice(0, 500),
+            });
+        }
+        entityScenesMeta.set(e.name, seq);
+    }
+
+    for (const [name, seq] of entityScenesMeta) {
+        for (let i = 0; i < seq.length; i++) {
+            if (i === 0) {
+                store.markTimeSkip(name, seq[i].sceneId, false);
+                continue;
+            }
+            const prev = seq[i - 1];
+            const cur = seq[i];
+
+            let isSkip = false;
+
+            if (cur.episode && prev.episode && cur.episode !== prev.episode) {
+                isSkip = true;
+            } else if (cur.act && prev.act && cur.act !== prev.act) {
+                isSkip = true;
+            } else if (cur.location && prev.location && cur.location !== prev.location) {
+                isSkip = true;
+            } else if (TIME_SKIP_KEYWORDS.test(cur.alignedText ?? "")) {
+                isSkip = true;
+            } else if (SAME_LOCATION_KEYWORDS.test(cur.alignedText ?? "")) {
+                isSkip = false;
+            }
+
+            store.markTimeSkip(name, cur.sceneId, isSkip);
+            if (isSkip) {
+                ctx.info(`[scanTimeSkips] ${name}@${cur.sceneId}: 时间跳跃（vs ${prev.sceneId}）`);
+            }
+        }
+    }
+}
+
+function parseEpisodeAct(meta: string | null): { episode?: string; act?: string } {
+    if (!meta) return {};
+    const episode = parseField(meta, "集");
+    const act = parseField(meta, "幕");
+    return { episode, act };
+}
+
+function parseField(meta: string | null, label: string): string | undefined {
+    if (!meta) return undefined;
+    const m = meta.match(new RegExp(`${label}：([^\\n]+)`));
+    return m ? m[1].trim() : undefined;
+}
+
+/**
+ * 单场景对齐。
+ * 返回 true 表示本次真正执行了重写，false 表示被 checkExpiry 跳过。
+ */
+async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<boolean> {
     const store = new Storage(ctx);
 
     if (!checkExpiry(ctx, {
@@ -71,11 +152,11 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
         outputKeys: store.alignKey(sceneId),
     })) {
         ctx.info(`[alignScene] ${sceneId} 对齐仍新鲜，跳过`);
-        return;
+        return false;
     }
 
     const stage = store.getStage(sceneId);
-    if (!stage) return;
+    if (!stage) return false;
 
     const mapping: Record<string, string> = {};
     let counted = 0;
@@ -87,9 +168,6 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
             continue;
         }
 
-        // 群体提升个体：不进全局登记册，不参与跨场景身份对齐。
-        // 仅在场景静态舞台表里有视觉描述，design-shots 为其产出独立素材。
-        // 在镜头提示词中以 inlineForShot 文字渲染，无需定妆照。
         if (entity.source_group) {
             mapping[name] = name;
             counted++;
@@ -104,7 +182,6 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
 
         const bareName = stripScriptSuffix(name);
 
-        // 精确匹配（裸名比对）
         const exactMatch = findExactByBareName(store, bareName);
         if (exactMatch) {
             store.addSceneToEntity(exactMatch, sceneId);
@@ -116,29 +193,30 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
             continue;
         }
 
-        // 模糊匹配
         const candidateName = findFuzzyCandidate(store, bareName);
 
         if (candidateName) {
             const existingByCandidate = store.getGlobalEntity(candidateName)!;
-            const same = await verifySameEntity(
-                ctx,
-                existingByCandidate,
-                entity,
-                sceneId,
-                candidateName,
-            );
-            if (same) {
-                store.addSceneToEntity(candidateName, sceneId);
-                mapping[name] = candidateName;
-                counted++;
-                ctx.info(`[alignScene] ${sceneId} 模糊命中："${name}" → "${candidateName}"`);
-                continue;
+            if (isMergeCompatible(existingByCandidate, entity)) {
+                const same = await verifySameEntity(
+                    ctx,
+                    existingByCandidate,
+                    entity,
+                    sceneId,
+                    candidateName,
+                );
+                if (same) {
+                    store.addSceneToEntity(candidateName, sceneId);
+                    mapping[name] = candidateName;
+                    counted++;
+                    ctx.info(`[alignScene] ${sceneId} 模糊命中："${name}" → "${candidateName}"`);
+                    continue;
+                }
+            } else {
+                ctx.info(`[alignScene] ${sceneId} 模糊命中但类别/类人不兼容，判为不同："${name}" vs "${candidateName}"`);
             }
-            // LLM 判定为不同 → 新建
         }
 
-        // 新建：用裸名作为规范名
         const canonicalName = bareName || name;
         store.upsertGlobalEntity({
             name: canonicalName,
@@ -155,11 +233,14 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
 
     store.saveStageAlign(sceneId, mapping);
     ctx.info(`[alignScene] ${sceneId} 对齐完成，${counted} 个实体`);
+    return true;
 }
 
-// ============================================================
-// 匹配辅助函数
-// ============================================================
+function isMergeCompatible(a: { kind: string; humanoid?: boolean }, b: { kind: string; humanoid?: boolean }): boolean {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === "character" && (a.humanoid ?? false) !== (b.humanoid ?? false)) return false;
+    return true;
+}
 
 function findExactByBareName(store: Storage, bareName: string): string | null {
     if (!bareName) return null;
@@ -232,16 +313,11 @@ function parseSameVerdict(text: string): boolean {
     return true;
 }
 
-// ============================================================
-// 登记册反向审计（ReAct）
-// ============================================================
-
 async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolean> {
     const store = new Storage(ctx);
     const entities = store.allGlobalEntities();
     if (entities.length === 0) return false;
 
-    // 收集每个实体的场景语义摘要（用于审计消歧）
     const sceneSummaries = collectSceneSummaries(store);
 
     const registryText = renderRegistryForAudit(entities, sceneSummaries);
@@ -272,10 +348,6 @@ async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolea
     return fixedCount > 0 || issues.length > 0;
 }
 
-/**
- * 收集每个实体在每个出场场景的语义摘要（场景元信息 + 首行摘要）。
- * 用于审计 prompt 注入，帮助消歧。
- */
 function collectSceneSummaries(store: Storage): Map<string, string[]> {
     const map = new Map<string, string[]>();
     for (const sceneId of store.sceneIds()) {
@@ -291,11 +363,9 @@ function collectSceneSummaries(store: Storage): Map<string, string[]> {
         const summary = parts.length > 0 ? parts.join("；") : "（无元信息）";
 
         const aligned = store.getAlignedText(sceneId);
-        // 从对齐后原文取前 80 字作为行为线索
         const actionHint = aligned ? aligned.slice(0, 80).replace(/\s+/g, " ").trim() : "";
 
-        for (const [entityName, scenes] of mapOfEntityScenes(store, sceneId)) {
-            void (scenes)
+        for (const [entityName] of mapOfEntityScenes(store, sceneId)) {
             const list = map.get(entityName) ?? [];
             list.push(actionHint
                 ? `${sceneId}（${summary}）｜行为线索：${actionHint}`
@@ -306,13 +376,7 @@ function collectSceneSummaries(store: Storage): Map<string, string[]> {
     return map;
 }
 
-/**
- * 返回本场景内有该实体引用的实体名集合（简化：从 align 映射反查）。
- */
 function mapOfEntityScenes(_store: Storage, _sceneId: string): Map<string, string[]> {
-    // 实际实现：从 stage.entities 与对齐后文本中提取。
-    // 此处给出最简形式：返回空 map，由 renderRegistryForAudit 兜底不显示场景行为。
-    // 真实数据从 stage 提取更准，这里改为直接读 stage：
     return _collectEntitiesInScene(_store, _sceneId);
 }
 
@@ -321,7 +385,7 @@ function _collectEntitiesInScene(store: Storage, sceneId: string): Map<string, s
     const stage = store.getStage(sceneId);
     if (!stage) return result;
     for (const e of stage.entities) {
-        if (e.source_group) continue; // 提升个体不参与全局表审计
+        if (e.source_group) continue;
         const globalName = store.getStageAlign(sceneId)?.[e.name] ?? e.name;
         result.set(globalName, [sceneId]);
     }
@@ -345,6 +409,11 @@ function renderRegistryForAudit(entities: GlobalEntity[], sceneSummaries: Map<st
             }
         } else {
             lines.push(`  场景语义：（无）`);
+        }
+
+        if (e.time_skips && Object.values(e.time_skips).some(v => v)) {
+            const skipScenes = Object.entries(e.time_skips).filter(([, v]) => v).map(([k]) => k);
+            lines.push(`  时间跳跃场景：${skipScenes.join("、")}（这些场景可能需要换装/衰老）`);
         }
     }
     return lines.join("\n");
@@ -407,8 +476,21 @@ function doMerge(ctx: IRunnerContext, store: Storage, entries: string[], target:
         return false;
     }
 
-    const allSceneIds = new Set<string>(targetEntity.scenes);
     const otherEntries = entries.filter(e => e !== target);
+
+    for (const other of otherEntries) {
+        const otherEntity = store.getGlobalEntity(other);
+        if (!otherEntity) continue;
+        if (!isMergeCompatible(targetEntity, otherEntity)) {
+            ctx.warn(
+                `[doMerge] 拒绝不兼容合并："${other}"（${otherEntity.kind}/${otherEntity.humanoid ? "类人" : "非类人"}）`
+                + ` → "${target}"（${targetEntity.kind}/${targetEntity.humanoid ? "类人" : "非类人"}）`,
+            );
+            return false;
+        }
+    }
+
+    const allSceneIds = new Set<string>(targetEntity.scenes);
 
     for (const other of otherEntries) {
         const otherEntity = store.getGlobalEntity(other);

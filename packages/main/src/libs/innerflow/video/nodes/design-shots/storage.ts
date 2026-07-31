@@ -1,6 +1,7 @@
 // nodes/design-shots/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { isDeepStrictEqual } from "node:util";
 import type { GlobalEntity, SceneStage } from "../align-entities/types.js";
 import type {
     CharacterIdentity,
@@ -22,13 +23,15 @@ export class ShotStorage {
         return this.prjdb.get<T>(key) ?? null;
     }
 
+    /**
+     * 幂等写入：内容深度相等则跳过，不 bump 时间戳。
+     * 通用规律，消除相同内容重写导致的下游级联过期。
+     */
     private write<T>(key: string, value: T): void {
+        const existing = this.prjdb.get<T>(key);
+        if (isDeepStrictEqual(existing, value)) return;
         this.prjdb.set(key, value);
     }
-
-    // --------------------------------------------------------
-    // 上游数据（只读）
-    // --------------------------------------------------------
 
     sceneIds(): string[] {
         return this.read<string[]>(`${P}parse:idx:scenes`) ?? [];
@@ -56,10 +59,6 @@ export class ShotStorage {
             .filter((v): v is GlobalEntity => v != null);
     }
 
-    // --------------------------------------------------------
-    // design-characters 产出（只读）
-    // --------------------------------------------------------
-
     getIdentity(name: string): CharacterIdentity | null {
         return this.read<CharacterIdentity>(`${P}char:identity_${name}`);
     }
@@ -78,13 +77,35 @@ export class ShotStorage {
         return null;
     }
 
-    getRenderDecision(name: string): EntityRenderDecision | null {
-        return this.read<EntityRenderDecision>(`${P}char:render_decision_${name}`);
+    /**
+     * 按 (sceneId, entityName) 查决策。
+     */
+    getRenderDecision(sceneId: string, entityName: string): EntityRenderDecision | null {
+        return this.read<EntityRenderDecision>(`${P}char:render_decision_${sceneId}_${entityName}`);
     }
 
-    // --------------------------------------------------------
-    // 场景对齐映射（align-entities 产出，本节点只读）
-    // --------------------------------------------------------
+    /**
+     * 获取某场景的所有决策（通过自维护索引）。
+     */
+    private sceneDecisionIdxKey(sceneId: string): string {
+        return `${P}char:idx:scene_decisions_${sceneId}`;
+    }
+
+    getSceneDecisions(sceneId: string): EntityRenderDecision[] {
+        const names = this.read<string[]>(this.sceneDecisionIdxKey(sceneId)) ?? [];
+        return names
+            .map(n => this.getRenderDecision(sceneId, n))
+            .filter((v): v is EntityRenderDecision => v != null);
+    }
+
+    allRenderDecisions(): EntityRenderDecision[] {
+        const out: EntityRenderDecision[] = [];
+        const designedScenes = this.read<string[]>(`${P}shots:idx:scenes`) ?? [];
+        for (const sid of designedScenes) {
+            out.push(...this.getSceneDecisions(sid));
+        }
+        return out;
+    }
 
     getStageAlign(sceneId: string): Record<string, string> | null {
         return this.read<Record<string, string>>(`${P}stage:align:${sceneId}`);
@@ -96,17 +117,9 @@ export class ShotStorage {
         return mapping[localName] ?? localName;
     }
 
-    // --------------------------------------------------------
-    // 场景元信息（parse-script 产出，用于时间线推断）
-    // --------------------------------------------------------
-
     getSceneMeta(sceneId: string): Record<string, unknown> | null {
         return this.read<Record<string, unknown>>(`${P}parse:scene:${sceneId}`);
     }
-
-    // --------------------------------------------------------
-    // 全局视觉准则（配置项读取）
-    // --------------------------------------------------------
 
     getGlobalStyle(): GlobalStyle {
         const pace = this.read<string>("config:pace") ?? "normal";
@@ -125,10 +138,6 @@ export class ShotStorage {
             camera_movement: cameraMovement,
         };
     }
-
-    // --------------------------------------------------------
-    // 素材全局约束
-    // --------------------------------------------------------
 
     assetConstraintsKey(): string {
         return `${P}shots:asset_constraints`;
@@ -157,10 +166,6 @@ export class ShotStorage {
         this.saveAssetConstraints(constraints);
     }
 
-    // --------------------------------------------------------
-    // Pass A：场景意图
-    // --------------------------------------------------------
-
     intentKey(sceneId: string): string {
         return `${P}shots:intent_${sceneId}`;
     }
@@ -172,10 +177,6 @@ export class ShotStorage {
     saveIntent(sceneId: string, text: string): void {
         this.write(this.intentKey(sceneId), text);
     }
-
-    // --------------------------------------------------------
-    // SKILL
-    // --------------------------------------------------------
 
     shotSkillKey(sceneId: string): string {
         return `${P}shots:shot_skill_${sceneId}`;
@@ -189,10 +190,6 @@ export class ShotStorage {
         this.write(this.shotSkillKey(sceneId), skill);
     }
 
-    // --------------------------------------------------------
-    // Pass B：分镜设计
-    // --------------------------------------------------------
-
     designKey(sceneId: string): string {
         return `${P}shots:design_${sceneId}`;
     }
@@ -204,10 +201,6 @@ export class ShotStorage {
     saveDesign(sceneId: string, text: string): void {
         this.write(this.designKey(sceneId), text);
     }
-
-    // --------------------------------------------------------
-    // Pass C：场景光照
-    // --------------------------------------------------------
 
     lightingKey(sceneId: string): string {
         return `${P}shots:lighting_${sceneId}`;
@@ -221,10 +214,6 @@ export class ShotStorage {
         this.write(this.lightingKey(sceneId), lighting);
     }
 
-    // --------------------------------------------------------
-    // Pass D：逐实体素材（独立落盘，用全局规范名作为 key）
-    // --------------------------------------------------------
-
     entityAssetKey(sceneId: string, entityName: string): string {
         return `${P}shots:asset_${sceneId}_${entityName}`;
     }
@@ -233,8 +222,8 @@ export class ShotStorage {
         return this.read<EntityAsset>(this.entityAssetKey(sceneId, entityName));
     }
 
-    saveEntityAsset(sceneId: string, asset: EntityAsset): void {
-        this.write(this.entityAssetKey(sceneId, asset.entity_name), asset);
+    saveEntityAsset(asset: EntityAsset): void {
+        this.write(this.entityAssetKey(asset.scene_id, asset.entity_name), asset);
     }
 
     getSceneAssets(sceneId: string): EntityAsset[] {
@@ -248,10 +237,6 @@ export class ShotStorage {
             .filter((v): v is EntityAsset => v != null);
     }
 
-    // --------------------------------------------------------
-    // 场景设计索引
-    // --------------------------------------------------------
-
     designedSceneIds(): string[] {
         return this.read<string[]>(`${P}shots:idx:scenes`) ?? [];
     }
@@ -262,10 +247,6 @@ export class ShotStorage {
             this.write(`${P}shots:idx:scenes`, [...ids, sceneId]);
         }
     }
-
-    // --------------------------------------------------------
-    // 总览
-    // --------------------------------------------------------
 
     overviewKey(): string {
         return `${P}output:shots_overview`;

@@ -328,6 +328,26 @@ async function designAssetsForScene(
 ): Promise<void> {
     const store = new ShotStorage(ctx);
 
+    // Pass D gate：本场景所有实体的素材描述作为 output。
+    // 没有这个 gate 时，即使上游分镜/光照/意图都新鲜，Pass D 也会无脑重跑所有实体的 LLM 调用。
+    const assetOutputKeys = params.stage.entities.map(e => {
+        const globalName = store.resolveToGlobalName(sceneId, e.name);
+        return store.entityAssetKey(sceneId, globalName);
+    });
+
+    if (!checkExpiry(ctx, {
+        inputKeys: [
+            store.lightingKey(sceneId),
+            store.designKey(sceneId),
+            store.intentKey(sceneId),
+            store.assetConstraintsKey(),
+        ],
+        outputKeys: assetOutputKeys,
+    })) {
+        ctx.info(`[PassD] ${sceneId} 素材扩写仍新鲜，跳过`);
+        return;
+    }
+
     const sceneContext = `环境：${params.stage.world.environment}\n开场站位：${params.stage.spatial_layout ?? "无"}\n原文节选：${params.alignedText.slice(0, 300)}`;
 
     await pMap(
@@ -335,7 +355,8 @@ async function designAssetsForScene(
         async (entity) => {
             const globalName = store.resolveToGlobalName(sceneId, entity.name);
 
-            const decision = store.getRenderDecision(globalName);
+            // 按 (sceneId, entityName) 查决策
+            const decision = store.getRenderDecision(sceneId, globalName);
             if (decision?.strategy === "skip") return;
 
             const assetSkill = getAssetSkill(pickAssetSkill(entity.kind, entity.humanoid));
@@ -382,6 +403,7 @@ async function designSingleAsset(
         ].join("\n")
         : "";
 
+    // 关键：按 (sceneId, entityName) 读本场景的 costume
     const costume = store.getCostume(globalName, sceneId) ?? store.getFirstCostume(globalName);
     const costumeInfo = costume
         ? [
@@ -390,7 +412,8 @@ async function designSingleAsset(
         ].join("\n")
         : "";
 
-    const decision = store.getRenderDecision(globalName);
+    // 按 (sceneId, entityName) 查决策
+    const decision = store.getRenderDecision(sceneId, globalName);
     const renderStrategy = decision?.strategy ?? "prompt_only";
 
     let assetNl: string | null = null;
@@ -434,11 +457,11 @@ async function designSingleAsset(
 
     if (!assetNl) return;
 
-    const asset = parseEntityAsset(globalName, entity.kind, assetNl);
+    const asset = parseEntityAsset(globalName, entity.kind, sceneId, assetNl);
     if (decision) {
         asset.importance = decision.strategy === "individual_refsheet" ? "primary" : "secondary";
     }
-    store.saveEntityAsset(sceneId, { ...asset, entity_name: globalName });
+    store.saveEntityAsset({ ...asset, scene_id: sceneId, entity_name: globalName });
 
     if (!existingConstraint && asset.base_description) {
         store.upsertAssetConstraint(globalName, asset.base_description, sceneId);
@@ -541,15 +564,9 @@ function parseLighting(text: string): SceneLighting {
 }
 
 /**
- * 解析实体素材 LLM 输出。
- *
- * 源头切分：基础描述 = 跨场景不变部分（族裔/五官/体型/物种/服装默认形态），
- * 本场景变化 = 仅本场景独有的变化（脏污/伤痕/姿态/表情/换装），
- * 光影效果 = 本场景光照对实体的影响。
- *
- * 参考图节点只读 base_description；镜头提示词节点组合三者。
+ * 解析实体素材 LLM 输出（场景隔离版本）。
  */
-function parseEntityAsset(name: string, kind: string, text: string): EntityAsset {
+function parseEntityAsset(name: string, kind: string, sceneId: string, text: string): EntityAsset {
     const base = extractSection(text, "基础描述");
     const delta = extractSection(text, "本场景变化");
     const light = extractSection(text, "光影效果");
@@ -559,11 +576,13 @@ function parseEntityAsset(name: string, kind: string, text: string): EntityAsset
 
     return {
         entity_name: name,
+        scene_id: sceneId,
         kind,
         importance,
         base_description: base,
         scene_delta: delta === "无" ? "" : delta,
         lighting_effect: light,
+        age_progression: "none",
     };
 }
 

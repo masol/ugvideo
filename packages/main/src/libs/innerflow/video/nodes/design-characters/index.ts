@@ -4,6 +4,7 @@ import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText } from "ai";
 import pMap from "p-map";
+import { Storage as AlignStorage } from "../align-entities/storage.js";
 import type { GlobalEntity } from "../align-entities/types.js";
 import { COSTUME_DESIGNER_PROMPT } from "./prompts/costume-designer.js";
 import { IDENTITY_INFERRER_PROMPT } from "./prompts/identity-inferrer.js";
@@ -17,19 +18,11 @@ import type {
 
 const P = "#video:";
 
-/**
- * 角色资产生成（身份 + 服装 + 制服）。
- * 注意：渲染策略判定不在本节点，需要分镜数据，移到 assign-render-strategies 节点。
- */
 export async function designCharacterAssets(ctx: IRunnerContext): Promise<void> {
     await inferIdentities(ctx);
     await designCostumes(ctx);
     await designUniforms(ctx);
 }
-
-// ============================================================
-// Phase 1: 角色身份推断
-// ============================================================
 
 async function inferIdentities(ctx: IRunnerContext): Promise<void> {
     const store = new CharDesignStorage(ctx);
@@ -122,12 +115,9 @@ function inferDefaultEthnicity(entity: GlobalEntity): string {
     return "东亚/汉族面部特征";
 }
 
-// ============================================================
-// Phase 2: 服装设计
-// ============================================================
-
 async function designCostumes(ctx: IRunnerContext): Promise<void> {
     const store = new CharDesignStorage(ctx);
+    const alignStore = new AlignStorage(ctx);
 
     const targets = store.allGlobalEntities().filter(e => {
         if (e.kind !== "character" || !e.humanoid) return false;
@@ -149,17 +139,32 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
         let previousCostume = "";
 
         for (const sceneId of entity.scenes) {
+            const isTimeSkip = entity.time_skips?.[sceneId] ?? false;
+            const isFirstScene = sceneId === entity.scenes[0];
+
+            const existingCostumeText = (isTimeSkip || isFirstScene) ? "" : previousCostume;
+
+            // 修复：去掉 `stage:registry:${entity.name}`（本节点会回写这个 key，导致下游误判"output 永远比 input 新"）。
+            // costume 的上游真正依赖：identity + aligned_text + stage(环境/站位) + beat_nl（保证对齐稳定）。
             if (!checkExpiry(ctx, {
                 inputKeys: [
                     store.identityKey(entity.name),
                     `${P}output:aligned_text_${sceneId}`,
                     `${P}state:stage_${sceneId}`,
+                    `${P}state:beat_nl_${sceneId}`,
                 ],
                 outputKeys: store.costumeKey(entity.name, sceneId),
             })) {
                 const cached = store.getCostume(entity.name, sceneId);
-                if (cached) previousCostume = formatCostume(cached);
-                continue;
+                if (cached) {
+                    previousCostume = formatCostume(cached);
+                    alignStore.upsertSceneSnapshot(entity.name, {
+                        scene_id: sceneId,
+                        costume_ref: store.costumeKey(entity.name, sceneId),
+                        requires_redress: isTimeSkip,
+                    });
+                    continue;
+                }
             }
 
             const stage = store.getStage(sceneId);
@@ -167,7 +172,8 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
             const sceneContext = [
                 `环境：${stage?.world.environment ?? "无"}`,
                 `原文节选：${(alignedText ?? "").slice(0, 300)}`,
-            ].join("\n");
+                isTimeSkip ? `⚠️ 时间跳跃（与上一场景存在显著间隔，可能需要换装/衰老/伤痕）` : "",
+            ].filter(Boolean).join("\n");
 
             const { text } = await generateText({
                 model: getSmartModel(undefined, ctx),
@@ -182,30 +188,30 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
                     originalAppearance: entity.appearance || "无",
                     worldContext,
                     sceneContext,
-                    existingCostume: previousCostume,
+                    existingCostume: existingCostumeText,
                 }),
             });
 
             const costume = parseCostume(entity.name, text);
             store.saveCostume(entity.name, sceneId, costume);
+
+            alignStore.upsertSceneSnapshot(entity.name, {
+                scene_id: sceneId,
+                costume_ref: store.costumeKey(entity.name, sceneId),
+                requires_redress: isTimeSkip,
+            });
+
             previousCostume = formatCostume(costume);
-            ctx.info(`[designCostumes] ${entity.name}@${sceneId} 服装设计完成`);
+            ctx.info(`[designCostumes] ${entity.name}@${sceneId} 服装设计完成${isTimeSkip ? "（时间跳跃）" : ""}`);
         }
     }, { concurrency: 3 });
 
     ctx.info("[designCostumes] 服装设计完成");
 }
 
-// ============================================================
-// Phase 3: 制服设计
-// ============================================================
-
 async function designUniforms(ctx: IRunnerContext): Promise<void> {
     const store = new CharDesignStorage(ctx);
 
-    // 制服面向"穿制式服装的类人群体"：humanoid 且 count!==1
-    // （count=0 表示数量不确定的群体如"士兵们"，count>1 表示有确定数量的群体，
-    //  二者都是群体；count=1 是个体角色，走服装设计不走制服）
     const groupCharacters = store.allGlobalEntities()
         .filter(e => e.kind === "character" && e.humanoid && e.count !== 1);
     if (!groupCharacters.length) {
@@ -218,15 +224,25 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
     await pMap(groupCharacters, async (entity) => {
         const uniformName = `${entity.name}制服`;
 
+        // 修复：补齐 inputKeys：身份推断、首场对齐文本、首场服装（群体的制服参考首场服装）、首场舞台。
+        const firstScene = entity.scenes[0];
+        if (!firstScene) return;
+
         if (!checkExpiry(ctx, {
-            inputKeys: [`${P}stage:registry:${entity.name}`, `${P}state:stage_${entity.scenes[0]}`],
+            inputKeys: [
+                `${P}stage:registry:${entity.name}`,
+                store.identityKey(entity.name),
+                `${P}output:aligned_text_${firstScene}`,
+                `${P}state:stage_${firstScene}`,
+                `${P}state:beat_nl_${firstScene}`,
+                `${P}char:costume_${entity.name}_${firstScene}`,
+            ],
             outputKeys: store.uniformKey(uniformName),
         })) {
             ctx.info(`[designUniforms] ${uniformName} 仍新鲜，跳过`);
             return;
         }
 
-        const firstScene = entity.scenes[0];
         const stage = store.getStage(firstScene);
         const alignedText = store.getAlignedText(firstScene);
         const sceneContext = [
@@ -252,10 +268,6 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
 
     ctx.info("[designUniforms] 制服设计完成");
 }
-
-// ============================================================
-// 工具函数
-// ============================================================
 
 function collectSceneTexts(store: CharDesignStorage, limit: number): string {
     return store.sceneIds().map(id => {

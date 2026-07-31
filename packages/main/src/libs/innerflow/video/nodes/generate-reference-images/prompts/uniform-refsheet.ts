@@ -33,6 +33,7 @@ ${styleSection}
         }>;
         wearerGender: "male" | "female" | "androgynous";
         wearerBodyType: string;
+        styleAnchor: string;
     }) => {
         const layerOrder = ["outer", "mid", "base", "underlayer", "footwear", "headwear", "accessory"];
         const sortedItems = [...params.items].sort(
@@ -64,7 +65,7 @@ ${styleSection}
 【穿着者】${wearerDesc}, ${params.wearerBodyType}, neutral skin tone, hair neatly pulled back
 
 使用构图模板：
-"costume design reference sheet, front view, left side view, back view, same outfit in all three views, consistent garment structure, plain white background, neutral standing pose, arms slightly away from body, soft even studio lighting"
+"costume design reference sheet, front view, left side view, back view, same outfit in all three views, consistent garment structure, plain white background, neutral standing pose, arms slightly away from body, soft even studio lighting, ${params.styleAnchor}"
 
 请直接输出提示词。不写面部特征，不写 meta 声明。`;
     },

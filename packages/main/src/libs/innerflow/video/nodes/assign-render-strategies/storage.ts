@@ -1,6 +1,7 @@
 // nodes/assign-render-strategies/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { isDeepStrictEqual } from "node:util";
 import type { GlobalEntity, SceneStage } from "../align-entities/types.js";
 import type { EntityRenderDecision } from "../design-characters/types.js";
 
@@ -15,6 +16,15 @@ export class RenderStratStorage {
 
     private read<T>(key: string): T | null {
         return this.prjdb.get<T>(key) ?? null;
+    }
+
+    /**
+     * 幂等写入：内容深度相等则跳过，不 bump 时间戳。
+     */
+    private write<T>(key: string, value: T): void {
+        const existing = this.prjdb.get<T>(key);
+        if (isDeepStrictEqual(existing, value)) return;
+        this.prjdb.set(key, value);
     }
 
     entityNames(): string[] {
@@ -53,19 +63,39 @@ export class RenderStratStorage {
         return mapping[localName] ?? localName;
     }
 
-    decisionKey(name: string): string {
-        return `${P}char:render_decision_${name}`;
+    decisionKey(sceneId: string, entityName: string): string {
+        return `${P}char:render_decision_${sceneId}_${entityName}`;
     }
 
-    saveDecision(decision: EntityRenderDecision): void {
-        this.prjdb.set(this.decisionKey(decision.name), decision);
+    private sceneDecisionIdxKey(sceneId: string): string {
+        return `${P}char:idx:scene_decisions_${sceneId}`;
+    }
 
-        // source_group 个体的决策需要单独维护索引，供下游 allRenderDecisions 汇总
-        if (decision.source_group) {
-            const idx = this.read<string[]>(`${P}char:idx:source_group_decisions`) ?? [];
-            if (!idx.includes(decision.name)) {
-                this.prjdb.set(`${P}char:idx:source_group_decisions`, [...idx, decision.name]);
-            }
+    saveDecision(sceneId: string, decision: EntityRenderDecision): void {
+        this.write(this.decisionKey(sceneId, decision.name), decision);
+
+        const idx = this.read<string[]>(this.sceneDecisionIdxKey(sceneId)) ?? [];
+        if (!idx.includes(decision.name)) {
+            this.write(this.sceneDecisionIdxKey(sceneId), [...idx, decision.name]);
         }
+    }
+
+    getDecision(sceneId: string, entityName: string): EntityRenderDecision | null {
+        return this.read<EntityRenderDecision>(this.decisionKey(sceneId, entityName));
+    }
+
+    getSceneDecisions(sceneId: string): EntityRenderDecision[] {
+        const names = this.read<string[]>(this.sceneDecisionIdxKey(sceneId)) ?? [];
+        return names
+            .map(n => this.getDecision(sceneId, n))
+            .filter((v): v is EntityRenderDecision => v != null);
+    }
+
+    allDecisions(): EntityRenderDecision[] {
+        const out: EntityRenderDecision[] = [];
+        for (const sid of this.designedSceneIds()) {
+            out.push(...this.getSceneDecisions(sid));
+        }
+        return out;
     }
 }

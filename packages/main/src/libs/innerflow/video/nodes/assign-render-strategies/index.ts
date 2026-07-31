@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // nodes/assign-render-strategies/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
@@ -8,25 +9,59 @@ import { RenderStratStorage } from "./storage.js";
 const P = "#video:";
 
 /**
- * 渲染策略判定（纯计算）。
+ * 渲染策略判定（按场景隔离）。
  *
- * 核心规则（基于 origin）：
- * - origin="scene" 的 prop/set → 进环境图（prompt_only / environment inline）
- * - origin="character:..." 的 prop（动态道具）：
- *   - 被 ≥1 个镜头引用 → individual_refsheet（保证跨镜头一致性）
- *   - 仅在 stage 列出但 0 镜头引用 → prompt_only
- * - 静态陈设（set）→ prompt_only 或 environment inline
- *
- * 注意：这里不再依赖启发式"是否在 stage 出现"判断动态性——
- * 直接读 entity.origin（在 align-entities Pass A 已经标好）。
+ * 核心变化：
+ * - 决策 key 改为 (sceneId, entityName)，每个 (实体, 场景) 对独立判定
+ * - 同一实体在 S001 和 S002 可以有不同的策略（S001 prompt_only, S002 individual_refsheet）
+ * - source_group 提升个体也按 (sceneId, entityName) 判定
  */
 export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void> {
     const store = new RenderStratStorage(ctx);
     const entities = store.allGlobalEntities();
+    const sceneIds = store.designedSceneIds();
 
-    if (!entities.length) {
-        ctx.info("[assignRenderStrategies] 无实体，跳过");
+    if (!entities.length || !sceneIds.length) {
+        ctx.info("[assignRenderStrategies] 无实体或无场景，跳过");
         return;
+    }
+
+    // 收集所有 (sceneId, entityName) 对应扫描
+    const pairs: Array<{ sceneId: string; entity: GlobalEntity; stageEntity: any }> = [];
+
+    for (const sceneId of sceneIds) {
+        const stage = store.getStage(sceneId);
+        if (!stage) continue;
+        const stageAlign = store.getStageAlign(sceneId) ?? {};
+
+        for (const stageEntity of stage.entities) {
+            // 跳过 light（不入决策表）
+            if (stageEntity.kind === "light") continue;
+            const globalName = stageAlign[stageEntity.name] ?? stageEntity.name;
+
+            // source_group 提升个体：global entity 不存在，直接用 stageEntity.name
+            const entity = store.getGlobalEntity(globalName);
+
+            if (entity) {
+                pairs.push({ sceneId, entity, stageEntity });
+            } else if (stageEntity.source_group) {
+                // 提升个体：构造一个临时 entity 表示
+                pairs.push({
+                    sceneId,
+                    entity: {
+                        name: stageEntity.name,
+                        kind: stageEntity.kind,
+                        appearance: stageEntity.appearance ?? "",
+                        scenes: [sceneId],
+                        humanoid: stageEntity.humanoid,
+                        count: stageEntity.count,
+                        origin: "scene",
+                        source_group: stageEntity.source_group,
+                    } as any,
+                    stageEntity,
+                });
+            }
+        }
     }
 
     if (!checkExpiry(ctx, {
@@ -34,55 +69,53 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
             `${P}stage:registry:idx`,
             `${P}shots:idx:scenes`,
             ...entities.map(e => `${P}stage:registry:${e.name}`),
-            ...store.designedSceneIds().map(id => `${P}shots:design_${id}`),
-            ...store.designedSceneIds().map(id => `${P}state:stage_${id}`),
-            ...store.designedSceneIds().map(id => `${P}stage:align:${id}`),
+            ...sceneIds.map(id => `${P}shots:design_${id}`),
+            ...sceneIds.map(id => `${P}state:stage_${id}`),
+            ...sceneIds.map(id => `${P}stage:align:${id}`),
         ],
-        outputKeys: entities.map(e => store.decisionKey(e.name)),
+        outputKeys: pairs.map(p => store.decisionKey(p.sceneId, p.entity.name)),
     })) {
         ctx.info("[assignRenderStrategies] 所有策略决策仍新鲜，跳过");
         return;
     }
 
-    // 1. 扫描所有分镜
+    // 扫描所有分镜
     const sceneRefs = collectEntityReferencesAcrossScenes(store);
-    const initialPresence = collectInitialPresence(store);
 
-    // 2. 全局实体判定
     const decisions: EntityRenderDecision[] = [];
-    for (const e of entities) {
-        const ref = sceneRefs.get(e.name);
+
+    for (const { sceneId, entity, stageEntity } of pairs) {
+        void (stageEntity)
+        const ref = sceneRefs.get(`${sceneId}::${entity.name}`);
         const referencedShotCount = ref?.referencedShotCount ?? 0;
-        const referencedSceneCount = ref?.referencedScenes.size ?? 0;
-        const isStaticInAnyScene = (initialPresence.get(e.name)?.size ?? 0) > 0;
+        const closeUpShots = ref?.closeUpShots ?? 0;
 
-        const decision = decideStrategy(e, referencedShotCount, referencedSceneCount, isStaticInAnyScene);
-        store.saveDecision(decision);
+        const decision = decideStrategy(
+            ctx,
+            sceneId,
+            entity,
+            referencedShotCount,
+            closeUpShots,
+        );
+
+        store.saveDecision(sceneId, decision);
         decisions.push(decision);
-    }
-
-    // 3. source_group 提升个体 pass
-    const sourceGroupDecisions = decideSourceGroupIndividuals(store, sceneRefs);
-    for (const d of sourceGroupDecisions) {
-        store.saveDecision(d);
-        decisions.push(d);
     }
 
     decisions.sort(compareImportance);
 
-    ctx.info(`[assignRenderStrategies] 完成，${decisions.length} 个决策`);
+    ctx.info(`[assignRenderStrategies] 完成，${decisions.length} 个决策（按场景隔离）`);
     for (const d of decisions) {
-        ctx.info(`[assignRenderStrategies]   ${d.name}: ${d.strategy}｜origin=${d.origin}｜shot=${d.referenced_shot_count}｜scenes=${d.referenced_scene_count}`);
+        ctx.info(`[assignRenderStrategies]   ${d.scene_id ?? "?"}/${d.name}: ${d.strategy}｜origin=${d.origin}｜shot=${d.referenced_shot_count}`);
     }
 }
 
 // ============================================================
-// 扫描分镜
+// 扫描分镜（按 (sceneId, entityName) 对统计引用）
 // ============================================================
 
 interface EntityRefStats {
     referencedShotCount: number;
-    referencedScenes: Set<string>;
     closeUpShots: number;
 }
 
@@ -99,24 +132,22 @@ function collectEntityReferencesAcrossScenes(store: RenderStratStorage): Map<str
         const design = store.getShotDesign(sceneId);
         if (!design) continue;
 
+        const stageAlign = store.getStageAlign(sceneId) ?? {};
         const shots = parseAllShots(design);
+
         for (const shot of shots) {
             const uniqueInShot = new Set<string>();
             for (const localName of shot.entities) {
-                const globalName = store.resolveToGlobalName(sceneId, localName);
+                const globalName = stageAlign[localName] ?? localName;
                 uniqueInShot.add(globalName);
             }
             const isCloseUp = isCloseUpShotType(shot.shotType);
             for (const name of uniqueInShot) {
-                const existing = result.get(name) ?? {
-                    referencedShotCount: 0,
-                    referencedScenes: new Set<string>(),
-                    closeUpShots: 0,
-                };
+                const key = `${sceneId}::${name}`;
+                const existing = result.get(key) ?? { referencedShotCount: 0, closeUpShots: 0 };
                 existing.referencedShotCount += 1;
-                existing.referencedScenes.add(sceneId);
                 if (isCloseUp) existing.closeUpShots += 1;
-                result.set(name, existing);
+                result.set(key, existing);
             }
         }
     }
@@ -156,187 +187,148 @@ function extractEntityReferences(text: string): string[] {
     return Array.from(found);
 }
 
-function collectInitialPresence(store: RenderStratStorage): Map<string, Set<string>> {
-    const result = new Map<string, Set<string>>();
-    for (const sceneId of store.designedSceneIds()) {
-        const stage = store.getStage(sceneId);
-        if (!stage) continue;
-        const stageAlign = store.getStageAlign(sceneId) ?? {};
-        for (const entity of stage.entities) {
-            const globalName = stageAlign[entity.name] ?? entity.name;
-            const set = result.get(globalName) ?? new Set<string>();
-            set.add(sceneId);
-            result.set(globalName, set);
-        }
-    }
-    return result;
-}
-
 // ============================================================
-// source_group 提升个体 pass
-// ============================================================
-
-function decideSourceGroupIndividuals(
-    store: RenderStratStorage,
-    sceneRefs: Map<string, EntityRefStats>,
-): EntityRenderDecision[] {
-    const decisions: EntityRenderDecision[] = [];
-    const processed = new Set<string>();
-
-    for (const sceneId of store.designedSceneIds()) {
-        const stage = store.getStage(sceneId);
-        if (!stage) continue;
-
-        for (const entity of stage.entities) {
-            if (!entity.source_group) continue;
-            if (processed.has(entity.name)) continue;
-            processed.add(entity.name);
-
-            const ref = sceneRefs.get(entity.name);
-            const referencedShotCount = ref?.referencedShotCount ?? 0;
-            const closeUpShots = ref?.closeUpShots ?? 0;
-
-            // 有特写镜头 → 独立参考图
-            if (closeUpShots >= 1) {
-                decisions.push({
-                    name: entity.name,
-                    kind: entity.kind,
-                    strategy: "individual_refsheet",
-                    importance: computeImportance(7, referencedShotCount, 1),
-                    rationale: `提升个体有 ${closeUpShots} 个特写镜头，需独立参考图`,
-                    referenced_shot_count: referencedShotCount,
-                    referenced_scene_count: 1,
-                    is_static_in_scene: true,
-                    source_group: entity.source_group,
-                    origin: "scene",
-                });
-            }
-        }
-    }
-
-    return decisions;
-}
-
-// ============================================================
-// 全局实体判定（核心：基于 origin）
+// 按场景隔离的判定
 // ============================================================
 
 function decideStrategy(
+    _ctx: IRunnerContext,
+    sceneId: string,
     e: GlobalEntity,
     referencedShotCount: number,
-    referencedSceneCount: number,
-    isStaticInAnyScene: boolean,
+    _closeUpShots: number,
 ): EntityRenderDecision {
     const meta = {
+        scene_id: sceneId,
         referenced_shot_count: referencedShotCount,
-        referenced_scene_count: referencedSceneCount,
-        is_static_in_scene: isStaticInAnyScene,
+        referenced_scene_count: 1,
+        is_static_in_scene: true,
         origin: e.origin,
+        source_group: (e as any).source_group,
     };
 
     if (e.kind === "light") {
-        return { name: e.name, kind: e.kind, strategy: "skip", importance: 0, rationale: "光源", ...meta };
+        return { name: e.name, kind: e.kind, strategy: "skip", importance: 0, rationale: "光源", ...meta } as any;
     }
 
-    // ===== prop 判定（核心改动）=====
+    // ===== prop 判定（按场景）=====
     if (e.kind === "prop") {
         if (e.origin !== "scene") {
-            // 动态道具（角色带入/持有）—— 只要在镜头中出现就必须有独立参考图
             if (referencedShotCount >= 1) {
                 return {
                     name: e.name, kind: e.kind,
                     strategy: "individual_refsheet",
-                    importance: computeImportance(8, referencedShotCount, referencedSceneCount),
-                    rationale: `动态道具（origin=${e.origin}）跨 ${referencedShotCount} 镜头，需独立参考图保持一致性`,
+                    importance: computeImportance(8, referencedShotCount, 1),
+                    rationale: `动态道具（origin=${e.origin}）跨 ${referencedShotCount} 镜头，需独立参考图`,
                     ...meta,
-                };
+                } as any;
             }
-            // 0 镜头引用 → prompt_only（仅在 stage 列出但不出现）
             return {
                 name: e.name, kind: e.kind,
                 strategy: "prompt_only",
                 importance: 2,
-                rationale: `动态道具未在镜头引用`,
+                rationale: "动态道具未在镜头引用",
                 ...meta,
-            };
+            } as any;
         }
-        // scene prop → 融入环境图
         return {
             name: e.name, kind: e.kind,
             strategy: "prompt_only",
             importance: 3,
             rationale: "场景固有道具融入环境图",
             ...meta,
-        };
+        } as any;
     }
 
-    // ===== set 判定 =====
+    // ===== set 判定（按场景）=====
     if (e.kind === "set") {
-        if (referencedSceneCount >= 2) {
-            return {
-                name: e.name, kind: e.kind,
-                strategy: "individual_refsheet",
-                importance: computeImportance(6, referencedShotCount, referencedSceneCount),
-                rationale: "跨场景陈设",
-                ...meta,
-            };
-        }
-        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 3, rationale: "静态陈设融入环境图", ...meta };
+        return {
+            name: e.name, kind: e.kind,
+            strategy: "prompt_only",
+            importance: 3,
+            rationale: "静态陈设融入环境图",
+            ...meta,
+        } as any;
     }
 
-    // ===== character 判定（保留原有逻辑）=====
+    // ===== character 判定（按场景）=====
     if (e.kind === "character" && e.count === 1 && e.humanoid) {
         if (referencedShotCount >= 1) {
             return {
                 name: e.name, kind: e.kind,
                 strategy: "individual_refsheet",
-                importance: computeImportance(referencedShotCount >= 2 ? 10 : 7, referencedShotCount, referencedSceneCount),
-                rationale: `${referencedShotCount} 镜头、${referencedSceneCount} 场景`,
+                importance: computeImportance(referencedShotCount >= 2 ? 10 : 7, referencedShotCount, 1),
+                rationale: `${referencedShotCount} 镜头`,
                 ...meta,
-            };
+            } as any;
         }
-        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 1, rationale: "未在镜头引用", ...meta };
+        return {
+            name: e.name, kind: e.kind,
+            strategy: "prompt_only",
+            importance: 1,
+            rationale: "未在镜头引用",
+            ...meta,
+        } as any;
     }
 
     if (e.kind === "character" && e.humanoid) {
-        const hasUniform = hasUniformDescription(e);
-        if (referencedShotCount >= 2 || referencedSceneCount >= 2) {
+        // 群体：本场景是否需要制服三视图/合照？
+        if (referencedShotCount >= 2) {
+            const hasUniform = hasUniformDescription(e);
             if (hasUniform) {
                 const d: EntityRenderDecision = {
                     name: e.name, kind: e.kind,
                     strategy: "uniform_refsheet",
-                    importance: computeImportance(7, referencedShotCount, referencedSceneCount),
+                    importance: computeImportance(7, referencedShotCount, 1),
                     rationale: `制式服装群体 ${referencedShotCount} 镜头`,
                     ...meta,
-                };
+                } as any;
                 d.uniform_name = `${e.name}制服`;
                 return d;
             }
             return {
                 name: e.name, kind: e.kind,
                 strategy: "group_photo",
-                importance: computeImportance(6, referencedShotCount, referencedSceneCount),
-                rationale: `无制式服装群体 ${referencedShotCount} 镜头，需群体合照`,
+                importance: computeImportance(6, referencedShotCount, 1),
+                rationale: `无制式服装群体 ${referencedShotCount} 镜头`,
                 ...meta,
-            };
+            } as any;
         }
-        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 2, rationale: "群体单镜头", ...meta };
+        return {
+            name: e.name, kind: e.kind,
+            strategy: "prompt_only",
+            importance: 2,
+            rationale: "群体单镜头",
+            ...meta,
+        } as any;
     }
 
     if (e.kind === "character") {
-        if (referencedShotCount >= 2 || referencedSceneCount >= 2) {
+        if (referencedShotCount >= 2) {
             return {
                 name: e.name, kind: e.kind,
                 strategy: "individual_refsheet",
-                importance: computeImportance(8, referencedShotCount, referencedSceneCount),
+                importance: computeImportance(8, referencedShotCount, 1),
                 rationale: `非类人 ${referencedShotCount} 镜头`,
                 ...meta,
-            };
+            } as any;
         }
-        return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 3, rationale: "单镜头非类人", ...meta };
+        return {
+            name: e.name, kind: e.kind,
+            strategy: "prompt_only",
+            importance: 3,
+            rationale: "单镜头非类人",
+            ...meta,
+        } as any;
     }
 
-    return { name: e.name, kind: e.kind, strategy: "prompt_only", importance: 2, rationale: "兜底", ...meta };
+    return {
+        name: e.name, kind: e.kind,
+        strategy: "prompt_only",
+        importance: 2,
+        rationale: "兜底",
+        ...meta,
+    } as any;
 }
 
 function hasUniformDescription(e: GlobalEntity): boolean {

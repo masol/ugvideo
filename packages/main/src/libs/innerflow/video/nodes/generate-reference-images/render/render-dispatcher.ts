@@ -6,10 +6,11 @@ import type { RenderTask } from "../types.js";
 import type { RenderFn } from "./render-types.js";
 
 /**
- * 参考图/环境图渲染调度。
- *
- * 参考图之间相互独立（都是纯白背景独立图），不构建依赖图，直接并行渲染。
- * 参考图间的引用关系由下游"场景镜头提示词"环节处理。
+ * 渲染调度（按场景隔离的 task id）。
+ * task id 格式：
+ * - 实体参考图：`${sceneId}__${entityName}`
+ * - 制服：`uniform:${name}`
+ * - 环境图：`env:${sceneId}`
  */
 export async function dispatchRenderTasks(
     ctx: IRunnerContext,

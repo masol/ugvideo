@@ -1,9 +1,10 @@
 // nodes/align-entities/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { isDeepStrictEqual } from "node:util";
 import type { PersistedScene } from "../parse-script/types.js";
 import { loadScriptLines, sliceScene } from "./script-lines.js";
-import type { GlobalEntity, SceneStage } from "./types.js";
+import type { GlobalEntity, SceneSnapshotRef, SceneStage } from "./types.js";
 
 const P = "#video:";
 
@@ -21,7 +22,13 @@ export class Storage {
         return this.prjdb.get<T>(key);
     }
 
+    /**
+     * 幂等写入：内容深度相等时跳过，不刷新时间戳。
+     * 通用规律——相同内容 = 相同版本 = 不应使下游失效。
+     */
     private write<T>(key: string, value: T): void {
+        const existing = this.prjdb.get<T>(key);
+        if (isDeepStrictEqual(existing, value)) return;
         this.prjdb.set(key, value);
     }
 
@@ -32,17 +39,9 @@ export class Storage {
         return this._lines;
     }
 
-    // --------------------------------------------------------
-    // 场景索引（parse-script 产出，本节点只读）
-    // --------------------------------------------------------
-
     sceneIds(): string[] {
         return this.read<string[]>(`${P}parse:idx:scenes`) ?? [];
     }
-
-    // --------------------------------------------------------
-    // 场景原文与元信息
-    // --------------------------------------------------------
 
     private getPersistedScene(sceneId: string): PersistedScene | null {
         return this.read<PersistedScene>(`${P}parse:scene:${sceneId}`);
@@ -78,10 +77,6 @@ export class Storage {
         return sliceScene(this.lines(), s.line_start, end);
     }
 
-    // --------------------------------------------------------
-    // Pass A：静态舞台
-    // --------------------------------------------------------
-
     stageNlKey(sceneId: string): string {
         return `${P}state:stage_nl_${sceneId}`;
     }
@@ -106,10 +101,6 @@ export class Storage {
         this.write(this.stageKey(sceneId), stage);
     }
 
-    // --------------------------------------------------------
-    // Pass B：节拍时间线 NL（工作载体，不做 safefmt 提取）
-    // --------------------------------------------------------
-
     beatNlKey(sceneId: string): string {
         return `${P}state:beat_nl_${sceneId}`;
     }
@@ -122,10 +113,6 @@ export class Storage {
         this.write(this.beatNlKey(sceneId), text);
     }
 
-    // --------------------------------------------------------
-    // Pass C：名称对齐后的场景原文
-    // --------------------------------------------------------
-
     alignedTextKey(sceneId: string): string {
         return `${P}output:aligned_text_${sceneId}`;
     }
@@ -137,10 +124,6 @@ export class Storage {
     saveAlignedText(sceneId: string, text: string): void {
         this.write(this.alignedTextKey(sceneId), text);
     }
-
-    // --------------------------------------------------------
-    // Pass D：全局实体登记册
-    // --------------------------------------------------------
 
     private registryKey(name: string): string {
         return `${P}stage:registry:${name}`;
@@ -168,7 +151,6 @@ export class Storage {
         }
     }
 
-    /** 从登记册删除一个实体（合并时用） */
     removeGlobalEntity(name: string): void {
         this.prjdb.remove(this.registryKey(name));
         const names = this.entityNames().filter(n => n !== name);
@@ -179,13 +161,50 @@ export class Storage {
         const e = this.getGlobalEntity(name);
         if (!e) return;
         if (!e.scenes.includes(sceneId)) {
-            this.upsertGlobalEntity({ ...e, scenes: [...e.scenes, sceneId] });
+            const updated: GlobalEntity = { ...e, scenes: [...e.scenes, sceneId] };
+            this.upsertGlobalEntity(updated);
         }
     }
 
-    // --------------------------------------------------------
-    // Pass D：场景对齐映射
-    // --------------------------------------------------------
+    /**
+     * 写入场景快照引用（design-characters 阶段回调）。
+     * 修复：当 scene_id 已存在时，替换而非追加；否则同 scene_id 重复调用会让数组长度+1，
+     * 破坏幂等，导致每次执行都 bump 时间戳。
+     */
+    upsertSceneSnapshot(name: string, ref: SceneSnapshotRef): void {
+        const e = this.getGlobalEntity(name);
+        if (!e) return;
+        const snapshots = e.scene_snapshots ?? [];
+        const existingIdx = snapshots.findIndex(s => s.scene_id === ref.scene_id);
+        if (existingIdx >= 0) {
+            if (isDeepStrictEqual(snapshots[existingIdx], ref)) {
+                return;
+            }
+            const updatedSnapshots = [...snapshots];
+            updatedSnapshots[existingIdx] = ref;
+            this.upsertGlobalEntity({ ...e, scene_snapshots: updatedSnapshots });
+            return;
+        }
+        this.upsertGlobalEntity({ ...e, scene_snapshots: [...snapshots, ref] });
+    }
+
+    markTimeSkip(name: string, sceneId: string, isSkip: boolean): void {
+        const e = this.getGlobalEntity(name);
+        if (!e) return;
+        const skips = e.time_skips ?? {};
+        if (skips[sceneId] === isSkip) return;
+        const updated: GlobalEntity = {
+            ...e,
+            time_skips: { ...skips, [sceneId]: isSkip },
+        };
+        this.upsertGlobalEntity(updated);
+    }
+
+    getSceneSnapshot(name: string, sceneId: string): SceneSnapshotRef | null {
+        const e = this.getGlobalEntity(name);
+        if (!e || !e.scene_snapshots) return null;
+        return e.scene_snapshots.find(s => s.scene_id === sceneId) ?? null;
+    }
 
     alignKey(sceneId: string): string {
         return `${P}stage:align:${sceneId}`;
@@ -199,7 +218,6 @@ export class Storage {
         this.write(this.alignKey(sceneId), mapping);
     }
 
-    /** 批量更新所有场景 align 映射中对某个旧名的引用 */
     renameInAllAligns(oldName: string, newName: string): void {
         for (const sceneId of this.sceneIds()) {
             const mapping = this.getStageAlign(sceneId);
@@ -214,10 +232,6 @@ export class Storage {
             if (changed) this.saveStageAlign(sceneId, mapping);
         }
     }
-
-    // --------------------------------------------------------
-    // 总览输出
-    // --------------------------------------------------------
 
     getOverview(): string | null {
         return this.read<string>(`${P}output:stage_overview`);

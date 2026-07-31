@@ -1,6 +1,7 @@
 // nodes/design-characters/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { isDeepStrictEqual } from "node:util";
 import type { GlobalEntity, SceneStage } from "../align-entities/types.js";
 import type {
     CharacterIdentity,
@@ -22,7 +23,13 @@ export class CharDesignStorage {
         return this.prjdb.get<T>(key) ?? null;
     }
 
+    /**
+     * 幂等写入：内容深度相等则跳过，不 bump 时间戳。
+     * 通用规律，消除相同内容重写导致的下游级联过期。
+     */
     private write<T>(key: string, value: T): void {
+        const existing = this.prjdb.get<T>(key);
+        if (isDeepStrictEqual(existing, value)) return;
         this.prjdb.set(key, value);
     }
 

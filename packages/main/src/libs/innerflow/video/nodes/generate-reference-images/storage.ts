@@ -1,6 +1,7 @@
 // nodes/generate-reference-images/storage.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { isDeepStrictEqual } from "node:util";
 import type { GlobalEntity, SceneStage, StageEntity } from "../align-entities/types.js";
 import type {
     CharacterIdentity,
@@ -29,9 +30,19 @@ export class RefImgStorage {
         return this.prjdb.get<T>(key) ?? null;
     }
 
+    /**
+     * 幂等写入：内容深度相等则跳过，不 bump 时间戳。
+     * 通用规律，消除相同内容重写导致的下游级联过期。
+     */
     private write<T>(key: string, value: T): void {
+        const existing = this.prjdb.get<T>(key);
+        if (isDeepStrictEqual(existing, value)) return;
         this.prjdb.set(key, value);
     }
+
+    // --------------------------------------------------------
+    // 场景与实体
+    // --------------------------------------------------------
 
     sceneIds(): string[] {
         return this.read<string[]>(`${P}parse:idx:scenes`) ?? [];
@@ -85,35 +96,49 @@ export class RefImgStorage {
         return this.read<EntityAsset>(`${P}shots:asset_${sceneId}_${entityName}`);
     }
 
-    getEntityAsset(entityName: string): EntityAsset | null {
+    getEntityAsset(sceneId: string, entityName: string): EntityAsset | null {
+        return this.read<EntityAsset>(`${P}shots:asset_${sceneId}_${entityName}`);
+    }
+
+    getFirstSceneForEntity(entityName: string): string | null {
         const entity = this.getGlobalEntity(entityName);
         if (!entity || !entity.scenes.length) return null;
-        const firstScene = entity.scenes[0];
-        return this.read<EntityAsset>(`${P}shots:asset_${firstScene}_${entityName}`);
+        return entity.scenes[0];
     }
 
     getIdentity(name: string): CharacterIdentity | null {
         return this.read<CharacterIdentity>(`${P}char:identity_${name}`);
     }
 
-    getRenderDecision(name: string): EntityRenderDecision | null {
-        return this.read<EntityRenderDecision>(`${P}char:render_decision_${name}`);
+    // --------------------------------------------------------
+    // 决策（通过 assign-render-strategies 维护的索引读取）
+    // --------------------------------------------------------
+
+    private sceneDecisionIdxKey(sceneId: string): string {
+        return `${P}char:idx:scene_decisions_${sceneId}`;
     }
 
+    getRenderDecision(sceneId: string, entityName: string): EntityRenderDecision | null {
+        return this.read<EntityRenderDecision>(`${P}char:render_decision_${sceneId}_${entityName}`);
+    }
+
+    getSceneDecisions(sceneId: string): EntityRenderDecision[] {
+        const names = this.read<string[]>(this.sceneDecisionIdxKey(sceneId)) ?? [];
+        return names
+            .map(n => this.getRenderDecision(sceneId, n))
+            .filter((v): v is EntityRenderDecision => v != null);
+    }
+
+    /**
+     * 列出全部决策（通过已知的 designedSceneIds + 索引组合）。
+     */
     allRenderDecisions(): EntityRenderDecision[] {
-        const fromRegistry = this.entityNames()
-            .map(n => this.getRenderDecision(n))
-            .filter((v): v is EntityRenderDecision => v != null);
-
-        const sourceGroupDecisions = this.sourceGroupDecisionNames()
-            .map(n => this.getRenderDecision(n))
-            .filter((v): v is EntityRenderDecision => v != null);
-
-        return [...fromRegistry, ...sourceGroupDecisions];
-    }
-
-    sourceGroupDecisionNames(): string[] {
-        return this.read<string[]>(`${P}char:idx:source_group_decisions`) ?? [];
+        const out: EntityRenderDecision[] = [];
+        const designedScenes = this.read<string[]>(`${P}shots:idx:scenes`) ?? [];
+        for (const sid of designedScenes) {
+            out.push(...this.getSceneDecisions(sid));
+        }
+        return out;
     }
 
     getUniform(uniformName: string): UniformDesign | null {
@@ -130,24 +155,55 @@ export class RefImgStorage {
         return { style, color_tone: colorTone };
     }
 
-    entityRefsheetKey(entityName: string): string {
-        return `${P}refimg:entity_${entityName}`;
+    getIntent(sceneId: string): string | null {
+        return this.read<string>(`${P}shots:intent_${sceneId}`);
     }
 
-    getEntityRefsheet(entityName: string): EntityRefsheetPrompt | null {
-        return this.read<EntityRefsheetPrompt>(this.entityRefsheetKey(entityName));
+    // --------------------------------------------------------
+    // 实体参考图（按场景隔离）
+    // --------------------------------------------------------
+
+    entityRefsheetKey(sceneId: string, entityName: string): string {
+        return `${P}refimg:entity_${sceneId}_${entityName}`;
+    }
+
+    getEntityRefsheet(sceneId: string, entityName: string): EntityRefsheetPrompt | null {
+        return this.read<EntityRefsheetPrompt>(this.entityRefsheetKey(sceneId, entityName));
     }
 
     saveEntityRefsheet(prompt: EntityRefsheetPrompt): void {
-        this.write(this.entityRefsheetKey(prompt.entity_name), prompt);
-        const idx = this.generatedEntityNames();
-        if (!idx.includes(prompt.entity_name)) {
-            this.write(`${P}refimg:idx:entities`, [...idx, prompt.entity_name]);
+        this.write(this.entityRefsheetKey(prompt.scene_id, prompt.entity_name), prompt);
+        const idx = this.read<string[]>(`${P}refimg:idx:entities`) ?? [];
+        const id = `${prompt.scene_id}__${prompt.entity_name}`;
+        if (!idx.includes(id)) {
+            this.write(`${P}refimg:idx:entities`, [...idx, id]);
         }
     }
 
-    generatedEntityNames(): string[] {
+    generatedEntityRefsheets(): string[] {
         return this.read<string[]>(`${P}refimg:idx:entities`) ?? [];
+    }
+
+    parseEntityRefsheetKey(id: string): { sceneId: string; entityName: string } | null {
+        const sep = id.indexOf("__");
+        if (sep < 0) return null;
+        return { sceneId: id.slice(0, sep), entityName: id.slice(sep + 2) };
+    }
+
+    /**
+     * 列出某场景已生成的实体参考图（通过全局索引 + 过滤 sceneId 前缀）。
+     */
+    getSceneEntityRefsheets(sceneId: string): EntityRefsheetPrompt[] {
+        const prefix = `${sceneId}__`;
+        const out: EntityRefsheetPrompt[] = [];
+        for (const id of this.generatedEntityRefsheets()) {
+            if (!id.startsWith(prefix)) continue;
+            const parsed = this.parseEntityRefsheetKey(id);
+            if (!parsed) continue;
+            const p = this.getEntityRefsheet(parsed.sceneId, parsed.entityName);
+            if (p) out.push(p);
+        }
+        return out;
     }
 
     uniformPromptKey(uniformName: string): string {
@@ -240,10 +296,6 @@ export class RefImgStorage {
         this.write(this.overviewKey(), text);
     }
 
-    /**
-     * 读取场景的节拍 NL（用于判定 prop 是否在开场就在场）。
-     * 对应 align-entities 节点产出的 #video:state:beat_nl_{sceneId}。
-     */
     getBeatNl(sceneId: string): string | null {
         return this.read<string>(`${P}state:beat_nl_${sceneId}`);
     }
