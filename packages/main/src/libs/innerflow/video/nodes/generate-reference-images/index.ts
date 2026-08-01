@@ -91,6 +91,14 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
     await buildOverview(ctx);
 }
 
+/** 从 ref_id 反解出用于展示的实体名（env/uniform/entity） */
+function displayNameFromRefId(store: RefImgStorage, refId: string): string {
+    if (refId.startsWith("env:")) return "场景环境";
+    if (refId.startsWith("uniform:")) return refId.slice("uniform:".length);
+    const parsed = store.parseEntityRefsheetKey(refId);
+    return parsed ? parsed.entityName : refId;
+}
+
 function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[] {
     const tasks: RenderTaskDescriptor[] = [];
 
@@ -204,16 +212,75 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
         });
     }
 
+    // ===== 交付帧：场景镜头首尾帧（成片的最终画面）=====
+    // SceneShotPrompt.reference_images 的 entity_name 字段实际存放的是 ref_id
+    // （env:X / sceneId__name / uniform:X），可直接对应渲染任务 id。
+    for (const sceneId of store.sceneIds()) {
+        for (const shot of store.getSceneShotPrompts(sceneId)) {
+            const referenceImages = shot.reference_images.map(r => ({
+                ref_id: r.entity_name,
+                entity_name: displayNameFromRefId(store, r.entity_name),
+                role: r.role,
+            }));
+            tasks.push({
+                id: `shot:${sceneId}:${shot.shot_index}`,
+                type: "scene_shot",
+                prompt: shot.prompt,
+                importance: 10,
+                referenced_shot_count: 1,
+                referenced_scene_count: 1,
+                scene_id: sceneId,
+                reference_images: referenceImages.length > 0 ? referenceImages : undefined,
+                shot_info: {
+                    scene_id: sceneId,
+                    shot_index: shot.shot_index,
+                    shot_type: shot.shot_meta.shot_type,
+                    camera_movement: shot.shot_meta.camera_movement,
+                    duration_estimate: shot.shot_meta.duration_estimate,
+                },
+            });
+        }
+    }
+
     return tasks;
 }
 
+/**
+ * cutoff：
+ * - 交付帧（scene_shot）与环境图（scene_environment）恒定保留（成片必需）。
+ * - 二者依赖闭包内的参考图恒定保留（否则成片帧丢引用）。
+ * - 仅对"未被任何交付帧/环境引用的冗余参考图"施加 MAX_CONCURRENT_RENDER 预算上限。
+ */
 function applyImportanceCutoff(tasks: RenderTaskDescriptor[]): RenderTaskDescriptor[] {
-    const envTasks = tasks.filter(t => t.type === "scene_environment");
-    const otherTasks = tasks.filter(t => t.type !== "scene_environment");
+    const mustKeep = tasks.filter(t => t.type === "scene_shot" || t.type === "scene_environment");
+    const optional = tasks.filter(t => t.type !== "scene_shot" && t.type !== "scene_environment");
 
-    const remainingSlots = Math.max(0, MAX_CONCURRENT_RENDER - envTasks.length);
+    const byId = new Map(tasks.map(t => [t.id, t] as const));
 
-    const sortedOthers = [...otherTasks].sort((a, b) => {
+    // 计算 mustKeep 的依赖闭包
+    const requiredRefIds = new Set<string>();
+    for (const t of mustKeep) {
+        for (const r of t.reference_images ?? []) requiredRefIds.add(r.ref_id);
+    }
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const id of Array.from(requiredRefIds)) {
+            const dep = byId.get(id);
+            if (!dep) continue;
+            for (const r of dep.reference_images ?? []) {
+                if (!requiredRefIds.has(r.ref_id)) {
+                    requiredRefIds.add(r.ref_id);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    const requiredOptional = optional.filter(t => requiredRefIds.has(t.id));
+    const freeOptional = optional.filter(t => !requiredRefIds.has(t.id));
+
+    const sortedFree = [...freeOptional].sort((a, b) => {
         const aShot = a.referenced_shot_count ?? 0;
         const bShot = b.referenced_shot_count ?? 0;
         if (aShot !== bShot) return bShot - aShot;
@@ -225,7 +292,7 @@ function applyImportanceCutoff(tasks: RenderTaskDescriptor[]): RenderTaskDescrip
         return b.importance - a.importance;
     });
 
-    return [...envTasks, ...sortedOthers.slice(0, remainingSlots)];
+    return [...mustKeep, ...requiredOptional, ...sortedFree.slice(0, MAX_CONCURRENT_RENDER)];
 }
 
 async function buildOverview(ctx: IRunnerContext): Promise<void> {

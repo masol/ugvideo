@@ -67,6 +67,10 @@ export async function generateSceneEnvironment(
     for (const e of stage.entities) {
         if (e.kind === "character" || e.kind === "light") continue;
 
+        // 修复：穿着道具（worn_by）不参与环境图生成 —— 视觉由角色 costume 覆盖，
+        // 强行进入环境图会让环境基底与角色定妆产生冲突
+        if (e.kind === "prop" && e.worn_by) continue;
+
         const globalName = store.resolveToGlobalName(sceneId, e.name);
         const decision = sceneDecisions.find(d => d.name === globalName);
         const asset = store.getEntityAssetForScene(sceneId, globalName);

@@ -28,7 +28,7 @@ const StaticStageSchema = z.object({
             name: z.string()
                 .describe("实体在原文中的称呼，直接作为标识使用，禁止编号(不要 e01/e02)；同一场景出现多个同名实体时用原文可辨的定语区分，如'披甲士兵''持刀士兵'"),
             kind: z.enum(["character", "prop", "set", "light"])
-                .describe("实体大类，只能选一个：character=人物/生物角色(含人类、拟人化生物、神话生物等有行动力的角色)；prop=可被拿起移动的道具(茶壶/武器/书本/鱼干等)；set=固定或半固定陈设(桌/椅/门/窗/地面/墙/法盆/书架等一切场景物件，家具全部选set)；light=光源"),
+                .describe("实体大类，只能选一个：character=人物/生物角色(含人类、拟人化生物、神话生物等有行动力的角色)；prop=可被拿起移动的道具(茶壶/武器/书本/鱼干等)；穿在角色身上的衣物归入角色 costume，不抽为 prop；set=固定或半固定陈设(桌/椅/门/窗/地面/墙/法盆/书架等一切场景物件，家具全部选set)；light=光源"),
             appearance: z.string().nullable()
                 .describe("只抄录原文对该实体的外观描写(发型发色/五官/服装材质颜色/配饰/形状磨损/材质年代)；原文没有任何外观描写则填 null，禁止自行想象"),
             humanoid: z.boolean()
@@ -39,8 +39,10 @@ const StaticStageSchema = z.object({
                 .describe("若该实体是从某群体中提升出的独立个体（原文中该群体成员有独立戏份），填来源群体名称（如'士兵们'）；否则填 null。有 source_group 的实体不进全局登记册，只在本场景内有独立视觉描述"),
             origin: z.string().nullable()
                 .describe("出生方式，仅 prop/set 需要填写，character/light 填 null。值为以下之一：'scene'=场景固有（开场即存在于空间中的物件）；'character:角色名'=由该角色带入/持有/掏出/催生的道具。原文没说且无法判断时填'scene'（宁可归入场景）"),
+            worn_by: z.string().nullable()
+                .describe("仅 prop 字段填写，character/set/light 一律填 null。若该道具是穿在某角色身上/角色正在穿戴的衣物或配饰（原文描述为'穿/戴/披/系/佩'在某角色身上，或为'该角色身上的某个部分'），填该角色的原文称呼。下游会把该 prop 从 prop 集合剔除，并将其外观特征作为 scene_delta 合并到该角色本场景描述中，避免与 costume 重复。独立可手持的道具填 null"),
         })
-    ).describe("原文中真实出现的所有可见实体清单，忠实抽取，不遗漏也不臆造；群体中有独立戏份的成员须单独建条目并标注 source_group；prop/set 必须标注 origin"),
+    ).describe("原文中真实出现的所有可见实体清单，忠实抽取，不遗漏也不臆造；群体中有独立戏份的成员须单独建条目并标注 source_group；prop/set 必须标注 origin；穿在角色身上的衣物/配饰必须标注 worn_by 以避免与定妆照重复"),
     spatial_layout: z.string().nullable()
         .describe("开场瞬间所有实体相对位置与姿态的自然语言整体描述，仅基于原文可支撑的信息(谁在谁左右/前后/上下，谁跪谁站，谁持有什么及哪只手，谁盘绕/倚靠/包围谁)；可自由使用任意方位词；原文完全没有空间信息则填 null"),
 });
@@ -84,6 +86,7 @@ function toSceneStage(raw: RawStaticStage, sceneId: string): SceneStage {
         count: e.count ?? 1,
         source_group: e.source_group ?? null,
         origin: parseOrigin(e.origin, e.kind),
+        worn_by: e.worn_by ?? null,
     }));
     return { world, entities, spatial_layout: raw.spatial_layout ?? null };
 }
@@ -349,4 +352,4 @@ export async function buildSceneStage(
     await runPassC(ctx, sceneId, stage, sceneText);
 
     ctx.info(`[buildSceneStage] ${sceneId} 三Pass完成`);
-}            
+}

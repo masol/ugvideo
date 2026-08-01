@@ -161,10 +161,31 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<boolean
     const mapping: Record<string, string> = {};
     let counted = 0;
 
+    // 修复：worn_by 道具（穿在某角色身上的衣物/配饰）不参与登记册、不参与决策。
+    // 这些道具的视觉表现由该角色的定妆照覆盖，外观特征在 Pass B / design-characters 阶段
+    // 会以角色 scene_delta 的形式合并；这里只收集其原文描述并附加到对应角色的 stage
+    // worn_props 备注中，供下游读取合并。
+    const wornPropsByCharacter = new Map<string, Array<{ name: string; appearance: string }>>();
+
     for (const entity of stage.entities) {
         const name = (entity.name ?? "").trim();
         if (!name) {
             ctx.warn(`[alignScene] ${sceneId} 实体名称缺失，跳过`);
+            continue;
+        }
+
+        // ===== 修复：穿着道具剥离 =====
+        if (entity.kind === "prop" && entity.worn_by) {
+            const wearerName = entity.worn_by.trim();
+            if (!mapping[wearerName]) {
+                // 角色名在本场景尚未对齐（罕见的 roster 顺序异常），记录警告并跳过本条
+                ctx.warn(`[alignScene] ${sceneId} 穿着道具 "${name}" 的穿着者 "${wearerName}" 未对齐，跳过合并`);
+            } else {
+                const list = wornPropsByCharacter.get(wearerName) ?? [];
+                list.push({ name, appearance: entity.appearance ?? "" });
+                wornPropsByCharacter.set(wearerName, list);
+                ctx.info(`[alignScene] ${sceneId} 穿着道具剥离："${name}" → "${wearerName}" 角色 scene_delta`);
+            }
             continue;
         }
 
@@ -229,6 +250,12 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<boolean
         });
         mapping[name] = canonicalName;
         counted++;
+    }
+
+    // ===== 修复：把穿着道具的原文特征写到 stage 上，供下游合并 =====
+    if (wornPropsByCharacter.size > 0) {
+        store.saveWornProps(sceneId, wornPropsByCharacter);
+        ctx.info(`[alignScene] ${sceneId} 穿着道具合并：${wornPropsByCharacter.size} 个角色受益`);
     }
 
     store.saveStageAlign(sceneId, mapping);
@@ -385,7 +412,9 @@ function _collectEntitiesInScene(store: Storage, sceneId: string): Map<string, s
     const stage = store.getStage(sceneId);
     if (!stage) return result;
     for (const e of stage.entities) {
+        // 修复：worn_by 实体不入 scene 摘要（不参与决策，不参与审计）
         if (e.source_group) continue;
+        if (e.kind === "prop" && e.worn_by) continue;
         const globalName = store.getStageAlign(sceneId)?.[e.name] ?? e.name;
         result.set(globalName, [sceneId]);
     }

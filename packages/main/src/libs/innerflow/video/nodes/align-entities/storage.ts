@@ -239,6 +239,27 @@ export class Storage {
         }
     }
 
+    /**
+     * 穿着道具归集：穿在某角色身上的衣物/配饰的原文特征，
+     * 由对齐阶段写入，供下游（Pass B / design-characters）合并到角色 scene_delta。
+     *
+     * 结构：key = 角色规范名（对齐后），value = 该角色本场景被剥离的道具列表
+     * （含道具原文名 + 原文外观描写）。
+     */
+    wornPropsKey(sceneId: string): string {
+        return `${P}state:worn_props_${sceneId}`;
+    }
+
+    getWornProps(sceneId: string): Record<string, Array<{ name: string; appearance: string }>> {
+        return this.read<Record<string, Array<{ name: string; appearance: string }>>>(this.wornPropsKey(sceneId)) ?? {};
+    }
+
+    saveWornProps(sceneId: string, mapping: Map<string, Array<{ name: string; appearance: string }>>): void {
+        const obj: Record<string, Array<{ name: string; appearance: string }>> = {};
+        for (const [k, v] of mapping) obj[k] = v;
+        this.write(this.wornPropsKey(sceneId), obj);
+    }
+
     getOverview(): string | null {
         return this.read<string>(`${P}output:stage_overview`);
     }

@@ -150,25 +150,35 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
                     `${P}output:aligned_text_${sceneId}`,
                     `${P}state:stage_${sceneId}`,
                     `${P}state:beat_nl_${sceneId}`,
+                    `${P}state:worn_props_${sceneId}`,  // 修复：穿着道具作为输入门控源
                 ],
                 outputKeys: store.costumeKey(entity.name, sceneId),
             })) {
                 const cached = store.getCostume(entity.name, sceneId);
                 if (cached) {
                     previousCostume = formatCostume(cached);
-                    // 修复：cache 命中分支不再调用 upsertSceneSnapshot（snapshot 已在 cache miss 时登记），
-                    // 避免每次执行重复写入 align-entities registry 触发 isDeepStrictEqual 比较。
                     continue;
                 }
             }
 
             const stage = store.getStage(sceneId);
             const alignedText = store.getAlignedText(sceneId);
+
+            // 修复：收集本角色本场景被剥离的穿着道具（撕裂的衣服、沾血的披风等），
+            // 这些道具的视觉状态增量必须写进 scene_delta，不能丢失。
+            const wornPropsMap = alignStore.getWornProps(sceneId);
+            const wornPropsForCharacter = wornPropsMap[entity.name] ?? [];
+            const wornPropsSection = wornPropsForCharacter.length > 0
+                ? `\n\n【穿着道具状态增量（原文提到的衣物/配饰变化，必须体现在本场景服装设计中）】\n${wornPropsForCharacter.map(p =>
+                    `- ${p.name}：${p.appearance || "（原文未描写细节，仅标注存在状态变化）"}`,
+                ).join("\n")}`
+                : "";
+
             const sceneContext = [
                 `环境：${stage?.world.environment ?? "无"}`,
                 `原文节选：${(alignedText ?? "").slice(0, 300)}`,
                 isTimeSkip ? `⚠️ 时间跳跃（与上一场景存在显著间隔，可能需要换装/衰老/伤痕）` : "",
-            ].filter(Boolean).join("\n");
+            ].filter(Boolean).join("\n") + wornPropsSection;
 
             const { text } = await generateText({
                 model: getSmartModel(undefined, ctx),
@@ -197,7 +207,7 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
             });
 
             previousCostume = formatCostume(costume);
-            ctx.info(`[designCostumes] ${entity.name}@${sceneId} 服装设计完成${isTimeSkip ? "（时间跳跃）" : ""}`);
+            ctx.info(`[designCostumes] ${entity.name}@${sceneId} 服装设计完成${isTimeSkip ? "（时间跳跃）" : ""}${wornPropsForCharacter.length ? `（合并 ${wornPropsForCharacter.length} 件穿着道具）` : ""}`);
         }
     }, { concurrency: 3 });
 
@@ -229,6 +239,7 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
                 `${P}state:stage_${firstScene}`,
                 `${P}state:beat_nl_${firstScene}`,
                 `${P}char:costume_${entity.name}_${firstScene}`,
+                `${P}state:worn_props_${firstScene}`,  // 修复：穿着道具作为输入门控源
             ],
             outputKeys: store.uniformKey(uniformName),
         })) {
@@ -238,10 +249,24 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
 
         const stage = store.getStage(firstScene);
         const alignedText = store.getAlignedText(firstScene);
+
+        // 修复：群体制服也吸收原文提到的穿着道具状态增量
+        const alignStore = new AlignStorage(ctx);
+        const wornPropsMap = alignStore.getWornProps(firstScene);
+        const wornPropsForGroup: Array<{ name: string; appearance: string }> = [];
+        for (const [, list] of Object.entries(wornPropsMap)) {
+            for (const p of list) wornPropsForGroup.push(p);
+        }
+        const wornPropsSection = wornPropsForGroup.length > 0
+            ? `\n\n【穿着道具状态增量（原文提到的群体衣物/配饰变化，必须体现在制服设计中）】\n${wornPropsForGroup.map(p =>
+                `- ${p.name}：${p.appearance || "（原文未描写细节，仅标注存在状态变化）"}`,
+            ).join("\n")}`
+            : "";
+
         const sceneContext = [
             `环境：${stage?.world.environment ?? "无"}`,
             `原文节选：${(alignedText ?? "").slice(0, 300)}`,
-        ].join("\n");
+        ].join("\n") + wornPropsSection;
 
         const { text } = await generateText({
             model: getSmartModel(undefined, ctx),

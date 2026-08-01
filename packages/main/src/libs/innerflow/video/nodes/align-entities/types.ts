@@ -75,6 +75,14 @@ export interface StageEntity {
      * "character:角色名" = 由角色带入/持有/催生。
      */
     origin?: EntityOrigin;
+    /**
+     * 穿着者（仅 prop 有意义）。
+     * 非 null 表示该 prop 是穿在某角色身上/正在穿戴的衣物或配饰，
+     * 其视觉表现由该角色的定妆照（costume / 角色参考图）覆盖。
+     * 对齐阶段会把该 prop 从 prop 集合剔除，并将其外观特征合并到对应角色的 scene_delta。
+     * character/set/light 类固定为 null。
+     */
+    worn_by?: string | null;
 }
 
 export interface StageWorld {

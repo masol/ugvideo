@@ -54,6 +54,9 @@ export async function generateSceneShotPrompts(
     const stageEntityByLocal = new Map<string, StageEntity>();
 
     for (const e of stage.entities) {
+        // 修复：穿着道具（worn_by）不参与镜头参考图计算 —— 其视觉由角色 costume 覆盖
+        if (e.kind === "prop" && e.worn_by) continue;
+
         const globalName = store.resolveToGlobalName(sceneId, e.name);
         localToGlobal.set(e.name, globalName);
         stageEntityByLocal.set(e.name, e);
@@ -69,11 +72,6 @@ export async function generateSceneShotPrompts(
         const shotDesc = shots[i];
         const shotKey = store.shotPromptKey(sceneId, shotIndex);
 
-        // ===== 每个镜头独立 gate =====
-        // 之前整个 scene 一次 gate + saveShotPromptIdx 短路，导致再次执行时
-        // 整体判定不可靠（input 中 sceneEnvironmentKey 的时间戳可能晚于 idx，
-        // 而 idx 在 isDeepStrictEqual 短路下不再刷新时间戳）。
-        // 改为按镜头判断：已写过的镜头独立命中跳过，未生成的才调 LLM。
         if (!checkExpiry(ctx, {
             inputKeys: [
                 `${P}shots:design_${sceneId}`,
@@ -94,17 +92,28 @@ export async function generateSceneShotPrompts(
         const referenceImages: Array<{ entity_name: string; role: string }> = [];
         const inlineForShot: Array<{ name: string; description: string }> = [];
         const seenRefs = new Set<string>();
-        const seenInline = new Set<string>();
 
         const pushRef = (entityName: string, role: string): void => {
-            if (!entityName || seenRefs.has(entityName)) return;
+            if (!entityName) return;
+            const existing = referenceImages.find(r => r.entity_name === entityName);
+            if (existing) {
+                if (role.length > existing.role.length) {
+                    existing.role = role;
+                }
+                return;
+            }
             seenRefs.add(entityName);
             referenceImages.push({ entity_name: entityName, role });
         };
         const pushInline = (name: string, description: string): void => {
-            if (!name || !description || seenInline.has(name)) return;
-            seenInline.add(name);
-            inlineForShot.push({ name, description });
+            // 修复：同名实体后出现的覆盖先出现的（保留最新/最具体描述）
+            if (!name || !description) return;
+            const existingIdx = inlineForShot.findIndex(x => x.name === name);
+            if (existingIdx >= 0) {
+                inlineForShot[existingIdx] = { name, description };
+            } else {
+                inlineForShot.push({ name, description });
+            }
         };
 
         pushRef(`env:${sceneId}`, "environment_reference（保持空间布局与光影基调）");
@@ -114,12 +123,16 @@ export async function generateSceneShotPrompts(
             const stageEntity = stageEntityByLocal.get(localName);
             const entity = store.getGlobalEntity(globalName);
 
-            if (!entity && stageEntity?.source_group) {
+            // 修复：穿着道具的 stageEntity 已被上一步过滤（不在 stageEntityByLocal），
+            // 此处若拿不到 stageEntity 直接跳过
+            if (!stageEntity) continue;
+
+            if (!entity && stageEntity.source_group) {
                 const decision = sceneDecisions.find(d => d.name === stageEntity.name);
                 if (decision?.strategy === "individual_refsheet") {
                     pushRef(
                         `${sceneId}__${stageEntity.name}`,
-                        "face_and_appearance_reference（严格保持脸部特征、五官比例、服装外观）",
+                        "face_and_appearance_reference（严格保持脸部特征和五官比例）",
                     );
                 } else {
                     pushInlineForSourceGroup(sceneId, stageEntity, store, pushInline);
@@ -138,11 +151,12 @@ export async function generateSceneShotPrompts(
                 );
                 const prevRefs = store.getPreviousSceneRefs(globalName, sceneId);
                 if (prevRefs.length > 0) {
-                    const latestPrevRef = prevRefs[prevRefs.length - 1];
-                    pushRef(
-                        latestPrevRef,
-                        `previous_scene_appearance_anchor（同一角色前序场景外观基准，确保跨场景面部/体型一致性；本场景如有换装/伤痕以本场景参考图为准）`,
-                    );
+                    for (const prevRefId of prevRefs) {
+                        pushRef(
+                            prevRefId,
+                            "previous_scene_appearance_anchor（同一角色前序场景外观基准，确保跨场景面部/体型一致性；本场景如有换装/伤痕以本场景参考图为准）",
+                        );
+                    }
                 }
             } else if (decision?.strategy === "uniform_refsheet" && decision.uniform_name) {
                 pushRef(
@@ -175,7 +189,7 @@ export async function generateSceneShotPrompts(
                     const latestPrevRef = prevRefs[prevRefs.length - 1];
                     pushRef(
                         latestPrevRef,
-                        `previous_scene_appearance_anchor（同一角色前序场景外观基准，本场景无独立参考图，依赖此图保持一致性）`,
+                        "previous_scene_appearance_anchor（同一角色前序场景外观基准，本场景无独立参考图，依赖此图保持一致性）",
                     );
                 } else if ((entity.kind === "set" || entity.kind === "prop")
                     && initialSetProps.has(globalName)) {

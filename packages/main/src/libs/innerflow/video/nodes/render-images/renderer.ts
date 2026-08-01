@@ -2,36 +2,106 @@
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { RefImgStorage } from "../generate-reference-images/storage.js";
 import type { RenderTaskDescriptor } from "../generate-reference-images/types.js";
-import type { RenderResult } from "./types.js";
+import { RenderStorage } from "./storage.js";
+import type { ImageGenParams, RenderResult } from "./types.js";
+
+/** 参考图类统一尺寸：16:9 2K（2048×1152）。可按目标模型支持尺寸调整。 */
+const REFERENCE_SIZE_2K_16_9 = "2048x1152";
+
+/** 参考图类任务（跨镜头一致性锚点，固定 16:9 2K） */
+const REFERENCE_TASK_TYPES = new Set([
+    "entity_refsheet",
+    "scene_environment",
+    "uniform_turnaround",
+    "group_photo",
+]);
+
+/**
+ * 按任务类别决定尺寸：
+ * - 参考图类 → 固定 size（16:9 2K）
+ * - 交付帧（scene_shot）→ aspectRatio（配置横纵比）
+ */
+function pickSizing(
+    task: RenderTaskDescriptor,
+    configAspectRatio: string,
+): { size: string } | { aspectRatio: string } {
+    if (task.type === "scene_shot") return { aspectRatio: configAspectRatio };
+    if (REFERENCE_TASK_TYPES.has(task.type)) return { size: REFERENCE_SIZE_2K_16_9 };
+    // 兜底：未知类别按参考图处理
+    return { size: REFERENCE_SIZE_2K_16_9 };
+}
+
+/**
+ * 准备 generateImage 调用参数（本函数只组装参数，不真正调用）。
+ *
+ * - prompt：结构化提示词（含"图1/图2…"参考声明）
+ * - referenceImages：依赖参考图，顺序与 prompt 中的"图N"一致；file_path 尽力从已渲染结果解析
+ * - size / aspectRatio：按任务类别二选一
+ * - seed：按任务 id 持久化（复现用）
+ */
+export function buildGenerateImageParams(
+    ctx: IRunnerContext,
+    task: RenderTaskDescriptor,
+): ImageGenParams {
+    const renderStore = new RenderStorage(ctx);
+    const prompt = buildStructuredPrompt(ctx, task);
+    const seed = renderStore.getOrCreateSeed(task.id);
+    const sizing = pickSizing(task, renderStore.getConfigAspectRatio());
+
+    const referenceImages = (task.reference_images ?? []).map(r => ({
+        ref_id: r.ref_id,
+        entity_name: r.entity_name,
+        role: r.role,
+        file_path: renderStore.getRenderResult(r.ref_id)?.file_path ?? null,
+    }));
+
+    return {
+        prompt,
+        referenceImages,
+        ...sizing,
+        seed,
+        n: 1,
+    };
+}
 
 /**
  * 调用图像生成 API 渲染单个任务。
  *
- * 用户实现：替换内部 API 调用为真实服务（Stable Diffusion / Midjourney / DALL-E 等）。
+ * 用户实现：接收已备好的 generateImage 参数（params），调用 Vercel AI SDK 的 generateImage
+ * （model 由调用方指定），返回落盘后的文件路径；失败返回 null。
+ *
+ * params 里的 referenceImages 已按 prompt 中"图1/图2…"的顺序排列：
+ * - file_path 非空 → 直接作为参考图上传
+ * - file_path 为空 → 按 ref_id 从渲染结果解析（依赖任务须先渲染）
  */
 export async function callImageAPI(
     ctx: IRunnerContext,
     task: RenderTaskDescriptor,
-    structuredPrompt: string,
+    params: ImageGenParams,
 ): Promise<string | null> {
     ctx.debug(`[callImageAPI] task=${task.id} type=${task.type}`);
-    ctx.debug(`[callImageAPI] prompt (first 300 chars):\n${structuredPrompt.slice(0, 300)}${structuredPrompt.length > 300 ? "\n..." : ""}`);
+    ctx.debug(
+        `[callImageAPI] size=${params.size ?? "-"} aspectRatio=${params.aspectRatio ?? "-"} `
+        + `seed=${params.seed} refs=${params.referenceImages.length} n=${params.n}`,
+    );
+    ctx.debug(`[callImageAPI] prompt (first 300 chars):\n${params.prompt.slice(0, 300)}${params.prompt.length > 300 ? "\n..." : ""}`);
 
-    if (task.asset_info) {
-        ctx.debug(`[callImageAPI] asset: name=${task.asset_info.entity_name} kind=${task.asset_info.kind} layout=${task.asset_info.layout}`);
-    }
-    if (task.scene_info) {
-        ctx.debug(`[callImageAPI] scene: ${task.scene_info.scene_id}, inline entities=${task.scene_info.inline_entities.length}`);
-    }
-
-    // TODO: 用户实现文生图 API 调用
+    // TODO: 用户实现 —— 调用 Vercel AI SDK generateImage
     // 示例：
-    // const response = await fetch("https://api.example.com/generate", {
-    //     method: "POST",
-    //     body: JSON.stringify({ prompt: structuredPrompt, width: 1920, height: 1080 }),
+    // import { generateImage } from "ai";
+    // const inputImages = params.referenceImages
+    //     .map(r => r.file_path ?? new RenderStorage(ctx).getRenderResult(r.ref_id)?.file_path)
+    //     .filter(Boolean);
+    // const { image } = await generateImage({
+    //     model: <由调用方指定>,
+    //     prompt: params.prompt,
+    //     ...(params.size ? { size: params.size } : {}),
+    //     ...(params.aspectRatio ? { aspectRatio: params.aspectRatio } : {}),
+    //     seed: params.seed,
+    //     n: params.n,
+    //     providerOptions: { /* 依赖参考图 inputImages 按 provider 约定透传 */ },
     // });
-    // const data = await response.json();
-    // return data.file_path ?? null;
+    // return await persistBase64(image.base64);
 
     return null;
 }
@@ -105,7 +175,7 @@ function buildReferenceBindingPrompt(
         const refsheet = store.getEntityRefsheet(parsed.sceneId, parsed.entityName);
         const asset = store.getEntityAsset(parsed.sceneId, parsed.entityName);
         const entity = store.getGlobalEntity(parsed.entityName);
-        const isPreviousSceneRef = ref.role.includes("previous_scene");
+        const isPreviousSceneRef = ref.role.startsWith("previous_scene_appearance_anchor");
 
         if (isPreviousSceneRef) {
             const kind = refsheet?.kind ?? entity?.kind ?? "character";
@@ -177,20 +247,19 @@ function detectReferenceType(refId: string): "environment" | "uniform" | "indivi
 }
 
 /**
- * 渲染单个任务（含结构化提示词拼接 + API 调用）。
+ * 渲染单个任务（准备参数 → 落盘参数 → 调用 API → 组装结果）。
  */
 export async function renderTask(
     ctx: IRunnerContext,
     task: RenderTaskDescriptor,
 ): Promise<RenderResult | null> {
-    const structuredPrompt = buildStructuredPrompt(ctx, task);
+    const renderStore = new RenderStorage(ctx);
+    const params = buildGenerateImageParams(ctx, task);
+    renderStore.saveRenderParams(task.id, params);
 
-    // 调试输出：完整提示词
-    ctx.error(`[renderTask] 任务 ${task.id} 的完整提示词：\n\n${structuredPrompt}\n`);
-
-    const filePath = await callImageAPI(ctx, task, structuredPrompt);
+    const filePath = await callImageAPI(ctx, task, params);
     if (!filePath) {
-        ctx.warn(`[renderTask] ${task.id} 渲染失败`);
+        ctx.warn(`[renderTask] ${task.id} 渲染失败（或 callImageAPI 未实现），参数已备好待调用`);
         return null;
     }
 
@@ -198,6 +267,7 @@ export async function renderTask(
         id: task.id,
         file_path: filePath,
         rendered_at: Date.now(),
-        prompt_used: structuredPrompt,
+        prompt_used: params.prompt,
+        seed: params.seed,
     };
 }
