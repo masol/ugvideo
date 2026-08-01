@@ -16,7 +16,9 @@ import DevSetting from "../../../route/page/settings/develops/DevSettingsPanel.s
 import GeneralSetting from "../../../route/page/settings/general/general.svelte";
 import Keybindings from '../../../route/page/settings/Keybindings.svelte';
 import LLMSetting from "../../../route/page/settings/llm/llm.svelte";
+import MCPSetting from '../../../route/page/settings/mcp/mcp.svelte';
 import ProjectTypeManager from '../../../route/page/settings/project-type/ProjectTypeManager.svelte';
+import MCPSearchSetting from '../../../route/page/settings/search/search.svelte';
 
 // ── 类型 ──
 
@@ -43,6 +45,8 @@ class RouterStore {
      */
     #routes: RouteMap = $state.raw({
         "/settings/models/llm": LLMSetting,
+        "/settings/api/mcp": MCPSetting,
+        "/settings/api/search": MCPSearchSetting,
         "/settings/general": GeneralSetting,
         "/settings/develops": DevSetting,
         "/settings/keybindings": Keybindings,

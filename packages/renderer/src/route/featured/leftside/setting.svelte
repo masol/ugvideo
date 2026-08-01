@@ -9,15 +9,12 @@
     IconChevronDown,
     IconCode,
     IconCodePlus,
-    IconDeviceSpeaker,
     IconFolders,
     IconKeyboard,
     IconPlug,
-    IconRobot,
     IconSearch,
     IconSettings,
     IconSettingsOff,
-    IconVideo,
   } from "@tabler/icons-svelte";
   import { debounce } from "radashi";
   import { push, router } from "svelte-spa-router";
@@ -56,6 +53,15 @@
   /*  Navigation Data (static, never mutated)                            */
   /* ------------------------------------------------------------------ */
 
+  /**
+   * 设计说明：
+   *  · "模型"作为顶级条目，涵盖 LLM / 图像 / 音频 / 视频等所有 AIGC 模型配置。
+   *    后续若音频/视频差异巨大，可在 /settings/models/* 下拆分子路由（llm/audio/video），
+   *    但当前统一收敛为单个配置入口，避免一级导航过度膨胀。
+   *  · "API 管理"下保留 search 与 mcp 两个并列入口，二者职责独立：
+   *      - search：出站能力（联网搜索 API Key / 搜索引擎配置）
+   *      - mcp   ：入站能力（Model Context Protocol 服务器注册）
+   */
   const builtinGroups: SettingsGroup[] = [
     {
       id: "general",
@@ -107,17 +113,19 @@
       ],
     },
     {
-      id: "models",
-      label: "模型管理",
-      icon: IconBrain,
+      id: "api",
+      label: "API 管理",
+      icon: IconCode,
       items: [
         {
-          id: "models-llm",
-          label: "图文模型",
-          description: "大语言及图像模型的配置与选择",
-          icon: IconRobot,
+          id: "models-all",
+          label: "AIGC 模型",
+          description: "文本、图像、音频、视频等模型配置",
+          icon: IconBrain,
           path: "models/llm",
           keywords: [
+            "模型",
+            "model",
             "LLM",
             "GPT",
             "Claude",
@@ -137,15 +145,6 @@
             "看图",
             "多模态",
             "Vision",
-          ],
-        },
-        {
-          id: "models-video",
-          label: "视频模型",
-          description: "视频生成与处理",
-          icon: IconVideo,
-          path: "models/video",
-          keywords: [
             "video",
             "视频生成",
             "Sora",
@@ -156,15 +155,6 @@
             "快手可灵",
             "Hunyuan-Video",
             "Wan2.1",
-          ],
-        },
-        {
-          id: "models-audio",
-          label: "音频模型",
-          description: "语音、音乐及音效模型。",
-          icon: IconDeviceSpeaker,
-          path: "models/audio",
-          keywords: [
             "audio",
             "语音",
             "音乐",
@@ -179,13 +169,6 @@
             "ElevenLabs",
           ],
         },
-      ],
-    },
-    {
-      id: "api",
-      label: "API 管理",
-      icon: IconCode,
-      items: [
         {
           id: "api-search",
           label: "搜索",
@@ -210,11 +193,6 @@
   /*  Search — PinyinFuseSearch                                          */
   /* ------------------------------------------------------------------ */
 
-  /**
-   * 将每个导航条目压平为可搜索的对象数组。
-   * text 汇总了标签、描述、所属分组名与关键词，供拼音/模糊匹配使用；
-   * id 用于把命中结果映射回原始条目。
-   */
   const searchItems = builtinGroups.flatMap((g) =>
     g.items.map((item) => ({
       id: item.id,
@@ -252,7 +230,6 @@
   });
 
   $effect(() => {
-    // 依赖原始查询词，输入即触发（去抖内部处理节流）
     applyDebouncedQuery(settingsPanelStore.searchQuery);
     return () => applyDebouncedQuery.cancel();
   });
@@ -360,7 +337,6 @@
               </span>
 
               <div class="flex items-center gap-2">
-                <!-- Collapsed item count badge — on the right -->
                 {#if !isOpen}
                   <span
                     class="inline-flex h-5 min-w-5 items-center justify-center rounded-lg bg-muted px-1.5 text-xs tabular-nums text-muted-foreground transition-all duration-200"
