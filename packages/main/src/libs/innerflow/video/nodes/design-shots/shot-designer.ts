@@ -42,11 +42,15 @@ export function initAssetConstraints(ctx: IRunnerContext): void {
 export async function designScene(ctx: IRunnerContext, sceneId: string): Promise<void> {
     const store = new ShotStorage(ctx);
 
+    // 注意：绝不把 asset_constraints 列为 gate input。
+    // asset_constraints 在本节点的素材扩写阶段被 upsertAssetConstraint 反向写脏，
+    // 其时间戳必然晚于本 gate 的 output（design/lighting），一旦作为 input 会导致
+    // 「input 永远比 output 新」→ gate 永远过期 → 每次重跑都触发 LLM。
+    // 上游真实变更（剧本/aligned_text/stage/config）已通过 intent/lighting/design 链式 gate 传导。
     if (!checkExpiry(ctx, {
         inputKeys: [
             `${P}output:aligned_text_${sceneId}`,
             `${P}state:stage_${sceneId}`,
-            store.assetConstraintsKey(),
             `${P}stage:registry:idx`,
             `${P}stage:align:${sceneId}`,
             `${P}shots:intent_${sceneId}`,
@@ -335,12 +339,15 @@ async function designAssetsForScene(
         return store.entityAssetKey(sceneId, globalName);
     });
 
+    // 注意：这里绝不能把 asset_constraints 当 input。
+    // asset_constraints 会在本函数内（designSingleAsset → upsertAssetConstraint）被写脏，
+    // 一旦作为自己的 input，就形成「input 永远比 output 新」的自引用，导致每次重跑都触发 LLM。
+    // 上游变更（aligned_text/stage → intent → lighting → design）已通过下列链式 gate 传导，覆盖充分。
     if (!checkExpiry(ctx, {
         inputKeys: [
             store.lightingKey(sceneId),
             store.designKey(sceneId),
             store.intentKey(sceneId),
-            store.assetConstraintsKey(),
         ],
         outputKeys: assetOutputKeys,
     })) {

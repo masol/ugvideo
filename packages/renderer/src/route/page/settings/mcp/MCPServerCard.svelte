@@ -10,7 +10,7 @@
     IconPencil,
     IconPlugConnected,
     IconTool,
-    IconTrash
+    IconTrash,
   } from "@tabler/icons-svelte";
   import ToolPermissionEditor from "./ToolPermissionEditor.svelte";
   import type { MCPServerConfig } from "./types";

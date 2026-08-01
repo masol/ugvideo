@@ -1,3 +1,4 @@
+<!-- ModelConfigDialog.svelte -->
 <script lang="ts">
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
@@ -21,10 +22,12 @@
   import {
     CAPABILITY_TAGS,
     formatTokens,
+    FUNCTION_CAPABILITIES,
+    FUNCTION_CONTEXT_LABELS,
     FUNCTION_TAGS,
-    tagIcons,
-    tagLabels,
+    IMAGE_FUNCTION_TAGS,
     VERSION_TAGS,
+    VIDEO_FUNCTION_TAGS,
     type Model,
     type ModelAbility,
     type ModelOption,
@@ -39,13 +42,12 @@
     IconSparkles,
   } from "@tabler/icons-svelte";
   import { toast } from "svelte-sonner";
+  import AbilitySelector from "./AbilitySelector.svelte";
   import ModelSelectCombobox from "./ModelSelectCombobox.svelte";
   import { fetchAvailableModels } from "./fetchModels";
 
-  /* ─── Props ─── */
   type Props = {
     model?: Partial<Model>;
-    /** 拉取可用模型列表的上下文（透传给 fetchAvailableModels） */
     fetchCtx?: { baseUrl?: string; apiKey?: string };
     onSave?: (model: Model) => Promise<boolean>;
   } & DialogComponentProps<Model>;
@@ -54,36 +56,40 @@
 
   const isEditMode = !!model?.id;
 
-  /* ─── 标签分组集合 ───
-     · 功能（互斥，至少一个）：文本 / 图像 / 音频 … 一次仅一个，不可为空。
-       其中 text 是启用「能力」的前提。
-     · 版本（互斥，可为空）：一次仅一个，可不选。
-     · 能力（多选）：仅当功能为 text 时可用，否则强制清空。 */
-  const functionValues = Object.values(FUNCTION_TAGS) as ModelAbility[];
-  const versionValues = Object.values(VERSION_TAGS) as ModelAbility[];
-  const capabilityValues = Object.values(CAPABILITY_TAGS) as ModelAbility[];
+  function normalize(list: ModelAbility[]): ModelAbility[] {
+    const functionSet = new Set(Object.values(FUNCTION_TAGS) as ModelAbility[]);
+    const versionSet = new Set(Object.values(VERSION_TAGS) as ModelAbility[]);
+    const allCapSet = new Set<ModelAbility>([
+      ...(Object.values(CAPABILITY_TAGS) as ModelAbility[]),
+      ...(Object.values(IMAGE_FUNCTION_TAGS) as ModelAbility[]),
+      ...(Object.values(VIDEO_FUNCTION_TAGS) as ModelAbility[]),
+    ]);
+    let activeFunc: ModelAbility | undefined;
+    let activeVersion: ModelAbility | undefined;
+    const caps: ModelAbility[] = [];
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
+    const seenCap = new Set<ModelAbility>();
+    for (const a of list) {
+      if (functionSet.has(a)) activeFunc = a;
+      else if (versionSet.has(a)) activeVersion = a;
+      else if (allCapSet.has(a) && !seenCap.has(a)) {
+        seenCap.add(a);
+        caps.push(a);
+      }
+    }
+    const result: ModelAbility[] = [];
+    if (activeFunc) result.push(activeFunc);
+    if (activeVersion) result.push(activeVersion);
+    // 只保留属于当前 function 的 caps（防止跨 function 残留）
+    const allowed = new Set(
+      (activeFunc && FUNCTION_CAPABILITIES[activeFunc]) || [],
+    );
+    result.push(...caps.filter((c) => allowed.has(c)));
+    return result;
+  }
 
-  const functionSet = new Set(functionValues);
-  const versionSet = new Set(versionValues);
-  const capabilitySet = new Set(capabilityValues);
+  type Preset = NonNullable<ModelOption["preset"]>;
 
-  const functionItems = functionValues.map((v) => ({
-    value: v,
-    label: tagLabels[v],
-    icon: tagIcons[v],
-  }));
-  const versionItems = versionValues.map((v) => ({
-    value: v,
-    label: tagLabels[v],
-    icon: tagIcons[v],
-  }));
-  const capabilityItems = capabilityValues.map((v) => ({
-    value: v,
-    label: tagLabels[v],
-    icon: tagIcons[v],
-  }));
-
-  /* ─── 表单状态 ─── */
   let id = $state(model?.id ?? "");
   let abilities = $state<ModelAbility[]>(
     model?.abilities ?? [
@@ -95,31 +101,16 @@
   let inctx = $state<number | undefined>(model?.inctx);
   let outctx = $state<number | undefined>(model?.outctx);
   let score = $state<number | undefined>(model?.score);
-
   let selectedModelId = $state(model?.id ?? "");
 
-  /* ─── 派生 ─── */
-  const currentFunction = $derived(abilities.find((a) => functionSet.has(a)));
-  const currentVersion = $derived(abilities.find((a) => versionSet.has(a)));
-  const capabilitySelected = $derived(
-    new Set(abilities.filter((a) => capabilitySet.has(a))),
-  );
-  const capabilityEnabled = $derived(currentFunction === FUNCTION_TAGS.text);
-
-  /* ─── 加载 / UI 状态 ─── */
   let options = $state<ModelOption[]>([]);
   let isLoadingModels = $state(true);
   let loadFailed = $state(false);
-
   let isSubmitting = $state(false);
   let errorMessage = $state("");
-
-  // 筛选面板收起状态（默认展开）
   let filterOpen = $state(true);
-  // 自动识别加载态
   let isDetecting = $state(false);
 
-  /* ─── 进入时拉取可用模型 ─── */
   $effect(() => {
     void loadModels();
   });
@@ -137,72 +128,33 @@
     }
   }
 
-  /* ─── 能力规范化（单遍 O(n)，Set 去重） ─── */
-  function normalize(list: ModelAbility[]): ModelAbility[] {
-    let activeFunc: ModelAbility | undefined;
-    let activeVersion: ModelAbility | undefined;
-    const caps: ModelAbility[] = [];
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity
-    const seenCap = new Set<ModelAbility>();
-
-    for (const a of list) {
-      if (functionSet.has(a)) activeFunc = a;
-      else if (versionSet.has(a)) activeVersion = a;
-      else if (capabilitySet.has(a) && !seenCap.has(a)) {
-        seenCap.add(a);
-        caps.push(a);
-      }
-    }
-
-    const result: ModelAbility[] = [];
-    if (activeFunc) result.push(activeFunc);
-    if (activeVersion) result.push(activeVersion);
-    if (activeFunc === FUNCTION_TAGS.text) result.push(...caps);
-    return result;
-  }
-
-  /* ─── 将 preset 应用到筛选内容（复用于下拉选择 & 自动识别） ─── */
-  type Preset = NonNullable<ModelOption["preset"]>;
   function applyPreset(p: Preset | undefined) {
     if (!p) return;
     if (p.abilities) abilities = normalize([...p.abilities]);
     if (p.inctx != null) inctx = p.inctx;
     if (p.outctx != null) outctx = p.outctx;
     if (p.score != null) score = p.score;
-    // 应用后自动展开面板，便于查看识别结果
     filterOpen = true;
   }
 
-  /* ─── 选中模型 → 自动填充 ─── */
   async function handleModelSelect(option: ModelOption) {
     selectedModelId = option.id;
     id = option.id;
-
     let preset: Preset | undefined = option.preset;
-    if (!preset) {
-      preset = autoDetectPreset(id.trim());
-    }
-
+    if (!preset) preset = autoDetectPreset(id.trim());
     applyPreset(preset);
   }
 
-  /* ─── 自动识别：异步函数（留空，由你实现） ───
-     期望：根据当前 id / fetchCtx 推断出一个 preset 并返回。 */
   function autoDetectPreset(modelId: string): Preset | undefined {
-    const modeInfo = parseModel(modelId);
-    if (modeInfo) {
-      const ret: Preset = {
-        abilities: modeInfo.abilities,
-        score: modeInfo.score || 50,
-      };
-      if (modeInfo.inctx) {
-        ret.inctx = modeInfo.inctx;
-      }
-      if (modeInfo.outctx) {
-        ret.outctx = modeInfo.outctx;
-      }
-      return ret;
-    }
+    const info = parseModel(modelId);
+    if (!info) return undefined;
+    const ret: Preset = {
+      abilities: info.abilities,
+      score: info.score || 50,
+    };
+    if (info.inctx) ret.inctx = info.inctx;
+    if (info.outctx) ret.outctx = info.outctx;
+    return ret;
   }
 
   function handleAutoDetect() {
@@ -211,44 +163,42 @@
     let detectError = "";
     try {
       const preset = autoDetectPreset(id.trim());
-      if (preset) {
-        applyPreset(preset);
-      } else {
-        detectError = `未能识别出模型"${id.trim()}"的推荐配置`;
-      }
+      if (preset) applyPreset(preset);
+      else detectError = `未能识别出模型"${id.trim()}"的推荐配置`;
     } catch (e) {
       detectError = e instanceof Error ? e.message : "识别失败，请重试";
     } finally {
       isDetecting = false;
     }
-    if (detectError) {
-      toast.error(detectError);
-    }
+    if (detectError) toast.error(detectError);
   }
 
-  /* ─── 功能组：互斥单选（至少一个 → 点自身无效，不可取消） ─── */
-  function selectFunction(v: ModelAbility) {
-    if (currentFunction === v) return;
-    const rest = abilities.filter((a) => !functionSet.has(a));
-    abilities = normalize([...rest, v]);
-  }
+  const currentFunction = $derived(
+    abilities.find((a) =>
+      (Object.values(FUNCTION_TAGS) as ModelAbility[]).includes(a),
+    ),
+  );
+  const isValid = $derived(id.trim().length > 0 && !!currentFunction);
 
-  /* ─── 版本组：互斥单选（可为空 → 点自身取消） ─── */
-  function selectVersion(v: ModelAbility) {
-    const rest = abilities.filter((a) => !versionSet.has(a));
-    abilities = normalize(currentVersion === v ? rest : [...rest, v]);
-  }
+  /** 根据当前 function 派生上下文字段标签；function 切换时自动更新 */
+  const currentCtxLabels = $derived(
+    (currentFunction && FUNCTION_CONTEXT_LABELS[currentFunction]) || {
+      inctxLabel: "最大输入",
+      inctxHint: "Tokens",
+      outctxLabel: "最大输出",
+      outctxHint: "Tokens",
+      showInctx: true,
+      showOutctx: true,
+    },
+  );
 
-  /* ─── 能力组：多选（仅文本可用） ─── */
-  function toggleCapability(v: ModelAbility) {
-    if (!capabilityEnabled) return;
-    const next = capabilitySelected.has(v)
-      ? abilities.filter((x) => x !== v)
-      : [...abilities, v];
-    abilities = normalize(next);
-  }
+  /** 网格列数 = 1（评分）+ showInctx + showOutctx，最大 3 */
+  const ctxGridCols = $derived(
+    (currentCtxLabels.showInctx ? 1 : 0) +
+      (currentCtxLabels.showOutctx ? 1 : 0) +
+      1,
+  );
 
-  /* ─── 数字输入辅助 ─── */
   function numHandler(setter: (v: number | undefined) => void) {
     return (e: Event) => {
       const raw = (e.currentTarget as HTMLInputElement).value;
@@ -257,15 +207,10 @@
     };
   }
 
-  /* ─── 校验：功能至少一个 + ID 非空 ─── */
-  const isValid = $derived(id.trim().length > 0 && !!currentFunction);
-
-  /* ─── 提交 ─── */
   async function handleSubmit() {
     if (!isValid || isSubmitting) return;
     isSubmitting = true;
     errorMessage = "";
-
     const result: Model = {
       id: id.trim(),
       abilities: normalize(abilities),
@@ -273,14 +218,8 @@
       outctx: outctx ?? DefOutputToken,
       score: score ?? DefScore,
     };
-
     try {
-      if (onSave) {
-        if (await onSave(result)) {
-          // 返回true,保持不要关闭。
-          return;
-        }
-      }
+      if (onSave && (await onSave(result))) return;
       onClose(result);
     } catch (e) {
       errorMessage = e instanceof Error ? e.message : "保存失败，请重试";
@@ -298,7 +237,6 @@
 </DialogHeader>
 
 <div class="space-y-6 py-4" use:autoAnimate>
-  <!-- 顶部警告：自动获取失败 -->
   {#if loadFailed}
     <Alert.Root class="rounded-xl border-amber-500/40 bg-amber-500/5">
       <IconAlertTriangle class="size-4 text-amber-500" stroke={1.5} />
@@ -309,7 +247,6 @@
     </Alert.Root>
   {/if}
 
-  <!-- ── 区块一 · 模型标识 ── -->
   <div class="space-y-4">
     {#if !loadFailed}
       <div class="space-y-2">
@@ -323,7 +260,6 @@
         />
       </div>
     {/if}
-
     <div class="space-y-2">
       <Label for="dlg-model-id">模型标识 (ID)</Label>
       <Input
@@ -335,12 +271,10 @@
     </div>
   </div>
 
-  <!-- ── 区块二 · 筛选条件（可整体收起） ── -->
   <Collapsible.Root
     bind:open={filterOpen}
     class="rounded-2xl border border-border/50 bg-muted/20"
   >
-    <!-- 面板头部：标题 + 自动识别 + 收起触发器 -->
     <div class="flex items-center gap-2 p-4">
       <div class="flex min-w-0 flex-1 items-center gap-2">
         <IconFilter
@@ -354,8 +288,6 @@
           </p>
         </div>
       </div>
-
-      <!-- 自动识别按钮（异步 · 独立加载态） -->
       <Button
         variant="outline"
         size="sm"
@@ -364,15 +296,11 @@
         disabled={isDetecting || id.trim().length === 0}
       >
         {#if isDetecting}
-          <IconLoader2 class="size-3.5 animate-spin" stroke={1.5} />
-          识别中
+          <IconLoader2 class="size-3.5 animate-spin" stroke={1.5} />识别中
         {:else}
-          <IconSparkles class="size-3.5" stroke={1.5} />
-          自动识别
+          <IconSparkles class="size-3.5" stroke={1.5} />自动识别
         {/if}
       </Button>
-
-      <!-- 收起触发器 -->
       <Collapsible.Trigger>
         {#snippet child({ props })}
           <button
@@ -393,141 +321,62 @@
     <Collapsible.Content>
       <div class="space-y-5 px-4 pb-4">
         <Separator class="bg-border/50" />
-
-        <!-- 识别失败提示 -->
-        <!-- {#if detectError}
-          <Alert.Root class="rounded-xl border-amber-500/40 bg-amber-500/5">
-            <IconAlertTriangle class="size-4 text-amber-500" stroke={1.5} />
-            <Alert.Description>{detectError}</Alert.Description>
-          </Alert.Root>
-        {/if} -->
-
         <!--╭─────────────────────────────────────────────────────╮ -->
-        <!-- │ [可抽取子组件 → AbilitySelector.svelte]              │ -->
-        <!-- │ 职责：功能(互斥必选)/版本(互斥可空)/能力(依赖文本)   │ -->
+        <!-- │ [子组件 → AbilitySelector.svelte]                   │ -->
         <!-- ╰─────────────────────────────────────────────────────╯ -->
-        <div class="space-y-4">
-          <!-- 维度一 · 功能（互斥单选 · 至少一个） -->
-          <div class="space-y-2">
-            <div class="flex items-baseline justify-between">
-              <Label>功能</Label>
-              <span class="text-xs text-muted-foreground">单选 · 必选</span>
-            </div>
-            <div class="flex flex-wrap gap-1.5">
-              {#each functionItems as item (item.value)}
-                {@const active = currentFunction === item.value}
-                {@const Icon = item.icon}
-                <button
-                  type="button"
-                  onclick={() => selectFunction(item.value)}
-                  class={[
-                    "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all duration-200",
-                    active
-                      ? "border-primary/40 bg-primary/10 text-primary shadow-sm"
-                      : "border-border/50 bg-background text-foreground hover:border-border hover:bg-muted",
-                  ]}
-                >
-                  <Icon class="size-3.5" stroke={1.5} />
-                  {item.label}
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <!-- 维度二 · 版本（互斥单选 · 可不选） -->
-          <div class="space-y-2">
-            <div class="flex items-baseline justify-between">
-              <Label>版本</Label>
-              <span class="text-xs text-muted-foreground">单选 · 可不选</span>
-            </div>
-            <div class="flex flex-wrap gap-1.5">
-              {#each versionItems as item (item.value)}
-                {@const active = currentVersion === item.value}
-                {@const Icon = item.icon}
-                <button
-                  type="button"
-                  onclick={() => selectVersion(item.value)}
-                  class={[
-                    "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all duration-200",
-                    active
-                      ? "border-sky-500/40 bg-sky-500/10 text-sky-600 shadow-sm dark:text-sky-400"
-                      : "border-border/50 bg-background text-foreground hover:border-border hover:bg-muted",
-                  ]}
-                >
-                  <Icon class="size-3.5" stroke={1.5} />
-                  {item.label}
-                </button>
-              {/each}
-            </div>
-          </div>
-
-          <!-- 维度三 · 能力（依赖文本，多选） -->
-          <div class="space-y-2" use:autoAnimate>
-            {#if capabilityEnabled}
-              <div class="flex items-baseline justify-between animate-fade-in">
-                <Label>能力</Label>
-                <span class="text-xs text-muted-foreground">可多选</span>
-              </div>
-              <div class="flex flex-wrap gap-1.5 animate-fade-in">
-                {#each capabilityItems as item (item.value)}
-                  {@const active = capabilitySelected.has(item.value)}
-                  {@const Icon = item.icon}
-                  <button
-                    type="button"
-                    onclick={() => toggleCapability(item.value)}
-                    class={[
-                      "inline-flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium transition-all duration-200",
-                      active
-                        ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-600 shadow-sm dark:text-emerald-400"
-                        : "border-border/50 bg-background text-foreground hover:border-border hover:bg-muted",
-                    ]}
-                  >
-                    <Icon class="size-3.5" stroke={1.5} />
-                    {item.label}
-                  </button>
-                {/each}
-              </div>
-            {:else}
-              <p class="text-xs text-muted-foreground animate-fade-in">
-                选中「文本」功能后可进一步配置能力
-              </p>
-            {/if}
-          </div>
-        </div>
-        <!-- ╭─── / AbilitySelector ───╮ -->
+        <AbilitySelector bind:abilities />
 
         <Separator class="bg-border/50" />
 
-        <!-- 维度四、五、六 · 上下文 / 评分 -->
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div class="space-y-2">
-            <Label for="dlg-inctx">最大输入</Label>
-            <Input
-              id="dlg-inctx"
-              type="number"
-              inputmode="numeric"
-              value={inctx ?? ""}
-              oninput={numHandler((v) => (inctx = v))}
-              placeholder={formatTokens(DefInputToken)}
-              class="rounded-xl tabular-nums"
-              min="0"
-            />
-            <p class="text-xs text-muted-foreground">Tokens</p>
-          </div>
-          <div class="space-y-2">
-            <Label for="dlg-outctx">最大输出</Label>
-            <Input
-              id="dlg-outctx"
-              type="number"
-              inputmode="numeric"
-              value={outctx ?? ""}
-              oninput={numHandler((v) => (outctx = v))}
-              placeholder={formatTokens(DefOutputToken)}
-              class="rounded-xl tabular-nums"
-              min="0"
-            />
-            <p class="text-xs text-muted-foreground">Tokens</p>
-          </div>
+        <!--
+          上下文输入/输出字段：标签与显隐随 function 变化。
+          · image / video：参考图数、输出图数 / 参考视频、视频时长
+          · embedding / audioUnd：仅显示输入长度
+          · audioGen / bgm / rerank：全部隐藏，仅保留评分
+        -->
+        <div
+          class={[
+            "grid grid-cols-1 gap-4",
+            ctxGridCols >= 2 && "sm:grid-cols-2",
+            ctxGridCols >= 3 && "sm:grid-cols-3",
+          ]}
+        >
+          {#if currentCtxLabels.showInctx}
+            <div class="space-y-2">
+              <Label for="dlg-inctx">{currentCtxLabels.inctxLabel}</Label>
+              <Input
+                id="dlg-inctx"
+                type="number"
+                inputmode="numeric"
+                value={inctx ?? ""}
+                oninput={numHandler((v) => (inctx = v))}
+                placeholder={formatTokens(DefInputToken)}
+                class="rounded-xl tabular-nums"
+                min="0"
+              />
+              <p class="text-xs text-muted-foreground">
+                {currentCtxLabels.inctxHint}
+              </p>
+            </div>
+          {/if}
+          {#if currentCtxLabels.showOutctx}
+            <div class="space-y-2">
+              <Label for="dlg-outctx">{currentCtxLabels.outctxLabel}</Label>
+              <Input
+                id="dlg-outctx"
+                type="number"
+                inputmode="numeric"
+                value={outctx ?? ""}
+                oninput={numHandler((v) => (outctx = v))}
+                placeholder={formatTokens(DefOutputToken)}
+                class="rounded-xl tabular-nums"
+                min="0"
+              />
+              <p class="text-xs text-muted-foreground">
+                {currentCtxLabels.outctxHint}
+              </p>
+            </div>
+          {/if}
           <div class="space-y-2">
             <Label for="dlg-score">评分</Label>
             <Input
@@ -548,7 +397,6 @@
     </Collapsible.Content>
   </Collapsible.Root>
 
-  <!-- 错误提示 -->
   {#if errorMessage}
     <Alert.Root variant="destructive" class="rounded-xl">
       <IconAlertCircle class="size-4" stroke={1.5} />
@@ -575,8 +423,7 @@
     disabled={!isValid || isSubmitting}
   >
     {#if isSubmitting}
-      <IconLoader2 class="size-4 animate-spin" stroke={1.5} />
-      保存中
+      <IconLoader2 class="size-4 animate-spin" stroke={1.5} />保存中
     {:else}
       {isEditMode ? "保存更改" : "创建"}
     {/if}

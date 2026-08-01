@@ -1,3 +1,4 @@
+import { PinyinFuseSearch, type SearchItem } from "$lib/utils/fuse";
 import { allProtocols, type KnownProvider, type ProviderPreset } from "../../../../lib/utils/model/types";
 
 
@@ -209,7 +210,59 @@ export const KNOWN_PROVIDERS: KnownProvider = [
                 maxconn: 30
             }
         ]
-    }, {
+    },
+    {
+        heading: "图片生成",
+        presets: [
+            {
+                id: "stability",
+                label: "Stability AI (Stable Diffusion)",
+                protocol: allProtocols.openai,
+                baseUrl: "https://api.stability.ai",
+                website: "https://platform.stability.ai/account/keys",
+                note: "Stable Diffusion 系列图像生成模型的官方服务",
+                maxconn: 10
+            }
+        ]
+    },
+    {
+        heading: "语音合成 (TTS)",
+        presets: [
+            {
+                id: "elevenlabs",
+                label: "ElevenLabs",
+                protocol: allProtocols.openai,
+                baseUrl: "https://api.elevenlabs.io/v1",
+                website: "https://elevenlabs.io/app/settings/api-keys",
+                note: "高拟真语音合成与声音克隆平台",
+                maxconn: 10
+            }
+        ]
+    },
+    {
+        heading: "语音识别 (ASR)",
+        presets: [
+            {
+                id: "deepgram",
+                label: "Deepgram",
+                protocol: allProtocols.openai,
+                baseUrl: "https://api.deepgram.com/v1",
+                website: "https://console.deepgram.com",
+                note: "低延迟、高准确率的语音转文字服务",
+                maxconn: 10
+            },
+            {
+                id: "assemblyai",
+                label: "AssemblyAI",
+                protocol: allProtocols.openai,
+                baseUrl: "https://api.assemblyai.com/v2",
+                website: "https://www.assemblyai.com",
+                note: "面向开发者的语音识别与音频理解 API",
+                maxconn: 10
+            }
+        ]
+    },
+    {
         heading: "本地部署",
         presets: [
             {
@@ -229,21 +282,79 @@ export const KNOWN_PROVIDERS: KnownProvider = [
                 website: "",
                 note: "本地部署，无需密钥",
                 maxconn: 1
-            }]
+            }
+        ]
     }
 ];
 
 
+/** 扁平化后的全部预设，供查找 / 索引复用（KNOWN_PROVIDERS 为静态常量，安全缓存） */
+const ALL_PRESETS: ProviderPreset[] = KNOWN_PROVIDERS.flatMap((g) => g.presets);
+
+
 export function findPreset(pid: string): ProviderPreset | null {
-    let preset: ProviderPreset | null = null;
-    KNOWN_PROVIDERS.find((item) => {
+    return ALL_PRESETS.find((p) => p.id === pid) ?? null;
+}
 
-        const p = item.presets.find(preset => preset.id === pid);
-        if (p) {
-            preset = p;
+
+// ────────────────────────────────────────────────────────────
+// 预设提供商模糊搜索（中文 / 拼音全拼 / 首字母）
+// 采用 create-on-demand：首次调用 searchPresets 时才构建全局 Fuse 索引，
+// 避免模块加载阶段做不必要的拼音转换开销。
+//
+// 搜索范围覆盖：
+//   · label   — 主键（权重最高，因为它是用户的核心识别目标）
+//   · note    — 说明（低优先级补充；用户搜「AGI」「兼容 OpenAI」「本地」也能命中）
+//   · id      — 内置 id（便于精确匹配 / 内部跳转）
+//   · protocol / baseUrl  — 不纳入：URL/协议不在用户认知模型内，
+//                           加入会污染短查询的排序。
+//
+// 由于 fuse.ts 把所有字段合并到单一 `text` 字段做拼音索引，无法表达权重，
+// 故改用「构造多语料条目」策略：对每个预设生成「主文本」「副文本」两组条目，
+// 主文本（label）单独放入以保证高权重命中，副文本（note 字段）也独立放入以
+// 扩大召回；最终去重并保留与 label 首次出现一致的顺序。
+// ────────────────────────────────────────────────────────────
+let _presetFuse: PinyinFuseSearch | null = null;
+
+function getPresetFuse(): PinyinFuseSearch {
+    if (_presetFuse) return _presetFuse;
+    const items: SearchItem[] = [];
+    // 主语料：每个预设的 label → 高优匹配
+    for (const p of ALL_PRESETS) {
+        items.push({ id: p.id, text: p.label });
+    }
+    // 副语料：note 说明字段 → 低优补充召回
+    for (const p of ALL_PRESETS) {
+        if (p.note && p.note.trim()) {
+            // 用「label||note」作为 note 的检索上下文，避免它被误当作独立条目；
+            // fuse 会对整段 text 做分词/拼音索引，label 在前会让主键身份仍可命中。
+            items.push({ id: p.id, text: `${p.label} ${p.note}` });
         }
-        return p
-    })
-    return preset;
+    }
+    _presetFuse = new PinyinFuseSearch(items);
+    return _presetFuse;
+}
 
+/**
+ * 模糊搜索预设提供商，返回按相关度排序的预设列表。
+ * 空查询返回空数组（调用方据此回退到「分组全量展示」）。
+ *
+ * 实现要点：因索引里同一预设可能出现两次（label / note 各一条），
+ * 这里用 Map 做 O(n) 去重，保留首次（label 主条目）出现的位置——即相关度
+ * 更高的命中顺序。
+ */
+export function searchPresets(query: string): ProviderPreset[] {
+    const q = query.trim();
+    if (!q) return [];
+    const ids = getPresetFuse().search(q);
+    const seen = new Set<string>();
+    const out: ProviderPreset[] = [];
+    for (const id of ids) {
+        const sid = String(id);
+        if (seen.has(sid)) continue;
+        seen.add(sid);
+        const p = findPreset(sid);
+        if (p) out.push(p);
+    }
+    return out;
 }

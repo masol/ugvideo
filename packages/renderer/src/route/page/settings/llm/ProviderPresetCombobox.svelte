@@ -6,9 +6,7 @@
   import type { ProviderPreset } from "$lib/utils/model/types";
   import { IconCheck, IconPlus, IconSearch } from "@tabler/icons-svelte";
 
-  import { KNOWN_PROVIDERS, findPreset } from "./providers";
-
-  /* ─── 内部类型（由父组件以结构兼容形式传入） ─── */
+  import { KNOWN_PROVIDERS, findPreset, searchPresets } from "./providers";
 
   type Props = {
     selectedId?: string;
@@ -21,8 +19,20 @@
   let open = $state(false);
   let triggerWidth = $state(0);
   let triggerHeight = $state(40);
+  let query = $state("");
 
   const selectedPreset = $derived(findPreset(selectedId));
+
+  /**
+   * query 为空 → null（展示分组全量）；
+   * query 非空 → 拼音模糊搜索命中的扁平结果（可能为空数组 → 显示空态）
+   */
+  const searchResults = $derived(query.trim() ? searchPresets(query) : null);
+
+  // 弹层关闭时清空查询，下次打开回到干净的全量视图
+  $effect(() => {
+    if (!open) query = "";
+  });
 
   function select(id: string) {
     if (id === "__custom__") {
@@ -91,17 +101,46 @@
       sideOffset={-triggerHeight}
       style="width: {triggerWidth}px; z-index: 9999;"
     >
-      <Command.Root class="rounded-xl">
-        <Command.Input placeholder="输入名称搜索…" class="h-10" />
+      <!-- shouldFilter=false：改由拼音模糊搜索（fuse）自行过滤与排序 -->
+      <Command.Root class="rounded-xl" shouldFilter={false}>
+        <Command.Input
+          bind:value={query}
+          placeholder="输入名称 / 拼音 / 首字母搜索…"
+          class="h-10"
+        />
         <Command.List class="max-h-72">
-          <Command.Empty>未找到匹配的提供商</Command.Empty>
+          {#if searchResults === null}
+            <!-- 空查询：分组全量展示 -->
+            {#each KNOWN_PROVIDERS as group (group.heading)}
+              <Command.Group heading={group.heading}>
+                {#each group.presets as preset (preset.id)}
+                  <Command.Item
+                    value={preset.id}
+                    onSelect={() => select(preset.id)}
+                  >
+                    <div class="min-w-0 flex-1 space-y-0.5">
+                      <p class="truncate text-sm font-medium">
+                        {preset.label}
+                      </p>
+                      <p class="truncate text-xs text-muted-foreground">
+                        {preset.note}
+                      </p>
+                    </div>
+                    {#if selectedId === preset.id}
+                      <IconCheck class="ml-auto size-4 shrink-0 text-primary" />
+                    {/if}
+                  </Command.Item>
+                {/each}
+              </Command.Group>
 
-          {#each KNOWN_PROVIDERS as group (group.heading)}
-            <Command.Group heading={group.heading}>
-              {#each group.presets as preset (preset.id)}
+              <Command.Separator />
+            {/each}
+          {:else if searchResults.length > 0}
+            <!-- 非空查询：命中结果按相关度扁平展示 -->
+            <Command.Group heading="搜索结果">
+              {#each searchResults as preset (preset.id)}
                 <Command.Item
                   value={preset.id}
-                  keywords={[preset.label, preset.note]}
                   onSelect={() => select(preset.id)}
                 >
                   <div class="min-w-0 flex-1 space-y-0.5">
@@ -120,13 +159,16 @@
             </Command.Group>
 
             <Command.Separator />
-          {/each}
+          {:else}
+            <div class="py-6 text-center text-sm text-muted-foreground">
+              未找到匹配的提供商
+            </div>
+          {/if}
 
-          <Command.Group forceMount>
+          <!-- 自定义配置：无论是否搜索都始终可选 -->
+          <Command.Group>
             <Command.Item
               value="__custom__"
-              keywords={["自定义", "custom", "手动", "其他"]}
-              forceMount
               onSelect={() => select("__custom__")}
             >
               <IconPlus class="size-4 text-muted-foreground" />

@@ -1,3 +1,4 @@
+<!-- llm.svelte -->
 <script lang="ts">
   import { Button } from "$lib/components/ui/button";
   import { Separator } from "$lib/components/ui/separator";
@@ -17,27 +18,24 @@
   import SearchFilterBar from "./SearchFilterBar.svelte";
   import { searchStore } from "./searchstore.svelte";
 
-  /* ═══════════════════════════════════════════════════════════
-     UI State
-     ═══════════════════════════════════════════════════════════ */
-
   let openStates = $state<Record<string, boolean>>({});
-
   let totalModels = $derived(configStore.totalModels);
   let providerCount = $derived(configStore.providers.length);
   let hasProviders = $derived(configStore.providers.length > 0);
 
-  /* ═══════════════════════════════════════════════════════════
-     Actions — Provider CRUD（含确认对话框）
-     ═══════════════════════════════════════════════════════════ */
-
   async function addProvider(provider?: Partial<ProviderConfig>) {
-    await dialogStore.safeShow(ProviderConfigDialog, {
-      config: provider,
-      onSave: async (config: ProviderConfig): Promise<void> => {
-        configStore.upsertProvider({ ...config, models: [] });
+    await dialogStore.safeShow(
+      ProviderConfigDialog,
+      {
+        config: provider,
+        onSave: async (config: ProviderConfig): Promise<void> => {
+          configStore.upsertProvider({ ...config, models: [] });
+        },
       },
-    });
+      {
+        size: "xl",
+      },
+    );
   }
 
   async function handleRemoveModel(providerId: string, modelId: string) {
@@ -53,7 +51,6 @@
     });
 
     if (!confirmed) return;
-
     await configStore.removeModel(providerId, modelId);
   }
 
@@ -70,7 +67,6 @@
     });
 
     if (!confirmed) return;
-
     await configStore.removeProvider(providerId);
   }
 
@@ -80,55 +76,62 @@
       throw new Error(`请求增加的模型，其所属供应商${pid}无效。`);
     }
     const oldId = model?.id;
-    await dialogStore.safeShow(ModelConfigDialog, {
-      model,
-      fetchCtx: { baseUrl: provider.baseUrl, apiKey: provider.apiKey },
-      onSave: async (model: Model): Promise<boolean> => {
-        console.error("remove old id:", oldId, model.id);
-        if (oldId && oldId !== model.id) {
-          const overwittenModel = configStore.findModelById(pid, model.id);
-          if (overwittenModel) {
-            const confirmed = await confirmStore.request({
-              title: "额外删除确认",
-              message: `本次修改，将删除旧模型${oldId},同时覆盖已有的模型${model.id},确定继续吗？`,
-            });
-            if (!confirmed) {
-              return true;
+    await dialogStore.safeShow(
+      ModelConfigDialog,
+      {
+        model,
+        fetchCtx: { baseUrl: provider.baseUrl, apiKey: provider.apiKey },
+        onSave: async (model: Model): Promise<boolean> => {
+          if (oldId && oldId !== model.id) {
+            const overwittenModel = configStore.findModelById(pid, model.id);
+            if (overwittenModel) {
+              const confirmed = await confirmStore.request({
+                title: "额外删除确认",
+                message: `本次修改，将删除旧模型${oldId},同时覆盖已有的模型${model.id},确定继续吗？`,
+              });
+              if (!confirmed) return true;
             }
+            await configStore.removeModel(pid, oldId);
           }
-          await configStore.removeModel(pid, oldId);
-        }
-        await configStore.upsertModel(pid, model);
-        return false;
+          await configStore.upsertModel(pid, model);
+          return false;
+        },
       },
-    });
+      {
+        size: "xl",
+      },
+    );
   }
 
-  /* ═══════════════════════════════════════════════════════════
-     Search & Filter
-     ═══════════════════════════════════════════════════════════ */
+  function modelMatchesTab(m: Model, tab: string | null): boolean {
+    if (!tab) return true;
+    return m.abilities.includes(tab as never);
+  }
 
   function getVisibleModels(provider: Provider): Model[] {
     const q = searchStore.searchQuery.toLowerCase().trim();
+    const tab = searchStore.activeFunctionTab;
     const hasAbilityFilter = searchStore.activeAbilityFilters.length > 0;
-    if (!q && !hasAbilityFilter) return provider.models;
+    if (!q && !tab && !hasAbilityFilter) return provider.models;
 
     const providerNameMatch = !q || provider.id.toLowerCase().includes(q);
 
     return provider.models.filter((m) => {
       const modelTextMatch =
         !q || providerNameMatch || m.id.toLowerCase().includes(q);
+      const tabMatch = modelMatchesTab(m, tab);
       const abilityMatch =
         !hasAbilityFilter ||
         m.abilities.some((a) => searchStore.activeAbilityFilters.includes(a));
-      return modelTextMatch && abilityMatch;
+      return modelTextMatch && tabMatch && abilityMatch;
     });
   }
 
   let filteredProviders = $derived.by(() => {
     const q = searchStore.searchQuery.toLowerCase().trim();
+    const tab = searchStore.activeFunctionTab;
     const hasAbilityFilter = searchStore.activeAbilityFilters.length > 0;
-    if (!q && !hasAbilityFilter) return configStore.providers;
+    if (!q && !tab && !hasAbilityFilter) return configStore.providers;
 
     return configStore.providers.filter((p) => {
       const providerTextMatch =
@@ -139,13 +142,15 @@
       const hasMatchingModel = p.models.some((m) => {
         const modelTextMatch =
           !q || providerTextMatch || m.id.toLowerCase().includes(q);
+        const tabMatch = modelMatchesTab(m, tab);
         const abilityMatch =
           !hasAbilityFilter ||
           m.abilities.some((a) => searchStore.activeAbilityFilters.includes(a));
-        return modelTextMatch && abilityMatch;
+        return modelTextMatch && tabMatch && abilityMatch;
       });
 
-      if (!hasAbilityFilter) return providerTextMatch || hasMatchingModel;
+      if (!tab && !hasAbilityFilter)
+        return providerTextMatch || hasMatchingModel;
       return hasMatchingModel;
     });
   });
@@ -174,7 +179,6 @@
       <Separator />
     {/if}
 
-    <!-- ═══ Provider List ═══ -->
     <div class="space-y-6" use:autoAnimate>
       {#each filteredProviders as provider (provider.id)}
         <ProviderCard
@@ -196,7 +200,6 @@
         />
       {/each}
 
-      <!-- No Results (filtering active) -->
       {#if searchStore.isFiltering && filteredProviders.length === 0}
         <div
           class="flex animate-fade-in flex-col items-center justify-center space-y-6 py-20"
@@ -223,7 +226,6 @@
         </div>
       {/if}
 
-      <!-- Global Empty State -->
       {#if !searchStore.isFiltering && configStore.providers.length === 0}
         <EmptyProvidersState onAddProvider={addProvider} />
       {/if}

@@ -1,5 +1,7 @@
+// types.ts
 import type { ModelTags, Provider, ProviderProtocol } from "@app/main/types";
 import {
+    IconArrowsLeftRight,
     IconArrowsSort,
     IconBolt,
     IconBrain,
@@ -8,150 +10,144 @@ import {
     IconCirclePlus,
     IconCloud,
     IconCode,
+    IconCommand,
     IconCpu,
     IconDatabase,
     IconDeviceDesktop,
     IconDiamond,
+    IconDisc, // BGM
     IconEye,
+    IconFileText,
+    IconHash,
     IconJson,
     IconLanguage,
+    IconLayoutGrid,
     IconMathFunction,
     IconMessage,
-    IconMicrophone,
+    IconMicrophone2, // AudioUnderstanding
     IconMoodSmile,
+    IconMountain,
+    IconMovie, // VideoGeneration
+    IconMusic, // AudioGeneration
     IconPhoto,
     IconSparkles,
+    IconStack,
+    IconTemplate,
     IconTool,
-    IconVideo,
-    IconWorld
+    IconUser,
+    IconVideo, // 视频理解能力
+    IconVolume, // Audio 能力
+    IconWorld,
 } from "@tabler/icons-svelte";
 
 export type { Model, ModelOption } from "@app/main/types";
-export type ProviderConfig = Omit<Provider, "models">
-
 export type { ModelTags as ModelAbility, ProviderProtocol };
-/* ═══════════════════════════════════════════════════════════
-   Helpers
-   ═══════════════════════════════════════════════════════════ */
+export type ProviderConfig = Omit<Provider, "models">
 
 export function getProviderIcon(provider: Provider): typeof IconCloud {
     const id = provider.id.toLowerCase();
-    // const name = (provider.name ?? "").toLowerCase();
     const url = provider.baseUrl.toLowerCase();
-    if (
-        id.includes("openai") ||
-        // name.includes("openai") ||
-        url.includes("openai")
-    )
-        return IconBrandOpenai;
-    if (
-        id.includes("anthropic") ||
-        // name.includes("anthropic") ||
-        url.includes("anthropic")
-    )
-        return IconSparkles;
-    if (
-        id.includes("deepseek") ||
-        // name.includes("deepseek") ||
-        url.includes("deepseek")
-    )
-        return IconBolt;
-    if (
-        id.includes("google") ||
-        // name.includes("google") ||
-        id.includes("vertex") ||
-        url.includes("googleapis")
-    )
-        return IconBrandGoogle;
-    if (
-        id.includes("huggingface") ||
-        id.includes("hf")
-    )
-        return IconMoodSmile;
-    if (
-        id.includes("ollama") ||
-        // name.includes("ollama") ||
-        url.includes("localhost") ||
-        url.includes("127.0.0.1")
-    )
-        return IconDeviceDesktop;
+    if (id.includes("openai") || url.includes("openai")) return IconBrandOpenai;
+    if (id.includes("anthropic") || url.includes("anthropic")) return IconSparkles;
+    if (id.includes("deepseek") || url.includes("deepseek")) return IconBolt;
+    if (id.includes("google") || id.includes("vertex") || url.includes("googleapis")) return IconBrandGoogle;
+    if (id.includes("huggingface") || id.includes("hf")) return IconMoodSmile;
+    if (id.includes("ollama") || url.includes("localhost") || url.includes("127.0.0.1")) return IconDeviceDesktop;
     return IconCloud;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   Label / Icon Maps
-   ═══════════════════════════════════════════════════════════ */
-
 export const tagLabels: Record<ModelTags, string> = {
-    // 功能标签。
     "text-generation": "文本",
     "image-generation": "绘图",
+    "video-generation": "视频生成",
+    "audio-generation": "语音合成",
+    "audio-understanding": "语音识别",
     "embedding": "嵌入",
     "rerank": "重排",
-    //版本:
+    "bgm": "背景音乐",
     "ultra": "旗舰版",
     "plus": "专业版",
     "flash": "轻量版",
     "micro": "端侧版",
-    // 输入/输出能力
     "search": "联网",
     "reasoning": "思考",
     "vision": "图像",
     "audio": "音频",
     "tool": "工具",
-    "video": "视频",
+    "video": "视频理解",
     "outline": "格式",
     'math': "数学",
     'code': "代码",
     'mt': "翻译",
+    // —— 绘图流派 ——
+    'nlp': "自然",
+    'KBP': "关键词",
+    'CIP': "注入",
+    'human': "人物",
+    'env': "环境",
+    'instruction': "跟随",
+    // —— 视频能力 ——
+    'omni': "全能",
+    'ff': "首尾帧",
+    'mff': "多帧",
 };
 
 export const tagIcons: Record<ModelTags, typeof IconMessage> = {
-    // 功能标签
     "text-generation": IconMessage,
     "image-generation": IconPhoto,
+    "video-generation": IconMovie,
+    "audio-generation": IconMusic,
+    "audio-understanding": IconMicrophone2,
     "embedding": IconDatabase,
     "rerank": IconArrowsSort,
-
-    // 版本 (新增补齐)
+    "bgm": IconDisc,
     "ultra": IconDiamond,
     "plus": IconCirclePlus,
     "flash": IconBolt,
     "micro": IconCpu,
-
-    // 输入/输出能力
-    "search": IconWorld,      // 新增补齐
+    "search": IconWorld,
     "reasoning": IconBrain,
     "vision": IconEye,
-    "audio": IconMicrophone,
+    "audio": IconVolume,
     "tool": IconTool,
     "video": IconVideo,
     "outline": IconJson,
     'math': IconMathFunction,
     'code': IconCode,
     'mt': IconLanguage,
+    // —— 绘图流派 ——
+    'nlp': IconFileText,
+    'KBP': IconHash,
+    'CIP': IconCommand,
+    'human': IconUser,
+    'env': IconMountain,
+    'instruction': IconTemplate,
+    // —— 视频能力 ——
+    'omni': IconLayoutGrid,
+    'ff': IconArrowsLeftRight,
+    'mff': IconStack,
 };
 
-// 1. 功能与核心任务标签
 export const FUNCTION_TAGS: Record<string, ModelTags> = {
     text: 'text-generation' as ModelTags,
     image: 'image-generation' as ModelTags,
+    video: 'video-generation' as ModelTags,
+    audioGen: 'audio-generation' as ModelTags,
+    audioUnd: 'audio-understanding' as ModelTags,
+    bgm: 'bgm' as ModelTags,
     embedding: 'embedding' as ModelTags,
     rerank: 'rerank' as ModelTags,
     mt: 'mt' as ModelTags,
 };
 
 export const VERSION_TAGS: Record<string, ModelTags> = {
-    // 版本划分
     ultra: 'ultra' as ModelTags,
     plus: 'plus' as ModelTags,
     flash: 'flash' as ModelTags,
     micro: 'micro' as ModelTags,
 }
 
-// 2. 版本、输入输出及附加能力标签
 export const CAPABILITY_TAGS: Record<string, ModelTags> = {
-    // 输入/输出与核心能力
     search: 'search' as ModelTags,
     reasoning: 'reasoning' as ModelTags,
     vision: 'vision' as ModelTags,
@@ -163,6 +159,143 @@ export const CAPABILITY_TAGS: Record<string, ModelTags> = {
     code: 'code' as ModelTags,
 };
 
+// 绘图流派（仅 image function 下可选）
+export const IMAGE_FUNCTION_TAGS: Record<string, ModelTags> = {
+    nlp: 'nlp' as ModelTags,
+    kbp: 'KBP' as ModelTags,
+    cip: 'CIP' as ModelTags,
+    human: 'human' as ModelTags,
+    env: 'env' as ModelTags,
+    instruction: 'instruction' as ModelTags,
+};
+
+// 视频能力（仅 video function 下可选）
+export const VIDEO_FUNCTION_TAGS: Record<string, ModelTags> = {
+    omni: 'omni' as ModelTags,
+    ff: 'ff' as ModelTags,
+    mff: 'mff' as ModelTags,
+};
+
+/**
+ * 函数 → 该函数下允许被附加的能力标签全集。
+ * 切换 function 时，UI 只渲染此集合内的 chips；
+ * `normalize` 也据此过滤掉跨 function 残留的旧 tag。
+ */
+export const FUNCTION_CAPABILITIES: Partial<Record<ModelTags, ModelTags[]>> = {
+    [FUNCTION_TAGS.text]: Object.values(CAPABILITY_TAGS),
+    [FUNCTION_TAGS.image]: Object.values(IMAGE_FUNCTION_TAGS),
+    [FUNCTION_TAGS.video]: Object.values(VIDEO_FUNCTION_TAGS),
+};
+
+/**
+ * 函数 → 切换到此函数时默认勾选的能力标签。
+ * 仅 image / video 有流派默认；text 默认在 ModelConfigDialog 初始化时处理。
+ */
+export const FUNCTION_DEFAULT_ABILITIES: Partial<Record<ModelTags, ModelTags[]>> = {
+    [FUNCTION_TAGS.text]: [
+        CAPABILITY_TAGS.tool,
+        CAPABILITY_TAGS.reasoning,
+    ],
+    [FUNCTION_TAGS.image]: [
+        IMAGE_FUNCTION_TAGS.nlp,
+        IMAGE_FUNCTION_TAGS.human,
+        IMAGE_FUNCTION_TAGS.env,
+    ],
+    [FUNCTION_TAGS.video]: [
+        VIDEO_FUNCTION_TAGS.omni,
+        VIDEO_FUNCTION_TAGS.ff,
+        VIDEO_FUNCTION_TAGS.mff,
+    ],
+};
+
+/**
+ * 函数 → ModelConfigDialog 中"最大输入 / 最大输出"字段的语义标签。
+ * showInctx/showOutctx=false 时该字段隐藏。
+ */
+export interface ContextFieldLabels {
+    inctxLabel: string;
+    inctxHint: string;
+    outctxLabel: string;
+    outctxHint: string;
+    showInctx: boolean;
+    showOutctx: boolean;
+}
+
+export const FUNCTION_CONTEXT_LABELS: Partial<Record<ModelTags, ContextFieldLabels>> = {
+    [FUNCTION_TAGS.text]: {
+        inctxLabel: "最大输入",
+        inctxHint: "Tokens",
+        outctxLabel: "最大输出",
+        outctxHint: "Tokens",
+        showInctx: true,
+        showOutctx: true,
+    },
+    [FUNCTION_TAGS.image]: {
+        inctxLabel: "素材数量",
+        inctxHint: "张",
+        outctxLabel: "最大输出",
+        outctxHint: "K",
+        showInctx: true,
+        showOutctx: true,
+    },
+    [FUNCTION_TAGS.video]: {
+        inctxLabel: "素材数量",
+        inctxHint: "个",
+        outctxLabel: "最大时长",
+        outctxHint: "秒 (s)",
+        showInctx: true,
+        showOutctx: true,
+    },
+    [FUNCTION_TAGS.embedding]: {
+        inctxLabel: "输入长度",
+        inctxHint: "Tokens",
+        outctxLabel: "",
+        outctxHint: "",
+        showInctx: true,
+        showOutctx: false,
+    },
+    [FUNCTION_TAGS.mt]: {
+        inctxLabel: "输入长度",
+        inctxHint: "Tokens",
+        outctxLabel: "输出长度",
+        outctxHint: "Tokens",
+        showInctx: true,
+        showOutctx: true,
+    },
+    [FUNCTION_TAGS.audioUnd]: {
+        inctxLabel: "最大长度",
+        inctxHint: "秒",
+        outctxLabel: "",
+        outctxHint: "",
+        showInctx: true,
+        showOutctx: false,
+    },
+    [FUNCTION_TAGS.audioGen]: {
+        inctxLabel: "",
+        inctxHint: "",
+        outctxLabel: "",
+        outctxHint: "",
+        showInctx: false,
+        showOutctx: false,
+    },
+    [FUNCTION_TAGS.bgm]: {
+        inctxLabel: "",
+        inctxHint: "",
+        outctxLabel: "",
+        outctxHint: "",
+        showInctx: false,
+        showOutctx: false,
+    },
+    [FUNCTION_TAGS.rerank]: {
+        inctxLabel: "",
+        inctxHint: "",
+        outctxLabel: "",
+        outctxHint: "",
+        showInctx: false,
+        showOutctx: false,
+    },
+};
+
 export const protocolLabels: Record<ProviderProtocol, string> = {
     "openai-compatible": "OpenAI兼容",
     "openai": "OpenAI",
@@ -170,10 +303,9 @@ export const protocolLabels: Record<ProviderProtocol, string> = {
     "google-vertex": "Google AI",
     "xai": "xai",
     "ollama": "Ollama",
-    "huggingface": "HusggingFace",
+    "huggingface": "HuggingFace",
     "deepseek": "Deepseek",
 };
-
 
 export const allProtocols: Record<string, ProviderProtocol> = {
     openaiCompatible: "openai-compatible" as ProviderProtocol,
@@ -187,11 +319,10 @@ export const allProtocols: Record<string, ProviderProtocol> = {
 };
 
 export function formatTokens(n: number): string {
-    // 使用英美语系 (en-US) 保证输出 k, M, B
     return new Intl.NumberFormat('en-US', {
-        notation: 'compact',      // 开启紧凑格式（k, M, B）
-        compactDisplay: 'short',  // 简短模式：k, M，若为 long 则会显示 thousand, million
-        maximumFractionDigits: 1  // 最多保留1位小数
+        notation: 'compact',
+        compactDisplay: 'short',
+        maximumFractionDigits: 1
     }).format(n);
 }
 
@@ -210,10 +341,15 @@ export type KnownProvider = Array<{
     presets: ProviderPreset[]
 }>
 
-
-/** 所有能力 / 模态 / 计费模式（组合两个变量，用于渲染选择项） */
+export const FUNCTION_ABILITIES: ModelTags[] = Object.values(FUNCTION_TAGS);
+export const VERSION_ABILITIES: ModelTags[] = Object.values(VERSION_TAGS);
+export const CAPABILITY_ABILITIES: ModelTags[] = Object.values(CAPABILITY_TAGS);
+export const IMAGE_FUNCTION_ABILITIES: ModelTags[] = Object.values(IMAGE_FUNCTION_TAGS);
+export const VIDEO_FUNCTION_ABILITIES: ModelTags[] = Object.values(VIDEO_FUNCTION_TAGS);
 export const ALL_ABILITIES: ModelTags[] = [
-    ...Object.values(FUNCTION_TAGS),
-    ...Object.values(VERSION_TAGS),
-    ...Object.values(CAPABILITY_TAGS),
+    ...FUNCTION_ABILITIES,
+    ...VERSION_ABILITIES,
+    ...CAPABILITY_ABILITIES,
+    ...IMAGE_FUNCTION_ABILITIES,
+    ...VIDEO_FUNCTION_ABILITIES,
 ];

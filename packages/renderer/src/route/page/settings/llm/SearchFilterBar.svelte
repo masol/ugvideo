@@ -1,6 +1,11 @@
+<!-- SearchFilterBar.svelte -->
 <script lang="ts">
   import { Input } from "$lib/components/ui/input";
-  import { ALL_ABILITIES, tagIcons, tagLabels } from "$lib/utils/model/types";
+  import {
+    FUNCTION_ABILITIES,
+    tagIcons,
+    tagLabels
+  } from "$lib/utils/model/types";
   import { IconFilterOff, IconSearch, IconX } from "@tabler/icons-svelte";
   import { searchStore } from "./searchstore.svelte";
 
@@ -12,7 +17,10 @@
     filteredModelCount?: number;
   } = $props();
 
-  const abilities = ALL_ABILITIES;
+  const functions = FUNCTION_ABILITIES;
+
+  /** 当前 function 下可用的能力 chips（无 function 时为空 → 不渲染） */
+  const currentCaps = $derived(searchStore.currentFunctionCapabilities);
 </script>
 
 <div
@@ -47,38 +55,67 @@
     {/if}
   </div>
 
-  <!-- 能力筛选芯片 -->
+  <!-- 功能 Tab（互斥单选，再次点击取消；切换时自动清空标签） -->
   <div class="flex flex-wrap items-center gap-2">
-    <span class="mr-1 text-xs text-muted-foreground">标签筛选(或)</span>
-    {#each abilities as ability (ability)}
+    <span class="mr-1 text-xs text-muted-foreground">功能(单选)</span>
+    {#each functions as ability (ability)}
       {@const AbIcon = tagIcons[ability]}
-      {@const active = searchStore.activeAbilityFilters.includes(ability)}
+      {@const active = searchStore.activeFunctionTab === ability}
       <button
         type="button"
         aria-pressed={active}
         class={[
           "flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-all duration-200",
           active
-            ? "border-primary/50 bg-primary/10 text-primary"
-            : "border-border/50 bg-background text-muted-foreground hover:bg-muted",
+            ? "border-primary/50 bg-primary/10 text-primary shadow-sm"
+            : "border-border/50 bg-background text-muted-foreground hover:bg-muted hover:text-foreground",
         ]}
-        onclick={() => searchStore.toggleAbilityFilter(ability)}
+        onclick={() => searchStore.toggleFunctionTab(ability)}
       >
         <AbIcon size={12} stroke={1.5} />
         {tagLabels[ability]}
       </button>
     {/each}
-    {#if searchStore.isFiltering}
-      <button
-        type="button"
-        class="ml-2 flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors duration-200 hover:text-foreground"
-        onclick={() => searchStore.clearAllFilters()}
-      >
-        <IconFilterOff size={12} stroke={1.5} />
-        清除
-      </button>
-    {/if}
   </div>
+
+  <!--
+    能力多选 Chips：仅在选中 function 时渲染，且只展示该 function 拥有的 tag。
+    · 无 function tab → 整块隐藏（避免跨功能 tag 互相干扰）
+    · 切换 function → 由 store 自动清空旧 tag
+  -->
+  {#if searchStore.activeFunctionTab && currentCaps.length > 0}
+    <div class="flex animate-fade-in flex-wrap items-center gap-2">
+      <span class="mr-1 text-xs text-muted-foreground">能力(或)</span>
+      {#each currentCaps as ability (ability)}
+        {@const AbIcon = tagIcons[ability]}
+        {@const active = searchStore.activeAbilityFilters.includes(ability)}
+        <button
+          type="button"
+          aria-pressed={active}
+          class={[
+            "flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-all duration-200",
+            active
+              ? "border-sky-500/50 bg-sky-500/10 text-sky-600 dark:text-sky-400"
+              : "border-border/50 bg-background text-muted-foreground hover:bg-muted hover:text-foreground",
+          ]}
+          onclick={() => searchStore.toggleAbilityFilter(ability)}
+        >
+          <AbIcon size={12} stroke={1.5} />
+          {tagLabels[ability]}
+        </button>
+      {/each}
+      {#if searchStore.isFiltering}
+        <button
+          type="button"
+          class="ml-2 flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors duration-200 hover:text-foreground"
+          onclick={() => searchStore.clearAllFilters()}
+        >
+          <IconFilterOff size={12} stroke={1.5} />
+          清除
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   <!-- 筛选结果统计 -->
   {#if searchStore.isFiltering}

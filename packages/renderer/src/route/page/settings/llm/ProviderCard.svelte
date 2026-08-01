@@ -49,9 +49,8 @@
   let isDisabled = $derived(provider.disabled === true);
 
   function handleToggleEnabled(checked: boolean) {
-    // 直接突变响应式对象 → 立即触发 UI 更新
+    // 阻断事件冒泡，防止外层 Collapsible.Trigger 折叠/展开。
     provider.disabled = !checked;
-    // 通知父组件做持久化
     onToggleEnabled?.(checked);
   }
 </script>
@@ -145,25 +144,16 @@
           </div>
 
           <div class="flex shrink-0 items-center gap-3">
-            <!--
-              Switch 隔离点击事件，防止触发 Collapsible 折叠切换。
-              直接突变 provider.disabled 保证即时视觉反馈。
-            -->
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <div
+            <Switch
+              checked={!isDisabled}
+              onCheckedChange={handleToggleEnabled}
               onclick={(e: MouseEvent) => e.stopPropagation()}
               onkeydown={(e: KeyboardEvent) => {
                 if (e.key === " " || e.key === "Enter") e.stopPropagation();
               }}
-              class="flex items-center"
+              class="scale-90"
               title={isDisabled ? "点击启用该提供商" : "点击禁用该提供商"}
-            >
-              <Switch
-                checked={!isDisabled}
-                onCheckedChange={handleToggleEnabled}
-                class="scale-90"
-              />
-            </div>
+            />
 
             <Badge
               variant="outline"

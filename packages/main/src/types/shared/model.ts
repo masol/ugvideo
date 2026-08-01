@@ -6,7 +6,12 @@ export enum ModelTags {
     Embedding = 'embedding',
     Rerank = 'rerank',
     TextGeneration = 'text-generation',
+    MT = "mt", // 机器翻译优化。
     ImageGeneration = 'image-generation', // 图像生成。
+    VideoGeneration = 'video-generation',   // ← 新增
+    AudioGeneration = 'audio-generation',   // ← 新增（语音合成 TTS）
+    AudioUnderstanding = 'audio-understanding', // ← 新增（ASR / 语音理解）    
+    BGM = "bgm",
     // 以上为类别。
 
     // CodeGeneration = 'code-generation',
@@ -26,8 +31,21 @@ export enum ModelTags {
     Outline = "outline", // 支持结构化输出。
     Math = "math", // 数学推理优化。
     Code = "code", // 代码生成优化。
-    MT = "mt", // 机器翻译优化。
-    // 以上为输入/输出能力。
+    // 以上为LLM能力。
+
+    NLP = "nlp", // 提示词流派：Natural Language Prompting
+    KBP = "KBP", // 提示词流派：Keyphrase-Based Prompting
+    CIP = "CIP", // 提示词流派：Command-Injected Prompting
+    HUMAN = "human", // 擅长人物
+    ENV = "env", // 擅长环境
+    INSTRUCTION = "instruction", // 擅长指令跟随。
+
+    // 以上为绘图能力。
+
+    OMNI = "omni", // 支持全能参考。
+    FF = "ff", // 支持首尾帧。
+    MFF = "mff", // 支持多帧。
+    //以上为视频能力。
 }
 
 /**
