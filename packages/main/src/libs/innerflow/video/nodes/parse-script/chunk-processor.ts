@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // parse-script/chunk-processor.ts
+import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import { safefmt } from "$libs/model/llm/outline.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
@@ -11,7 +12,10 @@ import {
     buildSubsequentChunkPrompt,
     FIRST_CHUNK_PROMPT,
 } from "./prompts/chunk-processor.js";
+import { ParseStorage } from "./storage.js";
 import type { Chunk, ChunkProcessResult, ScriptFormat } from "./types.js";
+
+const P = "#video:";
 
 /**
  * 统一 schema：两种情况（首次有格式更新 / 后续无更新）都用同一份，
@@ -96,6 +100,11 @@ const CHUNK_SCHEMA = z.object({
  *   - 主区内的集/幕标记
  *
  * 主区外的场景/marker 由 orchestrator 直接丢弃（防窗口误伤）。
+ *
+ * 修复要点：加 checkExpiry gate。
+ * - input: 场景索引（增删场景时变化）+ 已知格式（格式更新时变化）
+ * - output: chunk 结果 KV
+ * - 上游没变时直接返回缓存，跳过 LLM
  */
 export async function processChunk(
     ctx: IRunnerContext,
@@ -105,6 +114,24 @@ export async function processChunk(
     mainEnd: number,
     knownFormat: ScriptFormat | null
 ): Promise<ChunkProcessResult> {
+    const storage = new ParseStorage(ctx);
+
+    // ===== Gate: chunk 处理结果缓存 =====
+    const gateInputKeys: string[] = [`${P}parse:idx:scenes`];
+    if (knownFormat) gateInputKeys.push(`${P}parse:format`);
+    const gateOutputKey = `${P}parse:chunk_result:${chunk.chunk_id}`;
+
+    if (!checkExpiry(ctx, {
+        inputKeys: gateInputKeys,
+        outputKeys: gateOutputKey,
+    })) {
+        const cached = storage.getChunkResult(chunk.chunk_id);
+        if (cached) {
+            ctx.info(`[chunk-processor] ${chunk.chunk_id} 结果仍新鲜，跳过`);
+            return cached;
+        }
+    }
+
     const chunkNL = fmtLines(
         context,
         mainStart - chunk.window_before,
@@ -137,6 +164,7 @@ export async function processChunk(
 
     if (!result.success || !result.value) {
         ctx.warn(`[chunk-processor] ${chunk.chunk_id} safefmt 失败`);
+        // 不写缓存：safefmt 失败应当允许下次重试
         return { format_update: null, global_items: [], scenes: [], episode_act_markers: [] };
     }
 
@@ -189,10 +217,15 @@ export async function processChunk(
             text: m.text,
         }));
 
-    return {
+    const chunkResult: ChunkProcessResult = {
         format_update: formatUpdate,
         global_items: globalItems,
         scenes,
         episode_act_markers: episodeActMarkers,
     };
+
+    // ===== 缓存结果供下次跳过 =====
+    storage.saveChunkResult(chunk.chunk_id, chunkResult);
+
+    return chunkResult;
 }

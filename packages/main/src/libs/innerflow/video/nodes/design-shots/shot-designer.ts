@@ -47,6 +47,9 @@ export async function designScene(ctx: IRunnerContext, sceneId: string): Promise
     // 其时间戳必然晚于本 gate 的 output（design/lighting），一旦作为 input 会导致
     // 「input 永远比 output 新」→ gate 永远过期 → 每次重跑都触发 LLM。
     // 上游真实变更（剧本/aligned_text/stage/config）已通过 intent/lighting/design 链式 gate 传导。
+    //
+    // 修复：补齐 stage 作为 gate input —— intent/lighting/design 都依赖 stage，
+    // 但原 gate 只引用 aligned_text/registry/align/config，stage 变化时不会触发这些 LLM 节点。
     if (!checkExpiry(ctx, {
         inputKeys: [
             `${P}output:aligned_text_${sceneId}`,
@@ -169,8 +172,12 @@ async function extractIntent(
 ): Promise<string> {
     const store = new ShotStorage(ctx);
 
+    // 修复：补齐 stage 作为 gate input。intent 抽取依赖 stage 的实体清单与开场站位。
     if (!checkExpiry(ctx, {
-        inputKeys: `${P}output:aligned_text_${sceneId}`,
+        inputKeys: [
+            `${P}output:aligned_text_${sceneId}`,
+            `${P}state:stage_${sceneId}`,
+        ],
         outputKeys: store.intentKey(sceneId),
     })) {
         const cached = store.getIntent(sceneId);
@@ -234,8 +241,15 @@ async function designShotsForScene(
 ): Promise<void> {
     const store = new ShotStorage(ctx);
 
+    // 修复：补齐 stage + aligned_text 作为 gate input。
+    // 分镜设计直接基于这些文本/舞台信息，原 gate 只引 intent + lighting 不够。
     if (!checkExpiry(ctx, {
-        inputKeys: [store.intentKey(sceneId), store.lightingKey(sceneId)],
+        inputKeys: [
+            store.intentKey(sceneId),
+            store.lightingKey(sceneId),
+            `${P}state:stage_${sceneId}`,
+            `${P}output:aligned_text_${sceneId}`,
+        ],
         outputKeys: store.designKey(sceneId),
     })) {
         ctx.info(`[PassB] ${sceneId} 分镜仍新鲜，跳过`);
@@ -343,11 +357,15 @@ async function designAssetsForScene(
     // asset_constraints 会在本函数内（designSingleAsset → upsertAssetConstraint）被写脏，
     // 一旦作为自己的 input，就形成「input 永远比 output 新」的自引用，导致每次重跑都触发 LLM。
     // 上游变更（aligned_text/stage → intent → lighting → design）已通过下列链式 gate 传导，覆盖充分。
+    //
+    // 修复：补齐 stage + aligned_text 作为 gate input，确保上游重算时 Pass D 跟着重算。
     if (!checkExpiry(ctx, {
         inputKeys: [
             store.lightingKey(sceneId),
             store.designKey(sceneId),
             store.intentKey(sceneId),
+            `${P}state:stage_${sceneId}`,
+            `${P}output:aligned_text_${sceneId}`,
         ],
         outputKeys: assetOutputKeys,
     })) {
@@ -519,7 +537,7 @@ function splitIntent(intent: string): { intentSection: string; riskSection: stri
 }
 
 function extractField(text: string, label: string): string {
-    const m = text.match(new RegExp(`${label}：\\s*(.+)`));
+    const m = text.match(new RegExp(`${label}[：:]\\s*(.+)`));
     return m ? m[1].trim() : "";
 }
 

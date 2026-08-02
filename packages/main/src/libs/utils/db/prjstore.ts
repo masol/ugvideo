@@ -1,8 +1,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { PrjTimeStore } from "$types/prjstore.js";
 import dayjs, { Dayjs } from "dayjs";
+import utc from "dayjs/plugin/utc.js";
 import { isPlainObject } from "radashi";
+dayjs.extend(utc);
 
+/**
+ * 统一时间解析：
+ * - 带时区标记（...Z 或 +hh:mm）→ dayjs 正常解析
+ * - 无时区标记（如 SQLite CURRENT_TIMESTAMP 的 "2026-08-02 14:29:52"，实为 UTC）
+ *   → 按 UTC 解析，避免被 dayjs 误当本地时间产生偏移
+ */
+function parseStoreTime(raw: string): Dayjs {
+    const hasTZ = /Z$|[+-]\d{2}:?\d{2}$/.test(raw);
+    return hasTZ ? dayjs(raw) : dayjs.utc(raw);
+}
 
 export function isPrjtimeStore<T>(value: unknown): value is PrjTimeStore<T> {
     return isPlainObject(value) && "value" in value && "updatedAt" in value;
@@ -45,7 +57,7 @@ export class PrjTimeView<T = any> {
 
     /** 获取外层的更新时间 */
     get updatedAt(): Dayjs | null {
-        return this.raw.updatedAt ? dayjs(this.raw.updatedAt) : null;
+        return this.raw.updatedAt ? parseStoreTime(this.raw.updatedAt) : null;
     }
 
     /** 获取原始值（已解包） */
@@ -70,7 +82,7 @@ export class PrjTimeView<T = any> {
      * bLatest 参数保留以维持签名一致性，实际上只有一个值可返回。
      */
     private getPrjTime(_bLatest: boolean): Dayjs | null {
-        return this.raw.updatedAt ? dayjs(this.raw.updatedAt) : null;
+        return this.raw.updatedAt ? parseStoreTime(this.raw.updatedAt) : null;
     }
 
     /**
@@ -93,7 +105,7 @@ export class PrjTimeView<T = any> {
     getAllTimes(): Dayjs[] {
         const times: Dayjs[] = [];
         if (this.raw.updatedAt) {
-            times.push(dayjs(this.raw.updatedAt));
+            times.push(parseStoreTime(this.raw.updatedAt));
         }
         return times;
     }

@@ -1,3 +1,4 @@
+
 // nodes/align-entities/entity-aligner.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
@@ -8,6 +9,8 @@ import { ENTITY_ALIGNER_PROMPT } from "./prompts/entity-aligner.js";
 import { REGISTRY_AUDITOR_PROMPT } from "./prompts/registry-auditor.js";
 import { Storage } from "./storage.js";
 import type { GlobalEntity, StageEntity } from "./types.js";
+
+const P = "#video:";
 
 const SCRIPT_SUFFIXES = /[\s·\-_]*(OS|VO|V\.?O\.?|OC|旁白|画外音|内心|独白|O\.S\.|O\.C\.)$/i;
 
@@ -24,8 +27,6 @@ const SAME_LOCATION_KEYWORDS = /同一|同一地点|同一场景/i;
 export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): Promise<void> {
     const store = new Storage(ctx);
 
-    // 修复：收集"本次是否有任何场景被新对齐"的信号。
-    // 只有真正重写了 align 的场景才触发后续的审计 + 时间跳跃扫描。
     let anyAlignChanged = false;
     for (const sceneId of sceneIds) {
         const changed = await alignScene(ctx, sceneId);
@@ -34,13 +35,6 @@ export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): P
 
     ctx.info(`[alignAllScenes] 逐场景对齐完成（本次变化：${anyAlignChanged}）`);
 
-    if (!anyAlignChanged) {
-        // 没有任何场景被重新对齐 → registry 无变化 → 审计和 time_skips 都不会有变化，直接跳过
-        ctx.info(`[alignAllScenes] 无对齐变化，跳过审计与时间跳跃扫描`);
-        return;
-    }
-
-    // 有变化才执行审计 + 时间跳跃扫描
     for (let round = 1; round <= MAX_AUDIT_ROUNDS; round++) {
         const hasIssues = await auditRegistry(ctx, round);
         if (!hasIssues) {
@@ -59,22 +53,8 @@ export async function alignAllScenes(ctx: IRunnerContext, sceneIds: string[]): P
 function scanTimeSkips(
     ctx: IRunnerContext,
     store: Storage,
-    sceneIds: string[],
+    _sceneIds: string[],
 ): void {
-    const sceneMetaMap = new Map<string, ReturnType<typeof store.getSceneMeta>>();
-    for (const id of sceneIds) {
-        sceneMetaMap.set(id, store.getSceneMeta(id));
-    }
-
-    const entityScenesMeta = new Map<string, Array<{
-        sceneId: string;
-        episode?: string;
-        act?: string;
-        location?: string;
-        timeOfDay?: string;
-        alignedText?: string;
-    }>>();
-
     for (const e of store.allGlobalEntities()) {
         if (e.kind === "set" || e.kind === "light") continue;
         const seq: Array<{ sceneId: string; episode?: string; act?: string; location?: string; timeOfDay?: string; alignedText?: string }> = [];
@@ -93,37 +73,30 @@ function scanTimeSkips(
                 alignedText: alignedText.slice(0, 500),
             });
         }
-        entityScenesMeta.set(e.name, seq);
-    }
 
-    for (const [name, seq] of entityScenesMeta) {
+        const skips: Record<string, boolean> = {};
         for (let i = 0; i < seq.length; i++) {
             if (i === 0) {
-                store.markTimeSkip(name, seq[i].sceneId, false);
+                skips[seq[i].sceneId] = false;
                 continue;
             }
             const prev = seq[i - 1];
             const cur = seq[i];
-
             let isSkip = false;
-
-            if (cur.episode && prev.episode && cur.episode !== prev.episode) {
-                isSkip = true;
-            } else if (cur.act && prev.act && cur.act !== prev.act) {
-                isSkip = true;
-            } else if (cur.location && prev.location && cur.location !== prev.location) {
-                isSkip = true;
-            } else if (TIME_SKIP_KEYWORDS.test(cur.alignedText ?? "")) {
-                isSkip = true;
-            } else if (SAME_LOCATION_KEYWORDS.test(cur.alignedText ?? "")) {
-                isSkip = false;
-            }
-
-            store.markTimeSkip(name, cur.sceneId, isSkip);
+            if (cur.episode && prev.episode && cur.episode !== prev.episode) isSkip = true;
+            else if (cur.act && prev.act && cur.act !== prev.act) isSkip = true;
+            else if (cur.location && prev.location && cur.location !== prev.location) isSkip = true;
+            else if (TIME_SKIP_KEYWORDS.test(cur.alignedText ?? "")) isSkip = true;
+            else if (SAME_LOCATION_KEYWORDS.test(cur.alignedText ?? "")) isSkip = false;
+            skips[cur.sceneId] = isSkip;
             if (isSkip) {
-                ctx.info(`[scanTimeSkips] ${name}@${cur.sceneId}: 时间跳跃（vs ${prev.sceneId}）`);
+                ctx.info(`[scanTimeSkips] ${e.name}@${cur.sceneId}: 时间跳跃（vs ${prev.sceneId}）`);
             }
         }
+
+        // 整批写入：与历史逐条 markTimeSkip 行为等价，但走单次幂等 write
+        // 关键：写入独立 KV（#video:stage:time_skips:<name>），不刷 registry:* 的 updatedAt
+        store.saveTimeSkips(e.name, skips);
     }
 }
 
@@ -140,10 +113,6 @@ function parseField(meta: string | null, label: string): string | undefined {
     return m ? m[1].trim() : undefined;
 }
 
-/**
- * 单场景对齐。
- * 返回 true 表示本次真正执行了重写，false 表示被 checkExpiry 跳过。
- */
 async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<boolean> {
     const store = new Storage(ctx);
 
@@ -161,10 +130,6 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<boolean
     const mapping: Record<string, string> = {};
     let counted = 0;
 
-    // 修复：worn_by 道具（穿在某角色身上的衣物/配饰）不参与登记册、不参与决策。
-    // 这些道具的视觉表现由该角色的定妆照覆盖，外观特征在 Pass B / design-characters 阶段
-    // 会以角色 scene_delta 的形式合并；这里只收集其原文描述并附加到对应角色的 stage
-    // worn_props 备注中，供下游读取合并。
     const wornPropsByCharacter = new Map<string, Array<{ name: string; appearance: string }>>();
 
     for (const entity of stage.entities) {
@@ -174,11 +139,9 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<boolean
             continue;
         }
 
-        // ===== 修复：穿着道具剥离 =====
         if (entity.kind === "prop" && entity.worn_by) {
             const wearerName = entity.worn_by.trim();
             if (!mapping[wearerName]) {
-                // 角色名在本场景尚未对齐（罕见的 roster 顺序异常），记录警告并跳过本条
                 ctx.warn(`[alignScene] ${sceneId} 穿着道具 "${name}" 的穿着者 "${wearerName}" 未对齐，跳过合并`);
             } else {
                 const list = wornPropsByCharacter.get(wearerName) ?? [];
@@ -252,15 +215,22 @@ async function alignScene(ctx: IRunnerContext, sceneId: string): Promise<boolean
         counted++;
     }
 
-    // ===== 修复：把穿着道具的原文特征写到 stage 上，供下游合并 =====
-    if (wornPropsByCharacter.size > 0) {
-        store.saveWornProps(sceneId, wornPropsByCharacter);
+    const wornChanged = wornPropsByCharacter.size > 0
+        ? store.saveWornProps(sceneId, wornPropsByCharacter)
+        : false;
+    if (wornChanged) {
         ctx.info(`[alignScene] ${sceneId} 穿着道具合并：${wornPropsByCharacter.size} 个角色受益`);
     }
 
-    store.saveStageAlign(sceneId, mapping);
-    ctx.info(`[alignScene] ${sceneId} 对齐完成，${counted} 个实体`);
-    return true;
+    const alignChanged = store.saveStageAlign(sceneId, mapping);
+
+    if (alignChanged || wornChanged) {
+        ctx.info(`[alignScene] ${sceneId} 对齐完成，${counted} 个实体（发生变化）`);
+    } else {
+        ctx.info(`[alignScene] ${sceneId} 重算但结果与上次相同，无变化`);
+    }
+
+    return alignChanged || wornChanged;
 }
 
 function isMergeCompatible(a: { kind: string; humanoid?: boolean }, b: { kind: string; humanoid?: boolean }): boolean {
@@ -340,14 +310,50 @@ function parseSameVerdict(text: string): boolean {
     return true;
 }
 
+/**
+ * 登记册审计（带 gate）。
+ *
+ * gate input = 所有 registry entity + 所有 scene 的 align。
+ * gate output = audit state。
+ *
+ * 符合 "gate input 必须只读（read-only-after-gate）"：time_skips 和 scene_snapshots
+ * 已从 GlobalEntity 搬出，scanTimeSkips / design-characters 写入的是独立 KV，
+ * 不会刷新 registry:* 的 updatedAt，gate 不再被后续步骤污染。
+ */
 async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolean> {
     const store = new Storage(ctx);
     const entities = store.allGlobalEntities();
     if (entities.length === 0) return false;
 
-    const sceneSummaries = collectSceneSummaries(store);
+    const sceneIds = store.sceneIds();
+    const inputKeys = [
+        `${P}stage:registry:idx`,
+        ...entities.map(e => `${P}stage:registry:${e.name}`),
+        ...sceneIds.map(id => store.alignKey(id)),
+    ];
+    const outputKey = store.auditStateKey();
+    // 诊断日志：列出每个 input 与 output 的实际 updatedAt
+    // const dump = (keys: string[]) => keys.map(k => {
+    //     const rawTime = store.debugGetTime(k);  // 需要 store 暴露 prjdb，或加方法
+    //     return `${k}=${rawTime ?? "MISSING"}`;
+    // });
+    // ctx.info(`[auditRegistry] input: ${dump(inputKeys).join(" | ")}`);
+    // ctx.info(`[auditRegistry] output: ${dump([outputKey]).join(" | ")}`);
+    ctx.info(`[auditRegistry] 第${round}轮进入，准备检查 gate`);
 
-    const registryText = renderRegistryForAudit(entities, sceneSummaries);
+    if (!checkExpiry(ctx, { inputKeys, outputKeys: outputKey })) {
+        ctx.info(`[auditRegistry] 审计结果仍新鲜（第${round}轮），跳过`);
+        const cached = store.getAuditState();
+        if (cached && cached.last_completed_round >= MAX_AUDIT_ROUNDS) {
+            return false;
+        }
+        return cached?.needs_continue ?? false;
+    }
+
+    ctx.info(`[auditRegistry] gate 放行，开始调 LLM`);
+
+    const sceneSummaries = collectSceneSummaries(store);
+    const registryText = renderRegistryForAudit(entities, sceneSummaries, store);
 
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx),
@@ -355,24 +361,28 @@ async function auditRegistry(ctx: IRunnerContext, round: number): Promise<boolea
         prompt: REGISTRY_AUDITOR_PROMPT.user(registryText),
     });
 
-    if (parseAuditVerdict(text) === "PASS") {
-        return false;
-    }
+    let needsContinue = false;
 
-    ctx.info(`[auditRegistry] 第${round}轮发现问题，开始修正`);
-    const issues = parseAuditIssues(text);
+    if (parseAuditVerdict(text) !== "PASS") {
+        ctx.info(`[auditRegistry] 第${round}轮发现问题，开始修正`);
+        const issues = parseAuditIssues(text);
 
-    let fixedCount = 0;
-    for (const issue of issues) {
-        if (issue.type === "merge") {
-            if (doMerge(ctx, store, issue.entries, issue.target ?? "")) fixedCount++;
-        } else if (issue.type === "split") {
-            if (doSplit(ctx, store, issue.entries)) fixedCount++;
+        let fixedCount = 0;
+        for (const issue of issues) {
+            if (issue.type === "merge") {
+                if (doMerge(ctx, store, issue.entries, issue.target ?? "")) fixedCount++;
+            } else if (issue.type === "split") {
+                if (doSplit(ctx, store, issue.entries)) fixedCount++;
+            }
         }
+        needsContinue = fixedCount > 0 || issues.length > 0;
+        ctx.info(`[auditRegistry] 第${round}轮修正完成，处理 ${fixedCount}/${issues.length} 项`);
+    } else {
+        ctx.info(`[auditRegistry] 第${round}轮审计通过`);
     }
 
-    ctx.info(`[auditRegistry] 第${round}轮修正完成，处理 ${fixedCount}/${issues.length} 项`);
-    return fixedCount > 0 || issues.length > 0;
+    store.saveAuditState({ last_completed_round: round, needs_continue: needsContinue });
+    return needsContinue;
 }
 
 function collectSceneSummaries(store: Storage): Map<string, string[]> {
@@ -412,7 +422,6 @@ function _collectEntitiesInScene(store: Storage, sceneId: string): Map<string, s
     const stage = store.getStage(sceneId);
     if (!stage) return result;
     for (const e of stage.entities) {
-        // 修复：worn_by 实体不入 scene 摘要（不参与决策，不参与审计）
         if (e.source_group) continue;
         if (e.kind === "prop" && e.worn_by) continue;
         const globalName = store.getStageAlign(sceneId)?.[e.name] ?? e.name;
@@ -421,7 +430,12 @@ function _collectEntitiesInScene(store: Storage, sceneId: string): Map<string, s
     return result;
 }
 
-function renderRegistryForAudit(entities: GlobalEntity[], sceneSummaries: Map<string, string[]>): string {
+// 接文件 3 末尾，把 renderRegistryForAudit 改成下面这个（替换文件 3 里那个不完整的版本）
+function renderRegistryForAudit(
+    entities: GlobalEntity[],
+    sceneSummaries: Map<string, string[]>,
+    store: Storage,
+): string {
     const lines: string[] = [];
     for (const e of entities) {
         const name = e.name || "（无名）";
@@ -440,12 +454,69 @@ function renderRegistryForAudit(entities: GlobalEntity[], sceneSummaries: Map<st
             lines.push(`  场景语义：（无）`);
         }
 
-        if (e.time_skips && Object.values(e.time_skips).some(v => v)) {
-            const skipScenes = Object.entries(e.time_skips).filter(([, v]) => v).map(([k]) => k);
+        // time_skips 已搬出 GlobalEntity，从独立 KV 读
+        const skips = store.getTimeSkipsForEntity(name);
+        const skipScenes = Object.entries(skips).filter(([, v]) => v).map(([k]) => k);
+        if (skipScenes.length > 0) {
             lines.push(`  时间跳跃场景：${skipScenes.join("、")}（这些场景可能需要换装/衰老）`);
         }
     }
     return lines.join("\n");
+}
+
+function doMerge(ctx: IRunnerContext, store: Storage, entries: string[], target: string): boolean {
+    if (entries.length < 2 || !target) return false;
+
+    const targetEntity = store.getGlobalEntity(target);
+    if (!targetEntity) {
+        ctx.warn(`[doMerge] 目标实体不存在：${target}`);
+        return false;
+    }
+
+    const otherEntries = entries.filter(e => e !== target);
+
+    for (const other of otherEntries) {
+        const otherEntity = store.getGlobalEntity(other);
+        if (!otherEntity) continue;
+        if (!isMergeCompatible(targetEntity, otherEntity)) {
+            ctx.warn(
+                `[doMerge] 拒绝不兼容合并："${other}"（${otherEntity.kind}/${otherEntity.humanoid ? "类人" : "非类人"}）`
+                + ` → "${target}"（${targetEntity.kind}/${targetEntity.humanoid ? "类人" : "非类人"}）`,
+            );
+            return false;
+        }
+    }
+
+    const allSceneIds = new Set<string>(targetEntity.scenes);
+
+    for (const other of otherEntries) {
+        const otherEntity = store.getGlobalEntity(other);
+        if (!otherEntity) continue;
+
+        for (const sid of otherEntity.scenes) allSceneIds.add(sid);
+
+        store.removeGlobalEntity(other);   // 已自动清理独立 KV
+        store.renameInAllAligns(other, target);
+    }
+
+    store.upsertGlobalEntity({
+        ...targetEntity,
+        scenes: Array.from(allSceneIds).sort(),
+    });
+
+    ctx.info(`[doMerge] 合并 ${entries.join("+")} → ${target}（共 ${allSceneIds.size} 个场景）`);
+    return true;
+}
+
+function doSplit(ctx: IRunnerContext, store: Storage, entries: string[]): boolean {
+    if (entries.length === 0) return false;
+    const target = entries[0];
+    const entity = store.getGlobalEntity(target);
+    if (!entity) return false;
+
+    store.removeGlobalEntity(target);  // 已自动清理独立 KV
+    ctx.info(`[doSplit] 拆分 ${target}（相关场景将在下次对齐时重新识别）`);
+    return true;
 }
 
 type AuditIssue = {
@@ -494,59 +565,4 @@ function parseAuditIssues(text: string): AuditIssue[] {
 function parseNamesFromLine(line: string): string[] {
     const matches = line.match(/[「[【]([^「\]】\]]+)[」\]】]/g) ?? [];
     return matches.map(m => m.replace(/[「[【」\]】]/g, "").trim()).filter(Boolean);
-}
-
-function doMerge(ctx: IRunnerContext, store: Storage, entries: string[], target: string): boolean {
-    if (entries.length < 2 || !target) return false;
-
-    const targetEntity = store.getGlobalEntity(target);
-    if (!targetEntity) {
-        ctx.warn(`[doMerge] 目标实体不存在：${target}`);
-        return false;
-    }
-
-    const otherEntries = entries.filter(e => e !== target);
-
-    for (const other of otherEntries) {
-        const otherEntity = store.getGlobalEntity(other);
-        if (!otherEntity) continue;
-        if (!isMergeCompatible(targetEntity, otherEntity)) {
-            ctx.warn(
-                `[doMerge] 拒绝不兼容合并："${other}"（${otherEntity.kind}/${otherEntity.humanoid ? "类人" : "非类人"}）`
-                + ` → "${target}"（${targetEntity.kind}/${targetEntity.humanoid ? "类人" : "非类人"}）`,
-            );
-            return false;
-        }
-    }
-
-    const allSceneIds = new Set<string>(targetEntity.scenes);
-
-    for (const other of otherEntries) {
-        const otherEntity = store.getGlobalEntity(other);
-        if (!otherEntity) continue;
-
-        for (const sid of otherEntity.scenes) allSceneIds.add(sid);
-
-        store.removeGlobalEntity(other);
-        store.renameInAllAligns(other, target);
-    }
-
-    store.upsertGlobalEntity({
-        ...targetEntity,
-        scenes: Array.from(allSceneIds).sort(),
-    });
-
-    ctx.info(`[doMerge] 合并 ${entries.join("+")} → ${target}（共 ${allSceneIds.size} 个场景）`);
-    return true;
-}
-
-function doSplit(ctx: IRunnerContext, store: Storage, entries: string[]): boolean {
-    if (entries.length === 0) return false;
-    const target = entries[0];
-    const entity = store.getGlobalEntity(target);
-    if (!entity) return false;
-
-    store.removeGlobalEntity(target);
-    ctx.info(`[doSplit] 拆分 ${target}（相关场景将在下次对齐时重新识别）`);
-    return true;
 }

@@ -118,11 +118,12 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     set(key: string, value: any): void {
         const db = this.getInitedDB();
+        const now = new Date().toISOString();   // 统一 ISO/UTC，带 Z
         db.insert(schema.kvStore)
-            .values({ key, value })
+            .values({ key, value, updatedAt: now })
             .onConflictDoUpdate({
                 target: schema.kvStore.key,
-                set: { value },
+                set: { value, updatedAt: now },   // 冲突更新也显式刷新，格式一致
             })
             .run();
         if (this.subKeys.has(key)) {

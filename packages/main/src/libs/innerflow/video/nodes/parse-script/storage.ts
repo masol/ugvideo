@@ -2,7 +2,12 @@
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { isDeepStrictEqual } from "node:util";
-import type { GlobalItem, PersistedScene, ScriptFormat } from "./types.js";
+import type {
+    ChunkProcessResult,
+    GlobalItem,
+    PersistedScene,
+    ScriptFormat,
+} from "./types.js";
 
 const P = "#video:";
 
@@ -101,5 +106,32 @@ export class ParseStorage {
     }
     setCursor(lineNo: number): void {
         this.write(`${P}parse:cursor`, lineNo);
+    }
+
+    // ===== chunk 处理结果（processChunk gate output）=====
+
+    /**
+     * chunk 处理结果 KV。
+     *
+     * gate 用法：
+     * - input: #video:parse:idx:scenes + (可选) #video:parse:format
+     * - output: chunkResultKey(chunk_id)
+     *
+     * 当场景索引与已知格式都未变时，chunk 结果可复用，避免每次重跑 LLM。
+     */
+    private chunkResultKey(chunkId: string): string {
+        return `${P}parse:chunk_result:${chunkId}`;
+    }
+
+    getChunkResult(chunkId: string): ChunkProcessResult | null {
+        return this.read(this.chunkResultKey(chunkId));
+    }
+
+    saveChunkResult(chunkId: string, result: ChunkProcessResult): void {
+        this.write(this.chunkResultKey(chunkId), result);
+    }
+
+    private read<T>(key: string): T | null {
+        return this.prjdb.get<T>(key) ?? null;
     }
 }

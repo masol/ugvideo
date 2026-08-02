@@ -139,7 +139,8 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
         let previousCostume = "";
 
         for (const sceneId of entity.scenes) {
-            const isTimeSkip = entity.time_skips?.[sceneId] ?? false;
+            // 修复：从独立 KV 读 time_skips
+            const isTimeSkip = alignStore.getTimeSkips(entity.name)[sceneId] ?? false;
             const isFirstScene = sceneId === entity.scenes[0];
 
             const existingCostumeText = (isTimeSkip || isFirstScene) ? "" : previousCostume;
@@ -150,7 +151,7 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
                     `${P}output:aligned_text_${sceneId}`,
                     `${P}state:stage_${sceneId}`,
                     `${P}state:beat_nl_${sceneId}`,
-                    `${P}state:worn_props_${sceneId}`,  // 修复：穿着道具作为输入门控源
+                    `${P}state:worn_props_${sceneId}`,
                 ],
                 outputKeys: store.costumeKey(entity.name, sceneId),
             })) {
@@ -164,8 +165,6 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
             const stage = store.getStage(sceneId);
             const alignedText = store.getAlignedText(sceneId);
 
-            // 修复：收集本角色本场景被剥离的穿着道具（撕裂的衣服、沾血的披风等），
-            // 这些道具的视觉状态增量必须写进 scene_delta，不能丢失。
             const wornPropsMap = alignStore.getWornProps(sceneId);
             const wornPropsForCharacter = wornPropsMap[entity.name] ?? [];
             const wornPropsSection = wornPropsForCharacter.length > 0
@@ -200,6 +199,7 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
             const costume = parseCostume(entity.name, text);
             store.saveCostume(entity.name, sceneId, costume);
 
+            // 修复：从独立 KV 写 scene_snapshots，不再刷 registry
             alignStore.upsertSceneSnapshot(entity.name, {
                 scene_id: sceneId,
                 costume_ref: store.costumeKey(entity.name, sceneId),
@@ -239,7 +239,7 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
                 `${P}state:stage_${firstScene}`,
                 `${P}state:beat_nl_${firstScene}`,
                 `${P}char:costume_${entity.name}_${firstScene}`,
-                `${P}state:worn_props_${firstScene}`,  // 修复：穿着道具作为输入门控源
+                `${P}state:worn_props_${firstScene}`,
             ],
             outputKeys: store.uniformKey(uniformName),
         })) {
@@ -250,7 +250,6 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
         const stage = store.getStage(firstScene);
         const alignedText = store.getAlignedText(firstScene);
 
-        // 修复：群体制服也吸收原文提到的穿着道具状态增量
         const alignStore = new AlignStorage(ctx);
         const wornPropsMap = alignStore.getWornProps(firstScene);
         const wornPropsForGroup: Array<{ name: string; appearance: string }> = [];

@@ -49,6 +49,7 @@ export async function generateSceneShotPrompts(
 
     const sceneDecisions = store.getSceneDecisions(sceneId);
 
+    // ===== 预解析本场景实体映射（每个 shot 都会用到，提取到循环外）=====
     const localToGlobal = new Map<string, string>();
     const initialSetProps = new Set<string>();
     const stageEntityByLocal = new Map<string, StageEntity>();
@@ -72,11 +73,17 @@ export async function generateSceneShotPrompts(
         const shotDesc = shots[i];
         const shotKey = store.shotPromptKey(sceneId, shotIndex);
 
+        // ===== 修复：先计算本 shot 的参考图依赖（纯 storage 查询，不调 LLM）=====
+        // 原 gate 只含 design/lighting/env/config，缺少 refsheet 依赖。
+        // refsheet（实体/制服/前序场景参考）变化时，shot prompt 必须跟着重算。
+        const refImageKeys = collectShotRefKeys(sceneId, shotDesc, stage, localToGlobal, stageEntityByLocal, sceneDecisions, store);
+
         if (!checkExpiry(ctx, {
             inputKeys: [
                 `${P}shots:design_${sceneId}`,
                 `${P}shots:lighting_${sceneId}`,
                 store.sceneEnvironmentKey(sceneId),
+                ...refImageKeys,
                 "config:style",
                 "config:colorTone",
             ],
@@ -87,6 +94,7 @@ export async function generateSceneShotPrompts(
             continue;
         }
 
+        // ===== 计算 referenceImages（与原逻辑一致）=====
         const referencedLocalNames = extractEntityReferences(shotDesc);
 
         const referenceImages: Array<{ entity_name: string; role: string }> = [];
@@ -106,7 +114,6 @@ export async function generateSceneShotPrompts(
             referenceImages.push({ entity_name: entityName, role });
         };
         const pushInline = (name: string, description: string): void => {
-            // 修复：同名实体后出现的覆盖先出现的（保留最新/最具体描述）
             if (!name || !description) return;
             const existingIdx = inlineForShot.findIndex(x => x.name === name);
             if (existingIdx >= 0) {
@@ -123,8 +130,6 @@ export async function generateSceneShotPrompts(
             const stageEntity = stageEntityByLocal.get(localName);
             const entity = store.getGlobalEntity(globalName);
 
-            // 修复：穿着道具的 stageEntity 已被上一步过滤（不在 stageEntityByLocal），
-            // 此处若拿不到 stageEntity 直接跳过
             if (!stageEntity) continue;
 
             if (!entity && stageEntity.source_group) {
@@ -231,6 +236,68 @@ export async function generateSceneShotPrompts(
 
     store.saveShotPromptIdx(sceneId, shotIds);
     ctx.info(`[generateSceneShotPrompts] ${sceneId} 完成 ${shotIds.length} 个镜头提示词`);
+}
+
+/**
+ * 收集本 shot 的参考图 KV keys（纯 storage 查询，不调 LLM）。
+ * 用于在 gate 检查前确定 inputKeys，确保 refsheet 变化时 shot prompt 跟着重算。
+ */
+function collectShotRefKeys(
+    sceneId: string,
+    shotDesc: string,
+    stage: { entities: StageEntity[] },
+    localToGlobal: Map<string, string>,
+    stageEntityByLocal: Map<string, StageEntity>,
+    sceneDecisions: ReturnType<RefImgStorage["getSceneDecisions"]>,
+    store: RefImgStorage,
+): string[] {
+    const keys: string[] = [];
+    const referencedLocalNames = extractEntityReferences(shotDesc);
+
+    for (const localName of referencedLocalNames) {
+        const globalName = localToGlobal.get(localName) ?? localName;
+        const stageEntity = stageEntityByLocal.get(localName);
+        if (!stageEntity) continue;
+
+        const entity = store.getGlobalEntity(globalName);
+
+        if (!entity && stageEntity.source_group) {
+            const decision = sceneDecisions.find(d => d.name === stageEntity.name);
+            if (decision?.strategy === "individual_refsheet") {
+                keys.push(`${P}refimg:entity_${sceneId}_${stageEntity.name}`);
+            }
+            continue;
+        }
+
+        if (!entity || entity.kind === "light") continue;
+
+        const decision = sceneDecisions.find(d => d.name === globalName);
+
+        if (decision?.strategy === "individual_refsheet") {
+            keys.push(`${P}refimg:entity_${sceneId}_${globalName}`);
+            const prevRefs = store.getPreviousSceneRefs(globalName, sceneId);
+            for (const prevRefId of prevRefs) {
+                const parsed = store.parseEntityRefsheetKey(prevRefId);
+                if (parsed) {
+                    keys.push(`${P}refimg:entity_${parsed.sceneId}_${parsed.entityName}`);
+                }
+            }
+        } else if (decision?.strategy === "uniform_refsheet" && decision.uniform_name) {
+            keys.push(`${P}refimg:uniform_${decision.uniform_name}`);
+        } else if (decision?.strategy === "group_photo") {
+            keys.push(`${P}refimg:entity_${sceneId}_${globalName}`);
+            for (const e of stage.entities) {
+                if (e.source_group === globalName) {
+                    const memberDecision = sceneDecisions.find(d => d.name === e.name);
+                    if (memberDecision?.strategy === "individual_refsheet") {
+                        keys.push(`${P}refimg:entity_${sceneId}_${e.name}`);
+                    }
+                }
+            }
+        }
+    }
+
+    return keys;
 }
 
 function pushInlineForSourceGroup(

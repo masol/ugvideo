@@ -1,3 +1,4 @@
+// packages/main/src/libs/project/controllers/drizzle/metag.ts
 import type { MetagRow, NewMetagRow } from "$libs/blueprint/metag/is.js";
 import { metag } from "$libs/utils/db/schema/metag.js";
 import { throwPrecondition } from "$libs/utils/err.js";
@@ -12,25 +13,34 @@ import type { DrizzleDBType } from "./type.js";
 /**
  * 插入或更新元术语记录 (以 fieldKey 为唯一键)
  *
+ * 修复：显式写入 updatedAt = new Date().toISOString()。
+ * 原因：原实现从 insertData 中剥掉 updatedAt 依赖 drizzle $onUpdate，
+ * 但 onConflictDoUpdate 是 insert 语句不触发 $onUpdate 钩子，
+ * 会回落到 SQL 层 default CURRENT_TIMESTAMP（无时区标记 "2026-08-02 14:29:52"），
+ * 与应用层 ISO 格式（带 Z）混存，导致 dayjs 跨格式比较产生 8 小时偏移。
+ * 显式写 ISO 后 insert/update 两条路径格式一致。
+ *
  * 说明:
  *  - fieldKey 缺失或非法时抛错 (元术语表以 fieldKey 为主键，绝不允许空)
- *  - 不覆盖 createdAt，updatedAt 由 drizzle $onUpdate 自动刷新
+ *  - 不覆盖 createdAt；updatedAt 由本函数显式注入
  *  - 传入的 schema 为活的 Zod 实例；由 zodSchemaJsonType 自动脱水
  */
 function upsertMetagSingle(db: DrizzleDBType, m: NewMetagRow): void {
     if (!m.fieldKey || typeof m.fieldKey !== 'string') {
         throwPrecondition(`upsertMetag: fieldKey is required, got: ${JSON.stringify(m)}`)
     }
-    // 去掉时间戳字段，交由 drizzle 的 $defaultFn / $onUpdate 处理
+    // createdAt 由 SQL 层 default 初始化（首次插入取当前时间）
+    // updatedAt 显式写 ISO（避免 $onUpdate 在 onConflictDoUpdate 路径不触发）
     const { createdAt, updatedAt, ...insertData } = m;
     void (createdAt);
     void (updatedAt);
+    const now = new Date().toISOString();
 
     db.insert(metag)
-        .values(insertData)
+        .values({ ...insertData, updatedAt: now })
         .onConflictDoUpdate({
             target: metag.fieldKey,
-            set: insertData,
+            set: { ...insertData, updatedAt: now },
         })
         .run();
 }
@@ -92,7 +102,6 @@ function getMetagSingle(db: DrizzleDBType, fieldKey: string): MetagRow | null {
 function getMetagBatch(db: DrizzleDBType, fieldKeys: string[]): (MetagRow | null)[] {
     if (!fieldKeys || fieldKeys.length === 0) return [];
 
-    // 收集非空 key 去做一次 IN 查询
     const uniqKeys = Array.from(new Set(fieldKeys.filter(Boolean)));
     const hitMap = new Map<string, MetagRow>();
 
@@ -105,7 +114,6 @@ function getMetagBatch(db: DrizzleDBType, fieldKeys: string[]): (MetagRow | null
         for (const row of rows) hitMap.set(row.fieldKey, row);
     }
 
-    // 按原始下标回填
     return fieldKeys.map(k => (k ? hitMap.get(k) ?? null : null));
 }
 
@@ -165,9 +173,9 @@ function deleteMetagBatch(db: DrizzleDBType, fieldKeys: string[]): void {
  */
 export function deleteMetag(db: DrizzleDBType, key: string | string[]): void {
     if (Array.isArray(key)) {
-        deleteMetagBatch(db, key);
+        return deleteMetagBatch(db, key);
     } else {
-        deleteMetagSingle(db, key);
+        return deleteMetagSingle(db, key);
     }
 }
 

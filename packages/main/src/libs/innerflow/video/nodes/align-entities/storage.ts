@@ -24,18 +24,15 @@ export class Storage {
 
     /**
      * 幂等写入：内容深度相等时跳过，不刷新时间戳。
-     * 相同内容 = 相同版本 = 不应使下游失效。
-     *
-     * 关键：持久化经过 JSON 序列化会丢弃值为 undefined 的键。
-     * 若直接用内存中的 value（可能带 `foo: undefined`）与已回读的 existing 比较，
-     * isDeepStrictEqual 会因"自有键集合不同"永远判为不等，导致每次都重写、
-     * 刷新时间戳、误使下游过期。因此比较与写入都基于归一化（JSON 往返）后的值。
+     * 返回值：true = 实际落盘，false = 幂等跳过。
      */
-    private write<T>(key: string, value: T): void {
+    private write<T>(key: string, value: T): boolean {
         const normalized = JSON.parse(JSON.stringify(value)) as T;
         const existing = this.prjdb.get<T>(key);
-        if (isDeepStrictEqual(existing, normalized)) return;
+        if (isDeepStrictEqual(existing, normalized)) return false;
+        this.ctx.info(`[Storage.write] 实际落盘：${key}`);   // ← 加这行
         this.prjdb.set(key, normalized);
+        return true;
     }
 
     private lines(): string[] {
@@ -149,67 +146,136 @@ export class Storage {
             .filter((v): v is GlobalEntity => v != null);
     }
 
+    /**
+  * 写入对齐语义（registry 主体）。
+  *
+  * 严格幂等 + 防覆盖：
+  * - 若实体已存在，scenes 做并集合并（绝不用传入的 scenes 覆盖已有的），
+  *   避免 alignScene 重跑走新增分支时把跨场景实体的 scenes 抹回单场景。
+  * - 合并后交给幂等 write：内容相同则不落盘、不刷新时间戳。
+  *
+  * 这保证「alignScene 因 gate 误判而重跑」时，只要对齐结果不变，registry 就不被写脏，
+  * 从而不污染以 registry:* 为 gate input 的 auditRegistry。
+  */
     upsertGlobalEntity(entity: GlobalEntity): void {
         const names = this.entityNames();
-        this.write(this.registryKey(entity.name), entity);
-        if (!names.includes(entity.name)) {
-            this.write(`${P}stage:registry:idx`, [...names, entity.name]);
-        }
-    }
+        const existing = this.getGlobalEntity(entity.name);
 
-    removeGlobalEntity(name: string): void {
-        this.prjdb.remove(this.registryKey(name));
-        const names = this.entityNames().filter(n => n !== name);
-        this.write(`${P}stage:registry:idx`, names);
+        // 防覆盖：已存在则 scenes 取并集，不用传入值直接覆盖
+        const merged: GlobalEntity = existing
+            ? {
+                ...entity,
+                scenes: Array.from(new Set([...existing.scenes, ...entity.scenes])).sort(),
+            }
+            : entity;
+
+        this.write(this.registryKey(merged.name), merged);   // 幂等：内容同则不写
+        if (!names.includes(merged.name)) {
+            this.write(`${P}stage:registry:idx`, [...names, merged.name]);
+        }
     }
 
     addSceneToEntity(name: string, sceneId: string): void {
         const e = this.getGlobalEntity(name);
         if (!e) return;
         if (!e.scenes.includes(sceneId)) {
-            const updated: GlobalEntity = { ...e, scenes: [...e.scenes, sceneId] };
-            this.upsertGlobalEntity(updated);
+            // 走 upsert（内部并集合并 + 幂等）
+            this.upsertGlobalEntity({ ...e, scenes: [...e.scenes, sceneId] });
         }
+        // 已包含 sceneId → 什么都不做，绝不触碰 registry
+    }
+
+    debugGetTime(key: string): string | null {
+        const raw = this.prjdb.getWithTime(key);
+        return raw?.updatedAt ?? null;
+    }
+
+    removeGlobalEntity(name: string): void {
+        this.prjdb.remove(this.registryKey(name));
+        // 同步清理派生 KV，避免幽灵数据
+        this.prjdb.remove(this.timeSkipsKey(name));
+        this.prjdb.remove(this.snapshotsKey(name));
+        const names = this.entityNames().filter(n => n !== name);
+        this.write(`${P}stage:registry:idx`, names);
+    }
+
+
+    // ===== 派生标记：time_skips（独立 KV）=====
+
+    /**
+     * 与 GlobalEntity 解耦的派生 KV。
+     * 写入此 key 不会刷新 GlobalEntity 的 updatedAt，因此不会污染以 registry:* 为
+     * gate input 的下游审计节点。
+     */
+    private timeSkipsKey(name: string): string {
+        return `${P}stage:time_skips:${name}`;
+    }
+
+    getTimeSkips(name: string): Record<string, boolean> {
+        return this.read<Record<string, boolean>>(this.timeSkipsKey(name)) ?? {};
     }
 
     /**
-     * 写入场景快照引用（design-characters 阶段回调）。
-     * 当 scene_id 已存在时，替换而非追加；否则同 scene_id 重复调用会让数组长度+1，
-     * 破坏幂等，导致每次执行都 bump 时间戳。
+     * 标记某实体在某场景是否时间跳跃。
+     * 幂等：内容相等时跳过，不更新时间戳。
+     * 返回值：true = 实际落盘，false = 幂等跳过。
      */
-    upsertSceneSnapshot(name: string, ref: SceneSnapshotRef): void {
-        const e = this.getGlobalEntity(name);
-        if (!e) return;
-        const snapshots = e.scene_snapshots ?? [];
-        const existingIdx = snapshots.findIndex(s => s.scene_id === ref.scene_id);
-        if (existingIdx >= 0) {
-            if (isDeepStrictEqual(snapshots[existingIdx], ref)) {
-                return;
-            }
-            const updatedSnapshots = [...snapshots];
-            updatedSnapshots[existingIdx] = ref;
-            this.upsertGlobalEntity({ ...e, scene_snapshots: updatedSnapshots });
-            return;
-        }
-        this.upsertGlobalEntity({ ...e, scene_snapshots: [...snapshots, ref] });
+    markTimeSkip(name: string, sceneId: string, isSkip: boolean): boolean {
+        const skips = this.getTimeSkips(name);
+        if (skips[sceneId] === isSkip) return false;
+        const updated = { ...skips, [sceneId]: isSkip };
+        return this.write(this.timeSkipsKey(name), updated);
     }
 
-    markTimeSkip(name: string, sceneId: string, isSkip: boolean): void {
-        const e = this.getGlobalEntity(name);
-        if (!e) return;
-        const skips = e.time_skips ?? {};
-        if (skips[sceneId] === isSkip) return;
-        const updated: GlobalEntity = {
-            ...e,
-            time_skips: { ...skips, [sceneId]: isSkip },
-        };
-        this.upsertGlobalEntity(updated);
+    /**
+     * 给 audit/渲染报告用：一次性拿到某实体的时间跳跃集合。
+     */
+    getTimeSkipsForEntity(name: string): Record<string, boolean> {
+        return this.getTimeSkips(name);
+    }
+
+    /**
+     * 整批写入时间跳跃（scanTimeSkips 优化路径）。
+     * 幂等：内容相等时跳过。
+     */
+    saveTimeSkips(name: string, skips: Record<string, boolean>): boolean {
+        return this.write(this.timeSkipsKey(name), skips);
+    }
+
+    // ===== 派生标记：scene_snapshots（独立 KV）=====
+
+    private snapshotsKey(name: string): string {
+        return `${P}stage:snapshots:${name}`;
+    }
+
+    /**
+     * 取某实体的全部 scene snapshot 列表（按 scene_id 升序便于稳定比较）。
+     */
+    getSceneSnapshots(name: string): SceneSnapshotRef[] {
+        const list = this.read<SceneSnapshotRef[]>(this.snapshotsKey(name)) ?? [];
+        return [...list].sort((a, b) => a.scene_id.localeCompare(b.scene_id));
     }
 
     getSceneSnapshot(name: string, sceneId: string): SceneSnapshotRef | null {
-        const e = this.getGlobalEntity(name);
-        if (!e || !e.scene_snapshots) return null;
-        return e.scene_snapshots.find(s => s.scene_id === sceneId) ?? null;
+        return this.getSceneSnapshots(name).find(s => s.scene_id === sceneId) ?? null;
+    }
+
+    /**
+     * 写入场景快照引用。当 scene_id 已存在时替换；否则追加。
+     * 幂等：内容相等时跳过，不更新时间戳。
+     * 返回值：true = 实际落盘，false = 幂等跳过。
+     */
+    upsertSceneSnapshot(name: string, ref: SceneSnapshotRef): boolean {
+        const list = this.read<SceneSnapshotRef[]>(this.snapshotsKey(name)) ?? [];
+        const existingIdx = list.findIndex(s => s.scene_id === ref.scene_id);
+        if (existingIdx >= 0) {
+            if (isDeepStrictEqual(list[existingIdx], ref)) return false;
+            const updated = [...list];
+            updated[existingIdx] = ref;
+            return this.write(this.snapshotsKey(name), updated);
+        }
+        const updated = [...list, ref];
+        return this.write(this.snapshotsKey(name), updated);
     }
 
     alignKey(sceneId: string): string {
@@ -220,8 +286,8 @@ export class Storage {
         return this.read<Record<string, string>>(this.alignKey(sceneId));
     }
 
-    saveStageAlign(sceneId: string, mapping: Record<string, string>): void {
-        this.write(this.alignKey(sceneId), mapping);
+    saveStageAlign(sceneId: string, mapping: Record<string, string>): boolean {
+        return this.write(this.alignKey(sceneId), mapping);
     }
 
     renameInAllAligns(oldName: string, newName: string): void {
@@ -239,13 +305,6 @@ export class Storage {
         }
     }
 
-    /**
-     * 穿着道具归集：穿在某角色身上的衣物/配饰的原文特征，
-     * 由对齐阶段写入，供下游（Pass B / design-characters）合并到角色 scene_delta。
-     *
-     * 结构：key = 角色规范名（对齐后），value = 该角色本场景被剥离的道具列表
-     * （含道具原文名 + 原文外观描写）。
-     */
     wornPropsKey(sceneId: string): string {
         return `${P}state:worn_props_${sceneId}`;
     }
@@ -254,10 +313,10 @@ export class Storage {
         return this.read<Record<string, Array<{ name: string; appearance: string }>>>(this.wornPropsKey(sceneId)) ?? {};
     }
 
-    saveWornProps(sceneId: string, mapping: Map<string, Array<{ name: string; appearance: string }>>): void {
+    saveWornProps(sceneId: string, mapping: Map<string, Array<{ name: string; appearance: string }>>): boolean {
         const obj: Record<string, Array<{ name: string; appearance: string }>> = {};
         for (const [k, v] of mapping) obj[k] = v;
-        this.write(this.wornPropsKey(sceneId), obj);
+        return this.write(this.wornPropsKey(sceneId), obj);
     }
 
     getOverview(): string | null {
@@ -266,5 +325,19 @@ export class Storage {
 
     saveOverview(text: string): void {
         this.write(`${P}output:stage_overview`, text);
+    }
+
+    // ===== 审计状态 =====
+
+    auditStateKey(): string {
+        return `${P}stage:audit:state`;
+    }
+
+    getAuditState(): { last_completed_round: number; needs_continue: boolean } | null {
+        return this.read(`${P}stage:audit:state`);
+    }
+
+    saveAuditState(state: { last_completed_round: number; needs_continue: boolean }): void {
+        this.write(this.auditStateKey(), state);
     }
 }
