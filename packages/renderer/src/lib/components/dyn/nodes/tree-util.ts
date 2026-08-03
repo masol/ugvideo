@@ -1,43 +1,58 @@
 // src/lib/components/dyn/nodes/tree-util.ts
 /**
- * Tree 节点的纯函数工具：模板插值 + 正则解析 + 数据项归一 + 标题/动作上下文计算。
- * 与 Svelte 无耦合，便于单测与复用。
+ * Tree 节点的纯函数工具：
+ *   - 模板插值（支持多级祖先、root 命名空间、对象 value 字段）
+ *   - 正则解析（根 / 容器层）
+ *   - 数据归一（字符串 / 数组 / {key,value} / 嵌套对象）
+ *   - 标题与 action 上下文构造
+ *
+ * 【占位符语法】
+ *   {var}                   - 当前节点的字段（id/label/meta/n/index/value 等）
+ *   {parent}                - 父节点 baseKey
+ *   {root.<name>}           - 根 KV 解析后的字段（未指定 rootRegex 时至少含 {root.key}={rootKey}）
+ *   {ancestor.<L>.<name>}   - 第 L 层祖先的某字段（L=0 是直接父，L=1 是祖父…）
  */
 import type { TreeAction, TreeLevel } from "../ast";
 
-/** 树节点的最小数据形状 */
+/* ── 类型 ──────────────────────────────────────────────────────── */
+
 export interface TreeItem {
     id: string;
     label?: string;
     meta?: string;
-    /** 本节点正则提取的其它命名捕获（id/label/meta 之外的字段） */
+    /** 本节点正则/对象 value 提取的其它字段；模板可用 {<name>} 或 {fields.<name>} 引用 */
     fields?: Record<string, string>;
 }
 
-/** 整棵树的全局字段：根 KV 解析出的 root.<name>（任意命名捕获）。 */
 export type RootFields = Record<string, string>;
 
-/**
- * 模板变量：普通占位符为 string | number；root 是唯一的对象命名空间，
- * 通过 {root.<name>} 访问。
- */
 export interface TemplateVars {
     root?: RootFields;
-    [key: string]: string | number | RootFields | undefined;
+    ancestor?: TreeItem[];
+    [key: string]:
+    | string
+    | number
+    | RootFields
+    | TreeItem[]
+    | undefined;
 }
 
-/**
- * 模板插值：{var} 占位替换；未知/空变量替换为空串。
- * {root.<name>} 从 vars.root 取字段；其它 {a.b} 形式一律替换为空串。
- */
+/* ── 插值 ──────────────────────────────────────────────────────── */
+
 export function interpolate(tpl: string, vars: TemplateVars): string {
     return tpl.replace(
-        /\{(\w+)(?:\.([\w-]+))?\}/g,
-        (_, k: string, sub?: string) => {
-            if (sub !== undefined) {
-                if (k !== "root") return "";
+        /\{(\w+)(?:\.([\w-]+))?(?:\.([\w-]+))?\}/g,
+        (_m, k: string, sub?: string, sub2?: string): string => {
+            if (k === "root" && sub !== undefined) {
                 return vars.root?.[sub] ?? "";
             }
+            if (k === "ancestor" && sub !== undefined && sub2 !== undefined) {
+                const L = Number(sub);
+                const a = vars.ancestor?.[L];
+                if (!a) return "";
+                return getField(a, sub2) ?? "";
+            }
+            if (sub !== undefined) return "";
             const v = vars[k];
             if (v === undefined || v === null || typeof v === "object") return "";
             return String(v);
@@ -45,7 +60,15 @@ export function interpolate(tpl: string, vars: TemplateVars): string {
     );
 }
 
-/** 构造 global 正则；非法正则返回 null（调用方按空结果兜底） */
+function getField(item: TreeItem, name: string): string | undefined {
+    if (name === "id") return item.id;
+    if (name === "label") return item.label;
+    if (name === "meta") return item.meta;
+    return item.fields?.[name];
+}
+
+/* ── 正则解析 ──────────────────────────────────────────────────── */
+
 function makeGlobalRegex(src: string): RegExp | null {
     try {
         return new RegExp(src, "g");
@@ -54,12 +77,6 @@ function makeGlobalRegex(src: string): RegExp | null {
     }
 }
 
-/**
- * 用正则把一段字符串解析为节点数组 + 汇总字段。
- * - 强制以 global 模式逐条匹配：每条匹配 → 一个 TreeItem。
- * - 命名捕获优先：id / label / meta；未命名时退回分组顺序 [1]=id [2]=label [3]=meta。
- * - 其它命名捕获 → 该条的 fields，同时汇总进返回的 fields（后值覆盖前值）。
- */
 export function parseItemsWithRegex(
     raw: string,
     src: string,
@@ -89,70 +106,141 @@ export function parseItemsWithRegex(
                 fields: Object.keys(extra).length ? extra : undefined,
             });
         }
-        // 零宽匹配防护：避免 lastIndex 不推进导致死循环
         if (m.index === re.lastIndex) re.lastIndex++;
     }
     return { items, fields };
 }
 
-/**
- * 根 KV 值解析：把根字符串拆成根节点数组 + 根字段。
- * - 有 rootRegex：按正则（global）解析；
- * - 无 rootRegex：整段当一个根节点（id="root"，label=前 60 字符预览）。
- */
-export function parseRoot(
-    raw: string,
-    rootRegex?: string,
-): { items: TreeItem[]; rootFields: RootFields } {
-    if (!raw) return { items: [], rootFields: {} };
-    if (!rootRegex) {
-        const label = raw.length > 60 ? raw.slice(0, 60) + "…" : raw;
-        return { items: [{ id: "root", label }], rootFields: {} };
+/* ── 数据归一 ──────────────────────────────────────────────────── */
+
+/** 把任意未知值归一为 TreeItem[]。统一支持字符串/数组/{key,value}/嵌套对象。 */
+export function coerceItems(v: unknown): TreeItem[] {
+    if (v == null) return [];
+    if (typeof v === "string") {
+        // 字符串默认按行切；regex 解析交给 parseItemsWithRegex 自行处理
+        return [];
     }
-    const { items, fields } = parseItemsWithRegex(raw, rootRegex);
-    return { items, rootFields: fields };
+    if (!Array.isArray(v)) return [];
+    return v.map((x, i): TreeItem => normalizeOne(x, i));
 }
 
-/**
- * 容器节点 baseKey 值归一：子节点数据可能是数组（已是 TreeItem[] / string[]）
- * 或字符串（按 childRegex 解析）。未知 / null → 空数组。
- */
+/** 容器层专用：支持 childRegex 解析字符串。 */
 export function coerceChildrenFromUnknown(
     v: unknown,
     childRegex: string | undefined,
 ): TreeItem[] {
-    if (Array.isArray(v)) {
-        return v.map((x, i): TreeItem => {
-            if (typeof x === "string") return { id: x };
-            if (x && typeof x === "object") {
-                const o = x as Record<string, unknown>;
-                const id =
-                    typeof o.id === "string"
-                        ? o.id
-                        : o.id !== undefined
-                            ? String(o.id)
-                            : String(i);
-                return {
-                    id,
-                    label: typeof o.label === "string" ? o.label : undefined,
-                    meta: typeof o.meta === "string" ? o.meta : undefined,
-                };
-            }
-            return { id: String(i) };
-        });
-    }
-    if (typeof v === "string" && childRegex) {
+    if (v == null) return [];
+    if (typeof v === "string") {
+        if (!childRegex) {
+            // 没正则就按行切，每行一个 id
+            return v
+                .split(/\r?\n/)
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .map((s): TreeItem => ({ id: s }));
+        }
         return parseItemsWithRegex(v, childRegex).items;
     }
-    return [];
+    return coerceItems(v);
 }
 
-/** 计算某层节点的展示标题 */
+function normalizeOne(x: unknown, i: number): TreeItem {
+    if (typeof x === "string") return { id: x };
+    if (x && typeof x === "object") {
+        const o = x as Record<string, unknown>;
+
+        // {key, value} 简写形式
+        if (
+            "key" in o &&
+            typeof o.key === "string" &&
+            "value" in o &&
+            o.value !== undefined
+        ) {
+            return {
+                id: o.key,
+                label: typeof o.label === "string" ? o.label : undefined,
+                meta: typeof o.meta === "string" ? o.meta : undefined,
+                fields: { value: stringifyScalar(o.value) ?? "" },
+            };
+        }
+
+        // 完整对象
+        const id =
+            typeof o.id === "string"
+                ? o.id
+                : o.id !== undefined
+                    ? String(o.id)
+                    : String(i);
+        const fields: Record<string, string> = {};
+        for (const [k, val] of Object.entries(o)) {
+            if (k === "id" || k === "label" || k === "meta") continue;
+            const s = stringifyScalar(val);
+            if (s !== undefined) fields[k] = s;
+        }
+        return {
+            id,
+            label: typeof o.label === "string" ? o.label : undefined,
+            meta: typeof o.meta === "string" ? o.meta : undefined,
+            fields: Object.keys(fields).length ? fields : undefined,
+        };
+    }
+    return { id: String(i) };
+}
+
+function stringifyScalar(v: unknown): string | undefined {
+    if (v === null || v === undefined) return undefined;
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    return undefined;
+}
+
+/* ── 根解析 ────────────────────────────────────────────────────── */
+
+/**
+ * 根 KV 值 → 根节点 + 根字段。
+ *   - 字符串 + rootRegex → 正则解析
+ *   - 字符串 + 无 rootRegex → 整段当一个根节点，自动注入 root.key = rootKey
+ *   - 数组 → 直接按数组元素解析（每项是 string 或 {id,...} 或 {key,value}）
+ *   - null/undefined → 空
+ */
+export function parseRoot(
+    raw: unknown,
+    rootKey: string,
+    rootRegex?: string,
+): { items: TreeItem[]; rootFields: RootFields } {
+    if (raw == null) return { items: [], rootFields: {} };
+
+    // 数组分支
+    if (Array.isArray(raw)) {
+        return { items: coerceItems(raw), rootFields: { key: rootKey } };
+    }
+
+    // 字符串分支
+    if (typeof raw === "string") {
+        if (!raw) return { items: [], rootFields: { key: rootKey } };
+        if (!rootRegex) {
+            const label = raw.length > 60 ? raw.slice(0, 60) + "…" : raw;
+            return {
+                items: [{ id: "root", label }],
+                rootFields: { key: rootKey },
+            };
+        }
+        const { items, fields } = parseItemsWithRegex(raw, rootRegex);
+        return { items, rootFields: { ...fields, key: rootKey } };
+    }
+
+    // 其它类型 → 空
+    return { items: [], rootFields: { key: rootKey } };
+}
+
+/* ── 标题 ──────────────────────────────────────────────────────── */
+
 export function nodeLabel(
     level: TreeLevel,
     item: TreeItem,
     index: number,
     rootFields: RootFields,
+    ancestors: TreeItem[],
 ): string {
     if (level.labelTemplate) {
         return interpolate(level.labelTemplate, {
@@ -161,18 +249,16 @@ export function nodeLabel(
             meta: item.meta,
             index,
             n: index + 1,
+            value: item.fields?.value,
             root: rootFields,
+            ancestor: ancestors,
         });
     }
     return item.label ?? `第 ${index + 1} 项`;
 }
 
-/**
- * 拼装某个 action 的调用上下文：
- *  - name：动作函数名（action.name ?? action.type ?? "view"）
- *  - key：解析 keyTemplate（缺省用节点 baseKey）
- *  - args：原样透传
- */
+/* ── 动作上下文 ────────────────────────────────────────────────── */
+
 export function buildActionContext(opts: {
     action: TreeAction;
     baseKey: string;
@@ -180,12 +266,13 @@ export function buildActionContext(opts: {
     item: TreeItem;
     index: number;
     rootFields: RootFields;
+    ancestors: TreeItem[];
 }): {
     name: string;
     key: string;
     args: Record<string, unknown> | undefined;
 } {
-    const { action, baseKey, parentKey, item, rootFields } = opts;
+    const { action, baseKey, parentKey, item, rootFields, ancestors } = opts;
     const key = action.keyTemplate
         ? interpolate(action.keyTemplate, {
             key: baseKey,
@@ -193,7 +280,9 @@ export function buildActionContext(opts: {
             id: item.id,
             label: item.label,
             meta: item.meta,
+            value: item.fields?.value,
             root: rootFields,
+            ancestor: ancestors,
         })
         : baseKey;
     const name = action.name ?? action.type ?? "view";

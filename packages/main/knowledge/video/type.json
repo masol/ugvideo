@@ -788,6 +788,45 @@
                     }
                 ]
             }
+        },
+        {
+            "id": "assets",
+            "label": "素材库",
+            "icon": "IconLibraryPhoto",
+            "panel": {
+                "type": "panel",
+                "children": [
+                    {
+                        "type": "tree",
+                        "rootKey": "episodes",
+                        "rootRegex": "^ep_(?<id>\\d+)_(?<label>.+)$",
+                        "track": true,
+                        "emptyTitle": "还没有生成内容",
+                        "emptyIcon": "IconListTree",
+                        "levels": [
+                            {
+                                "keyTemplate": "episode_{id}",
+                                "labelTemplate": "第 {n} 集 · {label}",
+                                "icon": "IconMovie",
+                                "openIcon": "IconFolderOpen"
+                            },
+                            {
+                                "keyTemplate": "{parent}_shot_{id}",
+                                "labelTemplate": "镜头 {n}",
+                                "icon": "IconCamera",
+                                "leaf": true,
+                                "childRegex": "shot_(?<id>\\d+)",
+                                "actions": [
+                                    {
+                                        "type": "logOpen",
+                                        "keyTemplate": "{key}"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
         }
     ]
 }

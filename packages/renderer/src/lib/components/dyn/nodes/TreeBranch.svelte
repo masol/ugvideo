@@ -1,8 +1,6 @@
 <!--
   ╭─────────────────────────────────────────────────────╮
   │ [Tree 递归分支节点 → TreeBranch.svelte]              │
-  │ 职责：渲染树的单个节点，容器懒订阅 baseKey 展开子层， │
-  │       叶子点击后按 actions 顺序回调 onAction          │
   ╰─────────────────────────────────────────────────────╯
 -->
 <script lang="ts">
@@ -31,6 +29,7 @@
     index,
     parentKey,
     rootFields,
+    ancestors,
     onAction,
   }: {
     node: TreeNode;
@@ -40,6 +39,7 @@
     index: number;
     parentKey: string;
     rootFields: RootFields;
+    ancestors: TreeItem[];
     onAction: (ctx: {
       action: TreeAction;
       name: string;
@@ -47,6 +47,7 @@
       args: Record<string, unknown> | undefined;
       depth: number;
       itemId: string;
+      ancestors: TreeItem[];
     }) => Promise<void> | void;
   } = $props();
 
@@ -54,22 +55,22 @@
   const isLeaf = $derived(level.leaf ?? depth >= node.levels.length - 1);
   const track = $derived(node.track ?? true);
 
-  // baseKey：自身字段可参与占位（{label}、{meta}），跨级字段 {root.<f>}
   const baseKey = $derived(
     interpolate(level.keyTemplate ?? "{parent}_{id}", {
       parent: parentKey,
       id: item.id,
       label: item.label,
       meta: item.meta,
+      value: item.fields?.value,
       root: rootFields,
+      ancestor: ancestors,
     }),
   );
 
-  const label = $derived(nodeLabel(level, item, index, rootFields));
+  const label = $derived(nodeLabel(level, item, index, rootFields, ancestors));
 
   let open = $state(false);
 
-  // 仅「容器 + 已展开」时订阅 → 真正的按需加载 + 变化实时跟随。
   const b = useBinding(service, () => ({
     key: !isLeaf && open ? baseKey : "",
     track,
@@ -89,8 +90,9 @@
         item,
         index,
         rootFields,
+        ancestors,
       });
-      await onAction({ action, ...ctx, depth, itemId: item.id });
+      await onAction({ action, ...ctx, depth, itemId: item.id, ancestors });
     }
   }
 </script>
@@ -120,6 +122,12 @@
             <Skeleton class="h-7 w-full rounded-lg" />
           {/each}
         </div>
+      {:else if children.length === 0}
+        <div
+          class="rounded-lg border border-dashed border-border/40 px-3 py-2 text-xs text-muted-foreground"
+        >
+          （无子项）
+        </div>
       {:else}
         <div use:autoAnimate>
           {#each children as child, i (child.id)}
@@ -131,6 +139,7 @@
               index={i}
               parentKey={baseKey}
               {rootFields}
+              ancestors={[...ancestors, item]}
               {onAction}
             />
           {/each}

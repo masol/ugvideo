@@ -15,21 +15,14 @@
 
   const track = $derived(node.track ?? true);
 
-  // 根 KV 订阅（变化时整棵树刷新——因为根字段可能变了）
   const b = useBinding(service, () => ({ key: node.rootKey, track }));
   let rawRoot = $derived(b.value);
   let rootLoading = $derived(b.loading);
   let rootError = $derived(b.error);
 
-  // 根解析：字符串 → 根节点列表 + 根字段
-  const parsedRoot = $derived.by(() => {
-    if (typeof rawRoot !== "string") {
-      return { items: [], rootFields: {} } as ReturnType<typeof parseRoot>;
-    }
-    return parseRoot(rawRoot, node.rootRegex);
-  });
+  // 兼容字符串 / 数组 / null
+  const parsedRoot = $derived(parseRoot(rawRoot, node.rootKey, node.rootRegex));
 
-  /** 给业务方的动作回调：接整条 TreeAction + 已解析的上下文。 */
   async function onAction(ctx: {
     action: TreeAction;
     name: string;
@@ -37,9 +30,8 @@
     args: Record<string, unknown> | undefined;
     depth: number;
     itemId: string;
+    ancestors: import("./tree-util").TreeItem[];
   }) {
-    // TODO: 你的实现 —— 按 ctx.name 分发到对应的业务函数
-    //  例：switch (ctx.name) { case "logOpen": ...; case "viewPlan": ...; }
     void ctx;
   }
 </script>
@@ -72,6 +64,7 @@
             index={i}
             parentKey={node.rootKey}
             rootFields={parsedRoot.rootFields}
+            ancestors={[]}
             {onAction}
           />
         {/each}
