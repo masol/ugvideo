@@ -17,17 +17,17 @@
  * 【铁律】
  *  - 完全任务中立：默认文案皆通用中性词，业务语义只来自 JSON 字段。
  *  - JSON 未提供的字段一律不渲染，不用业务缺省填充。
- *  - 不引入人工 id；列表 key 由 binding.readKey / index 生成。
+ *  - 不引入人工 id；列表 key 由 binding.key / index 生成。
  */
-import type { AccordionSectionNode, ButtonGroupNode, ButtonOption, DynNode, FieldNode, ImageGridNode, ListItemView, MarkdownNode, OptionBadge, PanelNode, SelectNode, SelectOption, TextListNode } from "@app/main/types";
+import type { AccordionSectionNode, ButtonGroupNode, ButtonOption, DynNode, FieldNode, ImageGridNode, ListItemView, MarkdownNode, OptionBadge, PanelNode, SelectNode, SelectOption, TextListNode, TreeAction, TreeLevel, TreeNode } from "@app/main/types";
 
 
-export type { AccordionSectionNode, ButtonGroupNode, ButtonOption, DynNode, FieldNode, ImageGridNode, ListItemView, MarkdownNode, OptionBadge, PanelNode, SelectNode, SelectOption, TextListNode };
+export type { AccordionSectionNode, ButtonGroupNode, ButtonOption, DynNode, FieldNode, ImageGridNode, ListItemView, MarkdownNode, OptionBadge, PanelNode, SelectNode, SelectOption, TextListNode, TreeAction, TreeLevel, TreeNode };
 
 
-/** 递归/循环用的稳定 key：优先 binding.readKey，其次 title，最后交由调用方补 index */
+/** 递归/循环用的稳定 key：优先 binding.key，其次 title，最后交由调用方补 index */
 export function keyOf(node: DynNode, index: number): string {
-    if ("binding" in node && node.binding?.readKey) return node.binding.readKey;
+    if ("binding" in node && node.binding?.key) return node.binding.key;
     if ("title" in node && node.title) return node.title;
     return `${node.type}-${index}`;
 }

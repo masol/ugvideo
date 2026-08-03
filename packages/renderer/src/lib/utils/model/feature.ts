@@ -20,6 +20,22 @@ const DEFAULT_OUT = OUT.K16;
 const DEFAULT_REASON_OUT = OUT.K64;
 
 // ============================================================================
+// 类别默认规格（与 types.ts 的 FUNCTION_CONTEXT_LABELS 语义对齐）
+// ============================================================================
+/** 绘图默认能力：自然语言 / 人物 / 环境 */
+const IMAGE_DEFAULT_ABILITIES: ModelTags[] = [T.NLP, T.HUMAN, T.ENV];
+/** 视频生成默认能力：全能 / 首尾帧 / 多帧 */
+const VIDEO_DEFAULT_ABILITIES: ModelTags[] = [T.OMNI, T.FF, T.MFF];
+/** 绘图：素材数量（张） */
+const IMAGE_DEFAULT_INCTX = 8;
+/** 绘图：最大输出（张） */
+const IMAGE_DEFAULT_OUTCTX = 4;
+/** 视频生成：素材数量（个） */
+const VIDEO_DEFAULT_INCTX = 10;
+/** 视频生成：最大时长（秒） */
+const VIDEO_DEFAULT_OUTCTX = 15;
+
+// ============================================================================
 // 约束解码黑名单
 // ============================================================================
 const NO_OUTLINE_MATCHERS: string[] = [
@@ -36,7 +52,8 @@ const NO_OUTLINE_MATCHERS: string[] = [
 ];
 
 // ============================================================================
-// 类别优先级：决定剥离 chat 类时保留哪个类别
+// 类别优先级：决定剥离 chat 类时保留哪个类别，
+// 同时也是「多词元命中冲突」时的消歧顺序
 // ============================================================================
 const CATEGORY_PRIORITY: ModelTags[] = [
     T.Embedding,
@@ -50,7 +67,72 @@ const CATEGORY_PRIORITY: ModelTags[] = [
 ];
 
 // ============================================================================
-// 类别关键词正则（强信号，必须在 BASE_MODELS 匹配之前先判）
+// 【第一优先】词元级类别检测（Token-based）
+//
+// 最佳实践：现代模型命名普遍以分隔符标注类别，如
+//   hunyuan-image / qwen-image / wan2.2-t2v-plus / hunyuan-video /
+//   gpt-4o-mini-tts / qwen-mt-turbo / text-embedding-3-large
+// 因此第一道检查是：按 [-_/.:@空格] 拆分后对词元做「精确匹配」。
+// 精确匹配不会像 substring 那样误伤（如 "imagen" 不含独立词元 "image"，
+// 交由第二道正则兜底；"gpt" 不会命中 "mt"）。
+// ============================================================================
+const TOKEN_CATEGORY_MAP: Record<string, ModelTags> = {
+    // —— 嵌入（含常见拼写错误 embeding）——
+    embedding: T.Embedding,
+    embeddings: T.Embedding,
+    embeding: T.Embedding,
+    embed: T.Embedding,
+    // —— 重排 ——
+    rerank: T.Rerank,
+    reranker: T.Rerank,
+    // —— 绘图 ——
+    image: T.ImageGeneration,
+    t2i: T.ImageGeneration,
+    i2i: T.ImageGeneration,
+    dalle: T.ImageGeneration,
+    // —— 视频生成 ——
+    video: T.VideoGeneration,
+    t2v: T.VideoGeneration,
+    i2v: T.VideoGeneration,
+    // —— 语音合成 ——
+    tts: T.AudioGeneration,
+    t2s: T.AudioGeneration,
+    // —— 语音识别 ——
+    asr: T.AudioUnderstanding,
+    stt: T.AudioUnderstanding,
+    s2t: T.AudioUnderstanding,
+    // —— 背景音乐 ——
+    bgm: T.BGM,
+    // —— 机器翻译 ——
+    mt: T.MT,
+    translation: T.MT,
+    translate: T.MT,
+    translator: T.MT,
+};
+
+const TOKEN_SPLIT_RE = /[-_/.:@\s]+/;
+
+/**
+ * 词元级类别检测：拆分 → 精确匹配 → 多命中时按 CATEGORY_PRIORITY 消歧。
+ * 例："image-to-video" 同时命中 image 与 video，按优先级返回 VideoGeneration。
+ */
+function detectCategoryByToken(lower: string): ModelTags | null {
+    const tokens = lower.split(TOKEN_SPLIT_RE).filter(Boolean);
+    const hits = new Set<ModelTags>();
+    for (const tok of tokens) {
+        const tag = TOKEN_CATEGORY_MAP[tok];
+        if (tag) hits.add(tag);
+    }
+    if (hits.size === 0) return null;
+    for (const tag of CATEGORY_PRIORITY) {
+        if (hits.has(tag)) return tag;
+    }
+    return null;
+}
+
+// ============================================================================
+// 【第二兜底】类别关键词正则（覆盖无分隔词元的专有名称，
+// 如 imagen / dall-e / whisper / cogvideo / musicgen）
 // 注意：顺序敏感——更具体的模式放前面
 // ============================================================================
 const CATEGORY_SIGNALS: Array<{ tag: ModelTags; re: RegExp }> = [
@@ -96,8 +178,14 @@ const CATEGORY_SIGNALS: Array<{ tag: ModelTags; re: RegExp }> = [
     },
 ];
 
-/** 在 BASE_MODELS 命中之前先检测类别关键词 */
+/**
+ * 类别检测总入口：
+ *   1️⃣ 词元精确匹配（第一优先，覆盖 hunyuan-image / qwen-image 等命名规范）
+ *   2️⃣ 正则关键词兜底（覆盖 imagen / whisper 等专有名称）
+ */
 function detectCategory(lower: string): ModelTags | null {
+    const byToken = detectCategoryByToken(lower);
+    if (byToken) return byToken;
     for (const { tag, re } of CATEGORY_SIGNALS) {
         if (re.test(lower)) return tag;
     }
@@ -176,7 +264,10 @@ export function parseModel(modelId: string): ModelFeatures | null {
         .replace(/^-+|-+$/g, '')
         .toLowerCase();
 
-    // 4. 【关键】先检测类别关键词 → 命中则跳过 BASE_MODELS 的 chat 匹配
+    // 4. 【关键】先做类别检测（词元优先 → 正则兜底）
+    //    命中则完全跳过 BASE_MODELS 的 chat 匹配。
+    //    这样 hunyuan-image / qwen-image / hunyuan-video 等厂商多模态子系列
+    //    不会因厂商前缀（hunyuan / qwen）而被误判为 LLM。
     const earlyCategory = detectCategory(lower);
 
     let abilities: ModelTags[];
@@ -191,17 +282,12 @@ export function parseModel(modelId: string): ModelFeatures | null {
         if (!abilities.includes(earlyCategory)) {
             abilities.unshift(earlyCategory);
         }
-        // 类别模型上下文/评分默认值
-        if (abilities.includes(T.Embedding)) { inctx = CTX.K8; score = 72; }
-        else if (abilities.includes(T.Rerank)) { score = 72; }
-        else if (abilities.includes(T.ImageGeneration)) { score = 74; }
-        else if (abilities.includes(T.VideoGeneration)) { score = 76; }
-        else if (abilities.includes(T.AudioGeneration)) { score = 72; }
-        else if (abilities.includes(T.BGM)) { score = 74; }
-        else if (abilities.includes(T.MT)) {
-            inctx = CTX.K32; outctx = DEFAULT_OUT; score = 73;
-        }
-        else { inctx = CTX.K8; score = 74; } // AudioUnderstanding 兜底
+        // 类别模型默认规格（含 image/video 的默认子能力注入）
+        const d = applyCategoryDefaults(abilities)
+            ?? { inctx: CTX.K8, outctx: undefined, score: 74 }; // 理论不可达兜底
+        inctx = d.inctx;
+        outctx = d.outctx;
+        score = d.score;
     } else {
         const spec = BASE_MODELS.find((s) => baseName.includes(s.match));
         if (spec) {
@@ -211,16 +297,13 @@ export function parseModel(modelId: string): ModelFeatures | null {
             score = spec.score;
         } else {
             abilities = inferAbilitiesByKeyword(lower, null);
-            if (abilities.includes(T.Embedding)) { inctx = CTX.K8; score = 72; }
-            else if (abilities.includes(T.Rerank)) { score = 72; }
-            else if (abilities.includes(T.ImageGeneration)) { score = 74; }
-            else if (abilities.includes(T.VideoGeneration)) { score = 76; }
-            else if (abilities.includes(T.AudioGeneration)) { score = 72; }
-            else if (abilities.includes(T.AudioUnderstanding)) { inctx = CTX.K8; score = 74; }
-            else if (abilities.includes(T.BGM)) { score = 74; }
-            else if (abilities.includes(T.MT)) {
-                inctx = CTX.K32; outctx = DEFAULT_OUT; score = 73;
+            const d = applyCategoryDefaults(abilities);
+            if (d) {
+                inctx = d.inctx;
+                outctx = d.outctx;
+                score = d.score;
             } else {
+                // 通用 LLM 默认规格
                 inctx = DEFAULT_INCTX;
                 outctx = abilities.includes(T.Reasoning) ? DEFAULT_REASON_OUT : DEFAULT_OUT;
                 score = 72;
@@ -247,7 +330,11 @@ export function parseModel(modelId: string): ModelFeatures | null {
     ) {
         abilities.push(T.Reasoning);
     }
-    if (abilities.includes(T.Reasoning) && (!outctx || outctx < OUT.K16)) {
+    if (
+        abilities.includes(T.TextGeneration) &&
+        abilities.includes(T.Reasoning) &&
+        (!outctx || outctx < OUT.K16)
+    ) {
         outctx = DEFAULT_REASON_OUT;
     }
     // 8. 类别排他
@@ -276,9 +363,67 @@ export function parseModel(modelId: string): ModelFeatures | null {
 // 辅助函数
 // ============================================================================
 
+interface CategoryDefaults {
+    inctx?: number;
+    outctx?: number;
+    score?: number;
+}
+
+/**
+ * 类别模型的默认规格与默认子能力：
+ * - 视频生成：注入 omni/ff/mff（全能/首尾帧/多帧），素材数量 4，最大时长 15s
+ * - 绘图：注入 nlp/human/env（自然/人物/环境），素材数量 8，最大输出 4 张
+  * - 其余类别：沿用原有的上下文/评分默认值
+ * 命中类别返回默认规格；非类别模型返回 null（由调用方走 LLM 默认逻辑）。
+ * 检查顺序对齐 CATEGORY_PRIORITY，确保多标签残留时以高优先级类别为准。
+ */
+function applyCategoryDefaults(abilities: ModelTags[]): CategoryDefaults | null {
+    if (abilities.includes(T.Embedding)) {
+        return { inctx: CTX.K8, outctx: undefined, score: 72 };
+    }
+    if (abilities.includes(T.Rerank)) {
+        return { inctx: undefined, outctx: undefined, score: 72 };
+    }
+    if (abilities.includes(T.VideoGeneration)) {
+        // 注入默认视频能力：全能 / 首尾帧 / 多帧
+        for (const tag of VIDEO_DEFAULT_ABILITIES) {
+            if (!abilities.includes(tag)) abilities.push(tag);
+        }
+        return {
+            inctx: VIDEO_DEFAULT_INCTX,   // 素材数量：4 个
+            outctx: VIDEO_DEFAULT_OUTCTX, // 最大时长：15 秒
+            score: 76,
+        };
+    }
+    if (abilities.includes(T.ImageGeneration)) {
+        // 注入默认绘图流派：自然 / 人物 / 环境
+        for (const tag of IMAGE_DEFAULT_ABILITIES) {
+            if (!abilities.includes(tag)) abilities.push(tag);
+        }
+        return {
+            inctx: IMAGE_DEFAULT_INCTX,   // 素材数量：8 张
+            outctx: IMAGE_DEFAULT_OUTCTX, // 最大输出：4 张
+            score: 74,
+        };
+    }
+    if (abilities.includes(T.AudioUnderstanding)) {
+        return { inctx: CTX.K8, outctx: undefined, score: 74 };
+    }
+    if (abilities.includes(T.AudioGeneration)) {
+        return { inctx: undefined, outctx: undefined, score: 72 };
+    }
+    if (abilities.includes(T.BGM)) {
+        return { inctx: undefined, outctx: undefined, score: 74 };
+    }
+    if (abilities.includes(T.MT)) {
+        return { inctx: CTX.K32, outctx: DEFAULT_OUT, score: 73 };
+    }
+    return null;
+}
+
 /**
  * 关键词推断 abilities。
- * @param earlyCategory 若已在 CATEGORY_SIGNALS 阶段命中类别，传入以确保不会回退为 chat 模型
+ * @param earlyCategory 若已在类别检测阶段命中类别，传入以确保不会回退为 chat 模型
  */
 function inferAbilitiesByKeyword(
     lower: string,
@@ -335,23 +480,34 @@ function appendKeywordTags(lower: string, abilities: ModelTags[]): void {
  * 类别排他：
  * - AudioUnderstanding 可与 TextGeneration 等少数能力共存
  * - 其他类别完全剥离 LLM 功能标签
+ * - 多类别共存时，仅保留 CATEGORY_PRIORITY 中最高优先级的那一个
+ * 注意：image/video 的默认子能力（nlp/human/env、omni/ff/mff）
+ * 不属于 LLM_FUNCTIONAL_TAGS，不会被此函数剥离。
  */
 function enforceCategoryExclusivity(abilities: ModelTags[]): void {
     const primary = CATEGORY_PRIORITY.find((c) => abilities.includes(c));
     if (!primary) return;
 
+    // 多类别命中时，剥离除 primary 之外的其他类别标签，
+    // 避免出现「image-generation + video-generation」同时存在的脏数据
+    const otherCategories = CATEGORY_TAGS.filter((c) => c !== primary);
+
     if (primary === T.AudioUnderstanding) {
         const kept = abilities.filter(
-            (a) => !LLM_FUNCTIONAL_TAGS.includes(a) ||
-                AUDIO_UND_ALLOWED_TAGS.includes(a),
+            (a) =>
+                !otherCategories.includes(a) &&
+                (!LLM_FUNCTIONAL_TAGS.includes(a) ||
+                    AUDIO_UND_ALLOWED_TAGS.includes(a)),
         );
         abilities.length = 0;
         abilities.push(...kept);
         return;
     }
 
-    // 其他类别：完全剥离 LLM 功能标签
-    const kept = abilities.filter((a) => !LLM_FUNCTIONAL_TAGS.includes(a));
+    // 其他类别：完全剥离 LLM 功能标签 + 其他类别标签
+    const kept = abilities.filter(
+        (a) => !LLM_FUNCTIONAL_TAGS.includes(a) && !otherCategories.includes(a),
+    );
     abilities.length = 0;
     abilities.push(...kept);
 }

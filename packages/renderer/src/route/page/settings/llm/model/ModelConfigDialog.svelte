@@ -35,16 +35,15 @@
   import autoAnimate from "@formkit/auto-animate";
   import {
     IconAlertCircle,
-    IconAlertTriangle,
     IconChevronDown,
     IconFilter,
     IconLoader2,
     IconSparkles,
   } from "@tabler/icons-svelte";
   import { toast } from "svelte-sonner";
+  import { findPresetByBaseUrl } from "../providers";
   import AbilitySelector from "./AbilitySelector.svelte";
   import ModelSelectCombobox from "./ModelSelectCombobox.svelte";
-  import { fetchAvailableModels } from "./fetchModels";
 
   type Props = {
     model?: Partial<Model>;
@@ -115,30 +114,21 @@
   let score = $state<number | undefined>(model?.score);
   let selectedModelId = $state(model?.id ?? "");
 
-  let options = $state<ModelOption[]>([]);
-  let isLoadingModels = $state(true);
-  let loadFailed = $state(false);
   let isSubmitting = $state(false);
   let errorMessage = $state("");
   let filterOpen = $state(true);
   let isDetecting = $state(false);
 
-  $effect(() => {
-    void loadModels();
+  /**
+   * 以 endpoint（fetchCtx.baseUrl）反查预设的静态模型清单。
+   * 名称可变、端点不变 —— 因此用 baseUrl 作为稳定锚点定位 preset。
+   * · preset.models 有值 → 显式传给 ModelSelectCombobox（跳过 fetch）
+   * · 无 preset 或无 models → undefined，交给 ModelSelectCombobox 走 fetch 通路
+   */
+  const staticModels = $derived.by(() => {
+    const preset = findPresetByBaseUrl(fetchCtx?.baseUrl);
+    return preset?.models;
   });
-
-  async function loadModels() {
-    isLoadingModels = true;
-    loadFailed = false;
-    try {
-      options = await fetchAvailableModels(fetchCtx ?? {});
-    } catch {
-      loadFailed = true;
-      options = [];
-    } finally {
-      isLoadingModels = false;
-    }
-  }
 
   function applyPreset(p: Preset | undefined) {
     if (!p) return;
@@ -270,29 +260,21 @@
 </DialogHeader>
 
 <div class="space-y-6 py-4" use:autoAnimate>
-  {#if loadFailed}
-    <Alert.Root class="rounded-xl border-amber-500/40 bg-amber-500/5">
-      <IconAlertTriangle class="size-4 text-amber-500" stroke={1.5} />
-      <Alert.Title>无法自动获取模型列表</Alert.Title>
-      <Alert.Description>
-        可能是 API Key 或接口地址有误。你仍可在下方手动填写模型标识并保存。
-      </Alert.Description>
-    </Alert.Root>
-  {/if}
-
   <div class="space-y-4">
-    {#if !loadFailed}
-      <div class="space-y-2">
-        <Label>选择模型</Label>
-        <ModelSelectCombobox
-          {options}
-          selectedId={selectedModelId}
-          loading={isLoadingModels}
-          failed={loadFailed}
-          onSelect={handleModelSelect}
-        />
-      </div>
-    {/if}
+    <div class="space-y-2">
+      <Label>选择模型</Label>
+      <!--
+        以 endpoint 反查得到的静态模型清单优先：
+        · staticModels 有值 → 跳过 fetch（直接使用静态清单）
+        · staticModels === undefined → 组件自动 fetch
+      -->
+      <ModelSelectCombobox
+        options={staticModels}
+        {fetchCtx}
+        selectedId={selectedModelId}
+        onSelect={handleModelSelect}
+      />
+    </div>
     <div class="space-y-2">
       <Label for="dlg-model-id">模型标识 (ID)</Label>
       <Input

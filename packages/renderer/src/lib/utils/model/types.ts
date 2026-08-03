@@ -1,5 +1,5 @@
 // types.ts
-import type { ModelTags, Provider, ProviderProtocol } from "@app/main/types";
+import type { ModelOption, ModelTags, Provider, ProviderProtocol } from "@app/main/types";
 import {
     IconArrowsLeftRight,
     IconArrowsSort,
@@ -233,7 +233,7 @@ export const FUNCTION_CONTEXT_LABELS: Partial<Record<ModelTags, ContextFieldLabe
     [FUNCTION_TAGS.image]: {
         inctxLabel: "素材数量",
         inctxHint: "张",
-        outctxLabel: "最大输出",
+        outctxLabel: "最大提示词",
         outctxHint: "K",
         showInctx: true,
         showOutctx: true,
@@ -333,6 +333,8 @@ export interface ProviderPreset {
     maxconn: number;
     note: string;
     apiKey?: string;
+    /** 静态模型清单（用于无法调用 /models 接口的提供商） */
+    models?: ModelOption[];
 }
 
 export type KnownProvider = Array<{

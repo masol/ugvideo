@@ -182,7 +182,7 @@ function buildFallbackModel(
                         (e as any)?.statusCode ?? (e as any)?.status ?? 'err';
                     if (isLast) {
                         (ctx?.error ?? Logger.error)(
-                            `❌ [chat] 所有候选均失败,最后 [${c.provider.id}::${c.model.id}] (${status})`,
+                            `❌ [chat] 所有候选均失败,最后 [${c.provider.id}::${c.model.id}] (${status}) (${getErrorMessage(e)})`,
                         );
                         throw e;
                     }

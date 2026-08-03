@@ -72,7 +72,7 @@ export const KNOWN_PROVIDERS: KnownProvider = [
             {
                 id: "wenxin",
                 label: "文心一言 (百度智能云)",
-                protocol: allProtocols.openai,
+                protocol: allProtocols.openaiCompatible,
                 baseUrl: "https://qianfan.baidubce.com/v2",
                 website: "https://baidu.com",
                 note: "知识增强的大语言模型",
@@ -81,9 +81,9 @@ export const KNOWN_PROVIDERS: KnownProvider = [
             {
                 id: "hunyuan",
                 label: "腾讯混元 (腾讯云)",
-                protocol: allProtocols.openai,
-                baseUrl: "https://api.hunyuan.cloud.tencent.com/v1",
-                website: "https://tencent.com",
+                protocol: allProtocols.openaiCompatible,
+                baseUrl: "https://tokenhub.tencentmaas.com/v1",
+                website: "https://console.cloud.tencent.com/tokenhub/apikey",
                 note: "懂思维、擅创作、会编程的 AI 助手",
                 maxconn: 30
             },
@@ -224,6 +224,62 @@ export const KNOWN_PROVIDERS: KnownProvider = [
         heading: "图片生成",
         presets: [
             {
+                id: "liblib",
+                label: "Liblib.art (哩布哩布)",
+                protocol: allProtocols.openai,
+                baseUrl: "https://openapi.liblibai.cloud",
+                website: "https://www.liblib.art/apis",
+                note: "AI 绘画模型分享与在线生图社区",
+                maxconn: 5,
+                models: [
+                    {
+                        id: "liblib-image-star-3",
+                        description: "LiblibAI自研的下一代通用图像生成大模型，基于F.1基础算法架构，具备高精度图像生成与复杂提示词响应能力，色彩与艺术风格控制出色。",
+                        label: "星流 Star-3"
+                    },
+                    {
+                        id: "liblib-image-kontext",
+                        description: "Kontext 图像生成模型，支持高质量的文生图与图生图生成任务。",
+                        label: "Kontext"
+                    },
+                    {
+                        id: "liblib-image-img1",
+                        description: "Smart-Img1 智能图像生成模型，支持文生图与局部重绘（Inpaint）功能。",
+                        label: "Smart Img1"
+                    },
+                    {
+                        id: "liblib-image-seedream",
+                        description: "Seedream V4 图像生成模型，提供高质量的图像生成服务。",
+                        label: "Seedream V4"
+                    },
+                    {
+                        id: "liblib-image-libedit",
+                        description: "LibEdit 图像编辑模型，支持基础的图像编辑与修改任务。",
+                        label: "LibEdit"
+                    },
+                    {
+                        id: "liblib-image-libedit-v2",
+                        description: "LibEdit V2 升级版图像编辑模型，提供更精细的图像编辑与修改能力。",
+                        label: "LibEdit V2"
+                    },
+                    {
+                        id: "liblib-image-dream",
+                        description: "LibDream 图像生成模型，专注于创意与艺术风格的图像生成。",
+                        label: "LibDream"
+                    },
+                    {
+                        id: "liblib-image-qwen",
+                        description: "基于 Qwen 模型的图像生成服务，支持文生图与图生图生成任务。",
+                        label: "Qwen 图像生成"
+                    },
+                    {
+                        id: "liblib-image-comfyui",
+                        description: "基于 ComfyUI 的工作流图像生成模型，支持高度自定义的节点式生成任务。",
+                        label: "ComfyUI 工作流"
+                    }
+                ]
+            },
+            {
                 id: "stability",
                 label: "Stability AI (Stable Diffusion)",
                 protocol: allProtocols.openai,
@@ -305,6 +361,52 @@ const ALL_PRESETS: ProviderPreset[] = KNOWN_PROVIDERS.flatMap((g) => g.presets);
 
 export function findPreset(pid: string): ProviderPreset | null {
     return ALL_PRESETS.find((p) => p.id === pid) ?? null;
+}
+
+
+// ────────────────────────────────────────────────────────────
+// 按 endpoint（baseUrl）定位预设
+//
+// 设计动机：Provider 的显示名称 / id 允许用户随时改动，唯有 baseUrl（服务端点）
+// 是与预设强绑定、几乎不变的稳定锚点。因此需要「静态模型清单」等预设能力时，
+// 应以 baseUrl 反查 preset，而非依赖易变的 id。
+//
+// 归一化策略（让 URL 的常见书写差异不影响匹配）：
+//   · trim 首尾空白
+//   · 统一转小写（域名/协议大小写不敏感）
+//   · 去除末尾所有 `/`（"…/v1" 与 "…/v1/" 视为等价，如 spark 预设带尾斜杠）
+// 不做更激进的规范化（如 query / 端口补全），避免误判把两个不同端点合并。
+// ────────────────────────────────────────────────────────────
+function normalizeBaseUrl(url: string | undefined | null): string {
+    if (!url) return "";
+    return url.trim().toLowerCase().replace(/\/+$/, "");
+}
+
+/** baseUrl → preset 的预构建索引（KNOWN_PROVIDERS 为静态常量，安全缓存） */
+let _baseUrlIndex: Map<string, ProviderPreset> | null = null;
+
+function getBaseUrlIndex(): Map<string, ProviderPreset> {
+    if (_baseUrlIndex) return _baseUrlIndex;
+     
+    const idx = new Map<string, ProviderPreset>();
+    for (const p of ALL_PRESETS) {
+        const key = normalizeBaseUrl(p.baseUrl);
+        // 若出现重复端点，保留首个（KNOWN_PROVIDERS 中当前无重复）
+        if (key && !idx.has(key)) idx.set(key, p);
+    }
+    _baseUrlIndex = idx;
+    return idx;
+}
+
+/**
+ * 按服务端点（baseUrl）查找预设。
+ * 名称可变、端点不变 —— 需要静态模型清单等预设能力时以此为准。
+ * 未命中返回 null。
+ */
+export function findPresetByBaseUrl(baseUrl: string | undefined | null): ProviderPreset | null {
+    const key = normalizeBaseUrl(baseUrl);
+    if (!key) return null;
+    return getBaseUrlIndex().get(key) ?? null;
 }
 
 

@@ -1,6 +1,8 @@
 import type { Provider } from '$types/index.js';
 import type { ImageModelV4 } from '@ai-sdk/provider';
 import { alibabaImageAdapter } from './alibaba.js';
+import { liblibImageAdapter } from './liblib.js';
+import { tencentImageAdapter } from './tencent.js';
 
 /**
  * 一个"生图兼容适配器"的注册项。
@@ -21,7 +23,11 @@ export interface ImageAdapterEntry {
     create: (provider: Provider, modelId: string) => ImageModelV4;
 }
 
-const ADAPTERS: ImageAdapterEntry[] = [alibabaImageAdapter];
+const ADAPTERS: ImageAdapterEntry[] = [
+    alibabaImageAdapter,
+    tencentImageAdapter,
+    liblibImageAdapter,
+];
 
 /**
  * 根据 provider.baseUrl 的 host 解析出应接管的兼容适配器。

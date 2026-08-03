@@ -13,9 +13,17 @@
     IconX,
   } from "@tabler/icons-svelte";
   import { SvelteMap } from "svelte/reactivity";
+  import { fetchAvailableModels } from "./fetchModels";
 
   type Props = {
-    options: ModelOption[];
+    /**
+     * 模型列表。可选：
+     * · 显式传入 → 直接使用；
+     * · 未传入（或为空数组）→ 组件内部自动调用 fetchAvailableModels 拉取并 cache。
+     */
+    options?: ModelOption[];
+    /** fetch 上下文（当未显式传入 options 时使用） */
+    fetchCtx?: { baseUrl?: string; apiKey?: string };
     selectedId?: string;
     loading?: boolean;
     failed?: boolean;
@@ -23,15 +31,50 @@
   };
 
   let {
-    options,
+    options: providedOptions,
+    fetchCtx,
     selectedId = "",
-    loading = false,
-    failed = false,
+    loading: loadingProp = false,
+    failed: failedProp = false,
     onSelect,
   }: Props = $props();
 
   let open = $state(false);
   let triggerWidth = $state(0);
+
+  // —— 内部 fetch 通路（仅在未显式传入 options 时启用） ——
+  const hasExplicitOptions = $derived(
+    providedOptions !== undefined && providedOptions.length > 0,
+  );
+
+  let fetchedOptions = $state<ModelOption[]>([]);
+  let internalLoading = $state(false);
+  let internalFailed = $state(false);
+
+  $effect(() => {
+    if (hasExplicitOptions) return; // 显式传入时跳过内部 fetch
+    void loadInternal();
+  });
+
+  async function loadInternal() {
+    internalLoading = true;
+    internalFailed = false;
+    try {
+      fetchedOptions = await fetchAvailableModels(fetchCtx ?? {});
+    } catch {
+      internalFailed = true;
+      fetchedOptions = [];
+    } finally {
+      internalLoading = false;
+    }
+  }
+
+  // —— 统一暴露给模板的派生值 ——
+  const options = $derived(
+    hasExplicitOptions ? (providedOptions as ModelOption[]) : fetchedOptions,
+  );
+  const loading = $derived(hasExplicitOptions ? loadingProp : internalLoading);
+  const failed = $derived(hasExplicitOptions ? failedProp : internalFailed);
 
   const selected = $derived(options.find((o) => o.id === selectedId) ?? null);
 

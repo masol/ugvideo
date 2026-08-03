@@ -123,6 +123,7 @@
       {
         model,
         existingModelIds,
+        // baseUrl 是稳定端点锚点，对话框据此反查 preset 静态模型清单
         fetchCtx: { baseUrl: provider.baseUrl, apiKey: provider.apiKey },
         onSave: async (next: Model): Promise<boolean> => {
           // 对话框已保证 next.id 不与其他模型冲突，此处只需处理改名删除旧条目

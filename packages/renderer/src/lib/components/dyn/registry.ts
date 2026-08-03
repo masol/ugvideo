@@ -14,6 +14,7 @@ import ImageGridNode from "./nodes/ImageGridNode.svelte";
 import PanelNode from "./nodes/PanelNode.svelte";
 import SelectNode from "./nodes/SelectNode.svelte";
 import TextListNode from "./nodes/TextListNode.svelte";
+import TreeNode from "./nodes/TreeNode.svelte";
 
 /** type → 组件。新增节点在此注册一行，dispatcher 不用动 */
 export const NODE_REGISTRY: Record<string, Component<any>> = {
@@ -24,6 +25,7 @@ export const NODE_REGISTRY: Record<string, Component<any>> = {
     "image-grid": ImageGridNode,
     select: SelectNode,
     "button-group": ButtonGroupNode,
+    tree: TreeNode,
     // "markdown": MarkdownNode,  // 待补组件后启用（见上方说明）
 };
 
