@@ -37,10 +37,22 @@
 
   type Props = {
     config?: Partial<ProviderConfig>;
+    /**
+     * 已存在的 Provider id 列表（来自 configStore.providers）。
+     * 用于在提交时检测重名，避免在界面层提前拦截。
+     * 编辑模式下，列表中应排除"自己"当前的 id（由调用方负责处理）。
+     */
+    existingProviderIds?: string[];
     onSave?: (config: ProviderConfig) => Promise<void>;
   } & DialogComponentProps<ProviderConfig>;
 
-  let { config, onSave, onClose, onCancel }: Props = $props();
+  let {
+    config,
+    existingProviderIds = [],
+    onSave,
+    onClose,
+    onCancel,
+  }: Props = $props();
 
   const isEditMode = !!config?.id;
   const initialPreset = config?.id ? findPreset(config.id) : null;
@@ -81,8 +93,20 @@
   let isSubmitting = $state(false);
   let errorMessage = $state("");
 
+  /** 当前输入的 id 是否与其他 Provider 冲突。编辑模式下调用方已剔除自己。 */
+  const duplicateIdError = $derived.by(() => {
+    const trimmed = providerId.trim();
+    if (!trimmed) return "";
+    if (existingProviderIds.includes(trimmed)) {
+      return `已存在同名提供商「${trimmed}」，请换一个名称。`;
+    }
+    return "";
+  });
+
   const isValid = $derived(
-    providerId.trim().length > 0 && baseUrl.trim().length > 0,
+    providerId.trim().length > 0 &&
+      baseUrl.trim().length > 0 &&
+      duplicateIdError === "",
   );
 
   function handlePresetSelect(preset: ProviderPreset | null) {
@@ -94,6 +118,9 @@
       baseUrl = preset.baseUrl;
       websiteUrl = preset.website;
       maxConn = preset.maxconn;
+      if (preset.apiKey) {
+        apiKey = preset.apiKey;
+      }
     } else {
       selectedPresetId = null;
       isCustomMode = true;
@@ -106,6 +133,14 @@
 
   async function handleSubmit() {
     if (!isValid || isSubmitting) return;
+
+    // 防御性二次校验（即便 isValid 通过，也兜底一次）
+    if (duplicateIdError) {
+      toast.error(duplicateIdError);
+      document.getElementById("dlg-provider-id")?.focus();
+      return;
+    }
+
     isSubmitting = true;
     errorMessage = "";
     try {
@@ -176,7 +211,17 @@
         bind:value={providerId}
         placeholder="输入名称标识此提供商…"
         class="rounded-xl"
+        aria-invalid={duplicateIdError ? "true" : undefined}
+        aria-describedby={duplicateIdError ? "dlg-provider-id-err" : undefined}
       />
+      {#if duplicateIdError}
+        <p
+          id="dlg-provider-id-err"
+          class="animate-fade-in text-xs text-destructive"
+        >
+          {duplicateIdError}
+        </p>
+      {/if}
     </div>
 
     <div class="space-y-2">

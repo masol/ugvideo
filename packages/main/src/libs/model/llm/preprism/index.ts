@@ -23,10 +23,9 @@ import { buildAnswerSystem } from "./system-template.js";
 
 export interface PreprismOpts {
     maxDimensions?: number; // 硬上限 5
-    kind?: string; // 仅留痕,用于日志记录。
+    kind?: string;
 }
 
-/** 返回值与 generateText 对齐：调用方拿 .text 即可。 */
 export interface PreprismTextResult {
     text: string;
 }
@@ -43,14 +42,7 @@ function normalizeName(name: string): string {
 }
 
 /**
- * preprism：先侦察、再作答、评一轮。
- * 分析用户输入 → 拆维度并收集术语/最佳方法 → 组装动态系统提示词 →
- * 带着专家人设生成草稿 → 分维批判 + 精炼各一次。
- *
- * 与 prism 的区别：prism 把功夫花在"答完之后"（多轮批判精炼），
- * preprism 把功夫花在"动笔之前"（让草稿本身就站在专家视角），因此收尾只需一轮。
- * 动态系统提示词由代码模板组装，LLM 只提供结构化情报，不直接写提示词。
- * 输出与 generateText 一致（{ text }）；中间产物走 Logger.debug 与 ctx.notify。
+ * preprism:先侦察、再作答、评一轮。
  */
 export async function preprism(
     query: string,
@@ -64,7 +56,7 @@ export async function preprism(
         HARD_MAX_DIMENSIONS
     );
 
-    // 1) 问题侦察：领域、维度、术语、最佳方法、坑
+    // 1) 问题侦察
     const analyzed = await NL2Format({
         model: getSmartModel(undefined, ctx),
         instructions: ANALYZE_SYSTEM,
@@ -73,7 +65,7 @@ export async function preprism(
     });
     log(`${tag} analysis:\n${JSON.stringify(analyzed.output)}`);
 
-    // 维度归一化去重 + 截断（与分析结果一起构成动态提示词的原料）
+    // 维度归一化去重 + 截断
     const seen = new Set<string>();
     const dimensions: Dimension[] = [];
     for (const d of analyzed.output.dimensions) {
@@ -83,13 +75,24 @@ export async function preprism(
         dimensions.push({ ...d, name });
         if (dimensions.length >= maxDims) break;
     }
+
+    // 守卫:归一化去重后必须至少有一个有效维度,否则侦察失败,直接降级生成
+    if (dimensions.length === 0) {
+        log(`${tag} 侦察未产出有效维度,降级为单次生成`);
+        const fallback = await generateText({
+            model: getSmartModel(undefined, ctx),
+            prompt: query,
+        });
+        return { text: fallback.text };
+    }
+
     const analysis = { ...analyzed.output, dimensions };
     ctx?.notify(
         "问题侦察",
         JSON.stringify(analysis, null, 2) + "\n" + dimensions.map((d) => d.name).join(", ")
     );
 
-    // 2) 组装动态系统提示词（固定模板 + 结构化情报，代码侧完成）
+    // 2) 组装动态系统提示词
     const answerSystem = buildAnswerSystem(analysis);
     log(`${tag} dynamic system:\n${answerSystem}`);
     ctx?.notify("动态系统提示词", answerSystem);
@@ -103,10 +106,10 @@ export async function preprism(
     log(`${tag} draft:\n${draft.text}`);
     ctx?.notify("专家草稿", draft.text);
 
-    // 4) 分维批判（各维度独立、并发；都看到原始 query）
+    // 4) 分维批判
     const critiques = await critiqueAll(query, draft.text, dimensions, tag, ctx);
 
-    // 5) 精炼（仅一轮，二值门 + 回退）
+    // 5) 精炼
     let cur = draft.text;
     const r = await NL2Format({
         model: getSmartModel(undefined, ctx),
@@ -118,7 +121,6 @@ export async function preprism(
     ctx?.notify("精炼结果", JSON.stringify(r.output, null, 2));
 
     const next = r.output.refined_artifact?.trim();
-    // 二值门：没改好（未改 / 产物空 / 与草稿相同）就回退保留草稿
     if (r.output.changed && next && next !== cur) {
         cur = next;
         log(`${tag} changelog: ${r.output.changelog.join(" | ")}`);
@@ -150,7 +152,7 @@ async function critiqueAll(
             Logger.debug(
                 `${tag} critique[${d.name}] reasoning:\n${JSON.stringify(c.output)}`
             );
-            return { ...c.output, dimension: d.name }; // 回填指派名，防跑偏
+            return { ...c.output, dimension: d.name };
         },
         {
             concurrency: 8,

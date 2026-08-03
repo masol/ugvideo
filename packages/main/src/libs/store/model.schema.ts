@@ -23,13 +23,13 @@ export const modelSchema = {
         // 输入上下文窗口（Tokens）
         inctx: {
             type: 'integer',
-            minimum: 1
+            minimum: 0
         },
 
         // 最大输出 Tokens
         outctx: {
             type: 'integer',
-            minimum: 1
+            minimum: 0
         },
 
         // 模型能力评分

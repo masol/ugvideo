@@ -39,12 +39,6 @@ export interface GetSmartModelOptions {
     minInctx?: number;
 }
 
-// // eslint-disable-next-line @typescript-eslint/no-explicit-any
-// function isRetryable(error: any): boolean {
-//     const status = error?.statusCode ?? error?.status;
-//     return status === 429 || status === 500 || status === 502 || status === 503;
-// }
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function isAbortError(error: any): boolean {
     return (
@@ -96,18 +90,29 @@ function wrapWithLimiter(
                 throw new DOMException('Aborted by context', 'AbortError');
             }
 
-            // 1) 先拿 slot(带 15 分钟兜底超时)
+            // 1) 先拿 slot(带 30 分钟兜底超时)
             const handle = await c.limiter.acquire(holdTimeoutMs, () => {
                 (ctx?.warn ?? Logger.warn)(
                     `⏰ [chat-stream] slot 持有超时(${holdTimeoutMs}ms),强制释放 (${c.provider.id}::${c.model.id})`,
                 );
             });
 
+            // 幂等释放:任何路径(flush / abort / 启动失败)都不会重复释放
+            const releaseOnce = () => {
+                if (!handle.released) handle.release();
+            };
+
             // abort 兜底:signal 触发即释放
-            const onAbort = () => handle.release();
             if (ctx?.signal) {
-                if (ctx.signal.aborted) handle.release();
-                else ctx.signal.addEventListener('abort', onAbort, { once: true });
+                if (ctx.signal.aborted) {
+                    releaseOnce();
+                } else {
+                    ctx.signal.addEventListener(
+                        'abort',
+                        () => releaseOnce(),
+                        { once: true },
+                    );
+                }
             }
 
             let result: Awaited<ReturnType<typeof doStream>>;
@@ -115,7 +120,7 @@ function wrapWithLimiter(
                 result = await doStream();
             } catch (e) {
                 // 启动阶段失败:释放并抛出(让 fallback 处理)
-                handle.release();
+                releaseOnce();
                 throw e;
             }
 
@@ -127,11 +132,17 @@ function wrapWithLimiter(
                         controller.enqueue(chunk);
                     },
                     flush() {
-                        handle.release(); // 流正常结束
+                        // 正常结束:释放 slot
+                        releaseOnce();
                     },
                 }),
             );
 
+            // 兜底:如果下游消费者中途断开/抛错(例如迭代器被 break),
+            // stream 会触发 error 事件;虽然 flush 在 cancel 时通常会调用,
+            // 但 TransformStream 的 cancel() 路径不一定都走 flush,
+            // 因此再加一层 try/catch 包住 monitored 流的消费结果不太现实,
+            // 这里依赖 acquire 内部的 holdTimeoutMs 兜底,以及 abort 监听器。
             return { stream: monitored, ...rest };
         },
     };
@@ -159,7 +170,6 @@ function buildFallbackModel(
                     return await wrapped[i].doGenerate(params);
                 } catch (e) {
                     lastErr = e;
-                    // abort:立即终止,不再尝试
                     if (isAbortError(e) || ctx?.isAborted) {
                         (ctx?.warn ?? Logger.warn)(
                             `[chat] 已取消,终止 fallback (${c.provider.id}::${c.model.id})`,
@@ -171,13 +181,11 @@ function buildFallbackModel(
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         (e as any)?.statusCode ?? (e as any)?.status ?? 'err';
                     if (isLast) {
-                        // 最后一个候选也失败:抛出,交给上层(上层需 .catch)
                         (ctx?.error ?? Logger.error)(
                             `❌ [chat] 所有候选均失败,最后 [${c.provider.id}::${c.model.id}] (${status})`,
                         );
                         throw e;
                     }
-                    // 非最后一个:无论什么错误都尝试下一个候选
                     (ctx?.warn ?? Logger.warn)(
                         `🚨 [chat] 候选 [${c.provider.id}::${c.model.id}] 失败 ${getErrorMessage(e)}(${status}),尝试下一个...`,
                     );

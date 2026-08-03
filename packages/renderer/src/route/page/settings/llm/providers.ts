@@ -204,8 +204,8 @@ export const KNOWN_PROVIDERS: KnownProvider = [
                 id: "huggingface",
                 label: "Hugging Face (Inference Providers)",
                 protocol: allProtocols.openai,
-                baseUrl: "https://huggingface.co",
-                website: "https://huggingface.co/",
+                baseUrl: "https://api-inference.huggingface.co/v1",
+                website: "https://huggingface.co",
                 note: "汇聚全球开发者打造的 AI 开源社区",
                 maxconn: 30
             }
@@ -270,6 +270,7 @@ export const KNOWN_PROVIDERS: KnownProvider = [
                 label: "Ollama (本地)",
                 protocol: allProtocols.openai,
                 baseUrl: "http://localhost:11434/v1",
+                apiKey: "ollama",
                 website: "",
                 note: "本地部署，无需密钥",
                 maxconn: 1
@@ -279,6 +280,7 @@ export const KNOWN_PROVIDERS: KnownProvider = [
                 label: "LM Studio (本地)",
                 protocol: allProtocols.openai,
                 baseUrl: "http://localhost:1234/v1",
+                apiKey: "lmstudio",
                 website: "",
                 note: "本地部署，无需密钥",
                 maxconn: 1

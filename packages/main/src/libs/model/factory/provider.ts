@@ -13,7 +13,6 @@ import Logger from 'electron-log/main.js';
 
 /**
    * 创建 OpenAI 模型
-   * @param strict - true 为严格模式，false 为兼容模式
    */
 function createOpenAIModel(
     apiKey: string,
@@ -22,18 +21,6 @@ function createOpenAIModel(
     return createOpenAI({
         apiKey,
         baseURL,
-        // // 移除 compatibility 属性，使用 fetch 选项来处理兼容性
-        // fetch: strict
-        //     ? undefined
-        //     : async (url, init) => {
-        //         // 兼容模式：更宽松的错误处理
-        //         try {
-        //             return await fetch(url, init);
-        //         } catch (error) {
-        //             Logger.warn('OpenAI compatible fetch error:', error);
-        //             throw error;
-        //         }
-        //     }
     });
 }
 
@@ -76,29 +63,30 @@ function createGoogleModel(
     });
 }
 
-/**
- * 创建 HuggingFace 模型（使用 OpenAI 兼容接口）
- */
-function createHuggingFaceModel(
-    apiKey: string,
-    baseURL?: string
-): ProviderV4 {
-    return createOpenAI({
-        apiKey,
-        baseURL: baseURL || 'https://api-inference.huggingface.co/v1'
-    });
-}
+// /**
+//  * 创建 HuggingFace 模型（使用 OpenAI 兼容接口）
+//  */
+// function createHuggingFaceModel(
+//     apiKey: string,
+//     baseURL?: string
+// ): ProviderV4 {
+//     return createOpenAICompatible({
+//         name: 'huggingface',
+//         apiKey,
+//         baseURL: baseURL || 'https://api-inference.huggingface.co/v1'
+//     });
+// }
 
 
-/**
- * 创建 Ollama 模型
- */
-function createOllamaModel(baseURL?: string): ProviderV4 {
-    return createOpenAI({
-        apiKey: 'ollama', // Ollama 不需要真实的 API key
-        baseURL: baseURL || 'http://localhost:11434/v1'
-    });
-}
+// /**
+//  * 创建 Ollama 模型
+//  */
+// function createOllamaModel(baseURL?: string): ProviderV4 {
+//     return createOpenAI({
+//         apiKey: 'ollama',
+//         baseURL: baseURL || 'http://localhost:11434/v1'
+//     });
+// }
 
 /**
     * 根据协议类型创建模型
@@ -122,11 +110,11 @@ function createProviderByProtocol(
         case 'google-vertex':
             return createGoogleModel(apiKey, baseURL);
 
-        case 'huggingface':
-            return createHuggingFaceModel(apiKey, baseURL);
+        // case 'huggingface':
+        //     return createHuggingFaceModel(apiKey, baseURL);
 
-        case 'ollama':
-            return createOllamaModel(baseURL);
+        // case 'ollama':
+        //     return createOllamaModel(baseURL);
         case 'deepseek':
             return createDeepSeek({
                 apiKey,
@@ -137,7 +125,6 @@ function createProviderByProtocol(
             if (!baseURL) {
                 throwPrecondition("openai兼容协议必须提供URL地址。")
             }
-            // 默认使用 OpenAI 兼容协议（宽松模式）
             return createOpenAICompatible({
                 name: providerId,
                 baseURL,
@@ -155,7 +142,7 @@ export function createProvider(provider: Provider): ProviderV4 {
     try {
         return createProviderByProtocol(provider.id, protocol, apiKey, baseURL);
     } catch (error) {
-        Logger.error(`创建ProviderV3失败 (${provider.id}:`, error);
+        Logger.error(`创建ProviderV4失败 (${provider.id}:`, error);
         throw error;
     }
 }

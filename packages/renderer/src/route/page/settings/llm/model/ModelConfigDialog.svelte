@@ -48,11 +48,23 @@
 
   type Props = {
     model?: Partial<Model>;
+    /**
+     * 该提供商下已存在的模型 id 列表，用于提交时检测重名。
+     * 编辑模式下，调用方应排除"自己"当前的 id，避免自我误判。
+     */
+    existingModelIds?: string[];
     fetchCtx?: { baseUrl?: string; apiKey?: string };
     onSave?: (model: Model) => Promise<boolean>;
   } & DialogComponentProps<Model>;
 
-  let { model, fetchCtx, onSave, onClose, onCancel }: Props = $props();
+  let {
+    model,
+    existingModelIds = [],
+    fetchCtx,
+    onSave,
+    onClose,
+    onCancel,
+  }: Props = $props();
 
   const isEditMode = !!model?.id;
 
@@ -178,7 +190,20 @@
       (Object.values(FUNCTION_TAGS) as ModelAbility[]).includes(a),
     ),
   );
-  const isValid = $derived(id.trim().length > 0 && !!currentFunction);
+
+  /** 当前输入的 id 是否与该提供商下其他模型冲突。编辑模式下调用方已剔除自己。 */
+  const duplicateIdError = $derived.by(() => {
+    const trimmed = id.trim();
+    if (!trimmed) return "";
+    if (existingModelIds.includes(trimmed)) {
+      return `该提供商下已存在同名模型「${trimmed}」，请换一个模型。`;
+    }
+    return "";
+  });
+
+  const isValid = $derived(
+    id.trim().length > 0 && !!currentFunction && duplicateIdError === "",
+  );
 
   /** 根据当前 function 派生上下文字段标签；function 切换时自动更新 */
   const currentCtxLabels = $derived(
@@ -209,6 +234,14 @@
 
   async function handleSubmit() {
     if (!isValid || isSubmitting) return;
+
+    // 防御性二次校验（即便 isValid 通过，也兜底一次）
+    if (duplicateIdError) {
+      toast.error(duplicateIdError);
+      document.getElementById("dlg-model-id")?.focus();
+      return;
+    }
+
     isSubmitting = true;
     errorMessage = "";
     const result: Model = {
@@ -267,7 +300,17 @@
         bind:value={id}
         placeholder="例如: gpt-4o, deepseek-reasoner"
         class="rounded-xl font-mono"
+        aria-invalid={duplicateIdError ? "true" : undefined}
+        aria-describedby={duplicateIdError ? "dlg-model-id-err" : undefined}
       />
+      {#if duplicateIdError}
+        <p
+          id="dlg-model-id-err"
+          class="animate-fade-in text-xs text-destructive"
+        >
+          {duplicateIdError}
+        </p>
+      {/if}
     </div>
   </div>
 

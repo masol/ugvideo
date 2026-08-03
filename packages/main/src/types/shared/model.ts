@@ -55,11 +55,9 @@ export enum ProviderProtocol {
     Deepseek = "deepseek",
     OpenAICompatible = "openai-compatible",
     OpenAI = 'openai',
-    Ollama = 'ollama',
     Anthropic = 'anthropic',
     GoogleVertex = 'google-vertex',
-    Xai = 'xai',
-    HuggingFace = 'huggingface',
+    Xai = 'xai'
 }
 
 /**

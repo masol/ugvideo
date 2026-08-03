@@ -334,6 +334,7 @@ export interface ProviderPreset {
     website: string;
     maxconn: number;
     note: string;
+    apiKey?: string;
 }
 
 export type KnownProvider = Array<{
