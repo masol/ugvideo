@@ -7,6 +7,18 @@ export interface CharacterIdentity {
     age_stage: string;
     gender: "male" | "female" | "androgynous" | "unknown";
     body_type: string;
+    /**
+     * 是否穿着制式统一的服装。
+     * 仅对「人类群体角色」有意义（仵作/禁军/镖师 = true；老幼混杂家庭/临时聚合人群 = false）。
+     * 个体角色、非人类角色一律为 null（语义不适用）。
+     */
+    uniformed: boolean | null;
+    /**
+     * 该个体在语义上所归属的制服化群体名（用于让独立抽取的成员套用群体制服）。
+     * 仅对「独立抽取、但语义上属于某制服化群体的人类个体」有意义（如 仵作甲 → 仵作众人）。
+     * 不属于任何群体、群体本身、或非人类角色一律为 null。
+     */
+    group_member_of: string | null;
 }
 
 export interface CostumeDesign {

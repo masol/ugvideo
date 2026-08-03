@@ -48,6 +48,17 @@ export interface SceneEnvironmentPrompt {
     referenced_scene_count: number;
 }
 
+/**
+ * 场景镜头「视频」提示词（全能参考出视频的输入）。
+ *
+ * 重要：这是**视频**镜头描述，不是图像渲染任务。本管线不为 shot 渲染静图。
+ * 下游视频节点读取本结构 + reference_images 指向的已渲染参考图，用全能参考生成视频。
+ *
+ * - prompt：视频镜头的自然语言导演指令（保留运动动词/运镜轨迹/动作时序）。
+ * - reference_images[].entity_name：实际存放 ref_id（env:X / sceneId__name / uniform:X），
+ *   可直接映射到已渲染参考图的 file_path（RenderStorage.getRenderResult(ref_id)）。
+ * - shot_meta：景别/运镜/时长，供下游视频节点排片与时长控制。
+ */
 export interface SceneShotPrompt {
     scene_id: string;
     shot_index: number;
@@ -66,10 +77,9 @@ export interface SceneShotPrompt {
 /**
  * 渲染任务描述（供下游 render-images 节点消费）。
  *
- * 任务分两大尺寸类别：
- * - 参考图类（entity_refsheet / scene_environment / uniform_turnaround / group_photo）：
- *   跨镜头一致性锚点，固定 16:9 2K。
- * - 交付帧类（scene_shot）：最终成片首尾帧，用配置横纵比。
+ * 全能参考工作流：渲染任务只含「跨镜头一致性参考图」，统一 16:9 2K。
+ * 镜头（shot）不进渲染任务——它产出的是视频提示词（见 SceneShotPrompt），
+ * 由下游视频节点消费，不渲染静图。
  */
 export interface RenderTaskDescriptor {
     id: string;
@@ -77,8 +87,7 @@ export interface RenderTaskDescriptor {
     | "entity_refsheet"
     | "scene_environment"
     | "uniform_turnaround"
-    | "group_photo"
-    | "scene_shot";
+    | "group_photo";
     prompt: string;
     importance: number;
     referenced_shot_count?: number;
@@ -110,13 +119,5 @@ export interface RenderTaskDescriptor {
     group_info?: {
         group_entity_name: string;
         scene_id?: string;
-    };
-    /** 交付帧（scene_shot）专属：镜头元信息 */
-    shot_info?: {
-        scene_id: string;
-        shot_index: number;
-        shot_type: string;
-        camera_movement: string;
-        duration_estimate: string;
     };
 }

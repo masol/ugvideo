@@ -20,11 +20,6 @@ export class RenderStorage {
         this.prjdb.set(key, value);
     }
 
-    /** 配置横纵比（项目级 config，不带 #video 前缀），供交付帧尺寸使用 */
-    getConfigAspectRatio(): string {
-        return this.read<string>("config:aspectRatio") ?? "9:16";
-    }
-
     // --------------------------------------------------------
     // seed：以渲染任务粒度持久化（不 gate，读不到即生成并落盘）
     // --------------------------------------------------------

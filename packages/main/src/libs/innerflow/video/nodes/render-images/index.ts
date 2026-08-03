@@ -25,7 +25,7 @@ export async function renderImages(ctx: IRunnerContext): Promise<void> {
 
     // ===== 依据参考图依赖构建拓扑执行计划 =====
     // 顺序保证：被依赖的参考图（环境图/角色图/制服/群像/提升个体）先出图，
-    // 交付帧（scene_shot）后出图，从而其依赖的 file_path 在参数构建时已就绪。
+    // 引用它们的合照/关联图后出图，从而其依赖的 file_path 在参数构建时已就绪。
     const { generations, cyclic } = planRenderOrder(tasks);
     if (cyclic) {
         ctx.warn("[renderImages] 检测到循环依赖，降级为单代并行（顺序不保证，请检查任务图构建）");
@@ -59,8 +59,6 @@ export async function renderImages(ctx: IRunnerContext): Promise<void> {
         await pMap(
             pending,
             async (task) => {
-                // renderTask 内部现场构建 generateImage 参数（此时依赖已在前代产出，
-                // file_path 可解析）并落盘参数，再调用 callImageAPI。
                 const result = await renderTask(ctx, task);
                 if (!result) {
                     failed++;
@@ -88,9 +86,6 @@ async function buildOverview(ctx: IRunnerContext, store: RenderStorage): Promise
         inputKeys: tasks.map(t => {
             if (t.type === "scene_environment") return `${P}refimg:env_${t.scene_id}`;
             if (t.type === "uniform_turnaround") return `${P}refimg:uniform_${t.id.replace(/^uniform:/, "")}`;
-            if (t.type === "scene_shot" && t.shot_info) {
-                return refStore.shotPromptKey(t.shot_info.scene_id, t.shot_info.shot_index);
-            }
             const parsed = refStore.parseEntityRefsheetKey(t.id);
             return parsed ? `${P}refimg:entity_${parsed.sceneId}_${parsed.entityName}` : t.id;
         }),
@@ -114,7 +109,8 @@ async function buildOverview(ctx: IRunnerContext, store: RenderStorage): Promise
 
 function renderTaskSection(task: any, result: RenderResult | null): string {
     const params = task.reference_images?.length ?? 0;
-    const sizing = task.type === "scene_shot" ? "配置横纵比" : "16:9 2K";
+    // 全能参考工作流：全部任务均为 16:9 2K 跨镜头一致性参考图
+    const sizing = "16:9 2K";
     const status = result ? `✓ ${result.file_path}（seed=${result.seed}）` : "✗ 未渲染（参数已备好）";
     const promptPreview = task.prompt.slice(0, 200);
     return [

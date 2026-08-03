@@ -139,6 +139,11 @@ export class RefImgStorage {
         return this.read<UniformDesign>(`${P}char:uniform_${uniformName}`);
     }
 
+    /** 已设计的制服名列表（来自 design-characters 的 char:idx:uniforms）。 */
+    designedUniformNames(): string[] {
+        return this.read<string[]>(`${P}char:idx:uniforms`) ?? [];
+    }
+
     getCostume(name: string, sceneId: string): CostumeDesign | null {
         return this.read<CostumeDesign>(`${P}char:costume_${name}_${sceneId}`);
     }
@@ -258,6 +263,10 @@ export class RefImgStorage {
         return this.read<string[]>(`${P}refimg:idx:scenes`) ?? [];
     }
 
+    // --------------------------------------------------------
+    // 场景镜头视频提示词（全能参考出视频；不渲染静图）
+    // --------------------------------------------------------
+
     shotPromptKey(sceneId: string, shotIndex: number): string {
         return `${P}refimg:shot_${sceneId}_${shotIndex}`;
     }
@@ -301,7 +310,7 @@ export class RefImgStorage {
     }
 
     // --------------------------------------------------------
-    // 渲染任务索引（供下游 render-images 节点读取）
+    // 渲染任务索引（供下游 render-images 节点读取；仅参考图，不含 shot）
     // --------------------------------------------------------
 
     renderTasksKey(): string {

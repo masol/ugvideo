@@ -1,6 +1,5 @@
 // nodes/assign-render-strategies/index.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// nodes/assign-render-strategies/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import type { GlobalEntity } from "../align-entities/types.js";
@@ -14,8 +13,8 @@ const P = "#video:";
  *
  * 核心变化：
  * - 决策 key 改为 (sceneId, entityName)，每个 (实体, 场景) 对独立判定
- * - 同一实体在 S001 和 S002 可以有不同的策略（S001 prompt_only, S002 individual_refsheet）
- * - source_group 提升个体也按 (sceneId, entityName) 判定
+ * - 群体是否走 uniform_refsheet 由 identity.uniformed 统一判定（不再用外观关键词启发式），
+ *   与 design-characters 的制服设计判定同源，避免"设计了制服但渲染判为 group_photo"的孤儿制服。
  */
 export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void> {
     const store = new RenderStratStorage(ctx);
@@ -27,7 +26,6 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         return;
     }
 
-    // 收集所有 (sceneId, entityName) 对
     const pairs: Array<{ sceneId: string; entity: GlobalEntity; stageEntity: any }> = [];
 
     for (const sceneId of sceneIds) {
@@ -66,7 +64,6 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         return;
     }
 
-    // ===== 修复：gate 的 input/output keys 排序以稳定顺序 =====
     const outputKeys = pairs
         .map(p => store.decisionKey(p.sceneId, p.entity.name))
         .sort();
@@ -75,6 +72,8 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         `${P}stage:registry:idx`,
         `${P}shots:idx:scenes`,
         ...entities.map(e => `${P}stage:registry:${e.name}`),
+        // identity 决定 uniformed → 制服化判定，必须纳入 gate（design 阶段写、此后只读）
+        ...entities.map(e => `${P}char:identity_${e.name}`),
         ...sceneIds.map(id => `${P}shots:design_${id}`),
         ...sceneIds.map(id => `${P}state:stage_${id}`),
         ...sceneIds.map(id => `${P}stage:align:${id}`),
@@ -92,10 +91,12 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
     const decisions: EntityRenderDecision[] = [];
 
     for (const { sceneId, entity, stageEntity } of pairs) {
-        void (stageEntity)
+        void (stageEntity);
         const ref = sceneRefs.get(`${sceneId}::${entity.name}`);
         const referencedShotCount = ref?.referencedShotCount ?? 0;
         const closeUpShots = ref?.closeUpShots ?? 0;
+
+        const isUniformed = store.getIdentity(entity.name)?.uniformed === true;
 
         const decision = decideStrategy(
             ctx,
@@ -103,6 +104,7 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
             entity,
             referencedShotCount,
             closeUpShots,
+            isUniformed,
         );
 
         store.saveDecision(sceneId, decision);
@@ -204,6 +206,7 @@ function decideStrategy(
     e: GlobalEntity,
     referencedShotCount: number,
     _closeUpShots: number,
+    isUniformed: boolean,
 ): EntityRenderDecision {
     const meta = {
         scene_id: sceneId,
@@ -277,13 +280,12 @@ function decideStrategy(
 
     if (e.kind === "character" && e.humanoid) {
         if (referencedShotCount >= 2) {
-            const hasUniform = hasUniformDescription(e);
-            if (hasUniform) {
+            if (isUniformed) {
                 const d: EntityRenderDecision = {
                     name: e.name, kind: e.kind,
                     strategy: "uniform_refsheet",
                     importance: computeImportance(7, referencedShotCount, 1),
-                    rationale: `制式服装群体 ${referencedShotCount} 镜头`,
+                    rationale: `制服化群体 ${referencedShotCount} 镜头`,
                     ...meta,
                 } as any;
                 d.uniform_name = `${e.name}制服`;
@@ -293,7 +295,7 @@ function decideStrategy(
                 name: e.name, kind: e.kind,
                 strategy: "group_photo",
                 importance: computeImportance(6, referencedShotCount, 1),
-                rationale: `无制式服装群体 ${referencedShotCount} 镜头`,
+                rationale: `非制服化群体 ${referencedShotCount} 镜头`,
                 ...meta,
             } as any;
         }
@@ -332,12 +334,6 @@ function decideStrategy(
         rationale: "兜底",
         ...meta,
     } as any;
-}
-
-function hasUniformDescription(e: GlobalEntity): boolean {
-    const text = (e.appearance ?? "").toLowerCase();
-    return ["披甲", "甲胄", "制服", "统一", "制式", "袍", "披风", "盔甲", "uniform", "armor"]
-        .some(k => text.includes(k));
 }
 
 function computeImportance(base: number, shots: number, scenes: number): number {

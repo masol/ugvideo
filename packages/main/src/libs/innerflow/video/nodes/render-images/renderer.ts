@@ -5,39 +5,14 @@ import type { RenderTaskDescriptor } from "../generate-reference-images/types.js
 import { RenderStorage } from "./storage.js";
 import type { ImageGenParams, RenderResult } from "./types.js";
 
-/** 参考图类统一尺寸：16:9 2K（2048×1152）。可按目标模型支持尺寸调整。 */
+/** 全能参考图统一尺寸：16:9 2K（2048×1152）。可按目标模型支持尺寸调整。 */
 const REFERENCE_SIZE_2K_16_9 = "2048x1152";
-
-/** 参考图类任务（跨镜头一致性锚点，固定 16:9 2K） */
-const REFERENCE_TASK_TYPES = new Set([
-    "entity_refsheet",
-    "scene_environment",
-    "uniform_turnaround",
-    "group_photo",
-]);
-
-/**
- * 按任务类别决定尺寸：
- * - 参考图类 → 固定 size（16:9 2K）
- * - 交付帧（scene_shot）→ aspectRatio（配置横纵比）
- */
-function pickSizing(
-    task: RenderTaskDescriptor,
-    configAspectRatio: string,
-): { size: string } | { aspectRatio: string } {
-    if (task.type === "scene_shot") return { aspectRatio: configAspectRatio };
-    if (REFERENCE_TASK_TYPES.has(task.type)) return { size: REFERENCE_SIZE_2K_16_9 };
-    // 兜底：未知类别按参考图处理
-    return { size: REFERENCE_SIZE_2K_16_9 };
-}
 
 /**
  * 准备 generateImage 调用参数（本函数只组装参数，不真正调用）。
  *
- * - prompt：结构化提示词（含"图1/图2…"参考声明）
- * - referenceImages：依赖参考图，顺序与 prompt 中的"图N"一致；file_path 尽力从已渲染结果解析
- * - size / aspectRatio：按任务类别二选一
- * - seed：按任务 id 持久化（复现用）
+ * 全能参考工作流：所有任务都是跨镜头一致性参考图，统一 16:9 2K。
+ * 最终视频由下游 I2V/T2V 节点基于这套全能参考生成，本管线不渲染镜头帧。
  */
 export function buildGenerateImageParams(
     ctx: IRunnerContext,
@@ -46,7 +21,6 @@ export function buildGenerateImageParams(
     const renderStore = new RenderStorage(ctx);
     const prompt = buildStructuredPrompt(ctx, task);
     const seed = renderStore.getOrCreateSeed(task.id);
-    const sizing = pickSizing(task, renderStore.getConfigAspectRatio());
 
     const referenceImages = (task.reference_images ?? []).map(r => ({
         ref_id: r.ref_id,
@@ -58,7 +32,7 @@ export function buildGenerateImageParams(
     return {
         prompt,
         referenceImages,
-        ...sizing,
+        size: REFERENCE_SIZE_2K_16_9,
         seed,
         n: 1,
     };
@@ -81,7 +55,7 @@ export async function callImageAPI(
 ): Promise<string | null> {
     ctx.debug(`[callImageAPI] task=${task.id} type=${task.type}`);
     ctx.debug(
-        `[callImageAPI] size=${params.size ?? "-"} aspectRatio=${params.aspectRatio ?? "-"} `
+        `[callImageAPI] size=${params.size} `
         + `seed=${params.seed} refs=${params.referenceImages.length} n=${params.n}`,
     );
     ctx.debug(`[callImageAPI] prompt (first 300 chars):\n${params.prompt.slice(0, 300)}${params.prompt.length > 300 ? "\n..." : ""}`);
@@ -95,8 +69,7 @@ export async function callImageAPI(
     // const { image } = await generateImage({
     //     model: <由调用方指定>,
     //     prompt: params.prompt,
-    //     ...(params.size ? { size: params.size } : {}),
-    //     ...(params.aspectRatio ? { aspectRatio: params.aspectRatio } : {}),
+    //     size: params.size,
     //     seed: params.seed,
     //     n: params.n,
     //     providerOptions: { /* 依赖参考图 inputImages 按 provider 约定透传 */ },
@@ -107,7 +80,16 @@ export async function callImageAPI(
 }
 
 /**
- * 构建结构化提示词（主体绑定与参考声明格式）。
+ * 构建结构化提示词（模块化：参考声明前置 + 人物本体 + 全局一致性）。
+ *
+ * 采用"权重前置"的模块化结构：
+ *   ① 参考图使用说明（最高优先级，含每张参考图的强指令）
+ *   ② 人物本体与画面描述（task.prompt 原文）
+ *   ③ 全局一致性约束（声明"参考图已明确的服装/外观以参考图为准，文字仅作补充"）
+ *
+ * 关键：当存在制服/角色参考图时，② 中可能重复描述了服装，与参考图潜在冲突。
+ * ③ 的优先级声明确保 AI 以参考图为准、文字仅补充参考图未清晰展示的细节，
+ * 从而消除"AI 脑补服装 / 文字与参考图打架"的问题。
  */
 export function buildStructuredPrompt(
     ctx: IRunnerContext,
@@ -120,22 +102,38 @@ export function buildStructuredPrompt(
         return task.prompt;
     }
 
-    const lines: string[] = [];
-    lines.push("【主体绑定与参考声明】");
-    lines.push(`以下 ${refImages.length} 张参考图共同定义本次生成的视觉基准，请严格按照以下指代进行融合生成：`);
-    lines.push("");
+    const hasClothingRef = refImages.some(r =>
+        detectReferenceType(r.ref_id) === "uniform"
+        || r.role.includes("costume")
+        || r.role.includes("制服"),
+    );
 
+    const lines: string[] = [];
+
+    // ① 参考声明前置（权重前置）
+    lines.push("【参考图使用说明（最高优先级：与下方文字描述冲突时，一律以参考图为准）】");
+    lines.push(`本次生成需融合以下 ${refImages.length} 张参考图，严格按各自用途提取视觉特征：`);
+    lines.push("");
     refImages.forEach((ref, idx) => {
-        const imgIndex = idx + 1;
-        const bindingPrompt = buildReferenceBindingPrompt(ctx, store, ref, imgIndex);
-        lines.push(bindingPrompt);
+        lines.push(buildReferenceBindingPrompt(ctx, store, ref, idx + 1));
         lines.push("");
     });
 
-    lines.push("【整体画面与一致性约束】");
+    // ② 人物本体与画面描述
+    lines.push("【人物本体与画面描述】");
     lines.push(task.prompt);
     lines.push("");
-    lines.push("保持上述所有参考图中各主体的材质、光影、比例全程严格一致，不生成任何字幕与水印。");
+
+    // ③ 全局一致性约束（含服装优先级声明）
+    const clothingPrecedence = hasClothingRef
+        ? "本角色的服装以上述制服/服装参考图为准；上方文字中的服装描述仅用于补充参考图未清晰展示的细节，若与参考图冲突一律以参考图为准。"
+        : "";
+    lines.push("【全局一致性约束】");
+    lines.push(
+        "保持上述所有参考图中各主体的面容、发型、体型、服装、材质、光影、比例全程严格一致。"
+        + clothingPrecedence
+        + "不生成任何字幕与水印。",
+    );
 
     return lines.join("\n");
 }
@@ -158,8 +156,8 @@ function buildReferenceBindingPrompt(
     if (refType === "uniform") {
         const uniformName = ref.ref_id.replace(/^uniform:/, "");
         return [
-            `【图${imgIndex}参考：制服款式（${uniformName}）】`,
-            `提取图${imgIndex}中的制服款式。要求：严格保持图${imgIndex}中制服的廓形、材质纹理、色彩和每个构件结构，画面中所有穿着该制服的角色必须与此参考完全一致。`,
+            `【图${imgIndex}参考：制服（${uniformName}）】`,
+            `本角色穿着图${imgIndex}中所示的完整制服。要求：将图${imgIndex}的制服款式、廓形、材质纹理、色彩以及每一处构件结构，精确套用到本角色身上，保持其原始设计不变；本角色的服装一律以图${imgIndex}为准，文字描述仅用于补充图${imgIndex}中未清晰展示的细节，若冲突以图${imgIndex}为准。`,
         ].join("\n");
     }
 

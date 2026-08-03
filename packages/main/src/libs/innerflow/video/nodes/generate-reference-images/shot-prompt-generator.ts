@@ -5,12 +5,22 @@ import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText } from "ai";
 import type { StageEntity } from "../align-entities/types.js";
 import { buildRefsheetStyleSection } from "./prompts/refsheet-style.js";
-import { SCENE_SHOT_PROMPT } from "./prompts/scene-shot.js";
+import { SCENE_VIDEO_SHOT_PROMPT } from "./prompts/scene-video-shot.js";
 import { RefImgStorage } from "./storage.js";
 import type { SceneShotPrompt } from "./types.js";
 
 const P = "#video:";
 
+/**
+ * 为每个 shot 生成「视频镜头提示词」（全能参考出视频）。
+ *
+ * 关键：本节点**不渲染图像**——它产出的是视频镜头的导演指令 + 该镜头引用的参考图清单。
+ * 下游视频节点读取 refimg:shot_* + refimg:idx:shots_* + 已渲染的参考图，
+ * 用全能参考生成视频。
+ *
+ * shot→参考图映射（collectShotRefKeys + pushRef）是本节点的核心资产：
+ * 它决定"第 N 镜需要哪些角色图/环境图/制服图"，视频生成据此附带一致性参考。
+ */
 export async function generateSceneShotPrompts(
     ctx: IRunnerContext,
     sceneId: string,
@@ -55,7 +65,7 @@ export async function generateSceneShotPrompts(
     const stageEntityByLocal = new Map<string, StageEntity>();
 
     for (const e of stage.entities) {
-        // 修复：穿着道具（worn_by）不参与镜头参考图计算 —— 其视觉由角色 costume 覆盖
+        // 穿着道具（worn_by）不参与镜头参考图计算 —— 其视觉由角色 costume 覆盖
         if (e.kind === "prop" && e.worn_by) continue;
 
         const globalName = store.resolveToGlobalName(sceneId, e.name);
@@ -73,9 +83,7 @@ export async function generateSceneShotPrompts(
         const shotDesc = shots[i];
         const shotKey = store.shotPromptKey(sceneId, shotIndex);
 
-        // ===== 修复：先计算本 shot 的参考图依赖（纯 storage 查询，不调 LLM）=====
-        // 原 gate 只含 design/lighting/env/config，缺少 refsheet 依赖。
-        // refsheet（实体/制服/前序场景参考）变化时，shot prompt 必须跟着重算。
+        // 先计算本 shot 的参考图依赖（纯 storage 查询，不调 LLM），纳入 gate inputKeys。
         const refImageKeys = collectShotRefKeys(sceneId, shotDesc, stage, localToGlobal, stageEntityByLocal, sceneDecisions, store);
 
         if (!checkExpiry(ctx, {
@@ -94,7 +102,7 @@ export async function generateSceneShotPrompts(
             continue;
         }
 
-        // ===== 计算 referenceImages（与原逻辑一致）=====
+        // ===== 计算 referenceImages =====
         const referencedLocalNames = extractEntityReferences(shotDesc);
 
         const referenceImages: Array<{ entity_name: string; role: string }> = [];
@@ -207,11 +215,13 @@ export async function generateSceneShotPrompts(
 
         const { text } = await generateText({
             model: getSmartModel(undefined, ctx),
-            instructions: SCENE_SHOT_PROMPT.system(styleSection),
-            prompt: SCENE_SHOT_PROMPT.user({
+            instructions: SCENE_VIDEO_SHOT_PROMPT.system(styleSection),
+            prompt: SCENE_VIDEO_SHOT_PROMPT.user({
                 sceneId,
                 shotIndex,
                 shotDescription: shotDesc,
+                durationEstimate: extractDuration(shotDesc),
+                cameraMovement: extractCameraMovement(shotDesc),
                 referenceImages,
                 lightingText,
                 inlineEntities: inlineForShot,
@@ -235,7 +245,7 @@ export async function generateSceneShotPrompts(
     }
 
     store.saveShotPromptIdx(sceneId, shotIds);
-    ctx.info(`[generateSceneShotPrompts] ${sceneId} 完成 ${shotIds.length} 个镜头提示词`);
+    ctx.info(`[generateSceneShotPrompts] ${sceneId} 完成 ${shotIds.length} 个视频镜头提示词`);
 }
 
 /**

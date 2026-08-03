@@ -14,17 +14,19 @@ import type { EntityRefsheetPrompt, RefsheetLayout } from "./types.js";
 const P = "#video:";
 
 /**
- * 生成次序约束（消除循环依赖）：
- *   Phase 1: 个体参考图（含 source_group 提升个体）→ 不引用群体合照
- *   Phase 2: 制服三视图（独立）
- *   Phase 3: 群体合照 → 可引用已生成的提升个体图（Phase 1 已完成）
- *
- * 提升个体的服装一致性靠：
- *   1. 群体制服设计（更早阶段产出，由 design-characters 阶段注入）
- *   2. 上游 costume 信息（按场景隔离，已按场景生成）
- *
- * 不靠群体合照反向锚定（避免循环依赖）。
+ * 制服引用解析：
+ * - 提升个体（source_group）→ 用 source_group 制服（elevated 路径）
+ * - 独立抽取但语义属于制服化群体的个体 → 用 identity.group_member_of 制服（本路径）
  */
+function resolveUniformReference(store: RefImgStorage, groupName: string | null | undefined): string {
+    if (!groupName) return "";
+    const uniform = store.getUniform(`${groupName}制服`);
+    if (!uniform) return "";
+    return [
+        uniform.description,
+        ...uniform.items.map(it => `- ${it.item}：${it.material}，${it.color}`),
+    ].join("\n");
+}
 
 export async function generateEntityRefsheet(
     ctx: IRunnerContext,
@@ -55,8 +57,14 @@ export async function generateEntityRefsheet(
     }
     if (entity.kind === "light") return null;
 
-    // 查询同一实体在前序场景的参考图（跨场景一致性索引）
     const previousSceneRefs = store.getPreviousSceneRefs(entityName, sceneId);
+
+    // 独立抽取成员的制服归属（如 仵作甲 → 仵作众人制服）
+    const identity = store.getIdentity(entityName);
+    const uniformReference = resolveUniformReference(store, identity?.group_member_of);
+    const uniformKeyForGate = identity?.group_member_of
+        ? [`${P}char:uniform_${identity.group_member_of}制服`]
+        : [];
 
     if (!checkExpiry(ctx, {
         inputKeys: [
@@ -66,6 +74,7 @@ export async function generateEntityRefsheet(
             `${P}char:render_decision_${sceneId}_${entityName}`,
             "config:style",
             "config:colorTone",
+            ...uniformKeyForGate,
             ...previousSceneRefs.map(id => store.entityRefsheetKeyFromId(id)),
         ],
         outputKeys: store.entityRefsheetKey(sceneId, entityName),
@@ -80,7 +89,6 @@ export async function generateEntityRefsheet(
         return null;
     }
 
-    const identity = store.getIdentity(entityName);
     const layout = decideLayout(entity.kind, entity.humanoid, asset.base_description);
     const skill = getRefsheetSkill(pickRefsheetSkill(entity.kind, entity.humanoid));
     const anchorKind = pickAnchorKind(entity.kind, entity.humanoid);
@@ -104,6 +112,7 @@ export async function generateEntityRefsheet(
             baseDescription: asset.base_description,
             styleAnchor,
             layoutTemplate,
+            uniformReference: uniformReference || undefined,
         }),
     });
 
@@ -121,19 +130,10 @@ export async function generateEntityRefsheet(
         previous_scene_refs: previousSceneRefs,
     };
     store.saveEntityRefsheet(refsheet);
-    ctx.info(`[generateEntityRefsheet] ${sceneId}/${entityName} 参考图提示词完成（${layout}）${previousSceneRefs.length ? `，关联前序场景 ${previousSceneRefs.length} 个` : ""}`);
+    ctx.info(`[generateEntityRefsheet] ${sceneId}/${entityName} 参考图提示词完成（${layout}）${uniformReference ? "（含制服归属）" : ""}${previousSceneRefs.length ? `，关联前序场景 ${previousSceneRefs.length} 个` : ""}`);
     return refsheet;
 }
 
-/**
- * source_group 提升个体的参考图（场景隔离）。
- *
- * 一致性来源：
- * - 群体制服设计（来自 design-characters，统一注入）
- * - 上游 costume 信息（按场景隔离）
- *
- * 不引用群体合照（生成次序约束：个体先生成）。
- */
 async function generateSourceGroupIndividualRefsheet(
     ctx: IRunnerContext,
     store: RefImgStorage,
@@ -159,6 +159,8 @@ async function generateSourceGroupIndividualRefsheet(
             `${P}char:render_decision_${sceneId}_${entityName}`,
             "config:style",
             "config:colorTone",
+            // 制服设计变更时，提升个体定妆词须重算（其服装引用 source_group 制服）
+            ...(decision.source_group ? [`${P}char:uniform_${decision.source_group}制服`] : []),
         ],
         outputKeys: store.entityRefsheetKey(sceneId, entityName),
     })) {
@@ -173,39 +175,27 @@ async function generateSourceGroupIndividualRefsheet(
         return null;
     }
 
-    // 群体制服引用（design-characters 阶段已产出，安全）
-    let uniformReference = "";
-    const uniformName = decision.source_group ? `${decision.source_group}制服` : "";
-    if (uniformName) {
-        const uniform = store.getUniform(uniformName);
-        if (uniform) {
-            uniformReference = [
-                uniform.description,
-                ...uniform.items.map(it => `- ${it.item}：${it.material}，${it.color}`),
-            ].join("\n");
-        }
-    }
+    const uniformReference = resolveUniformReference(store, decision.source_group);
 
     const skill = getRefsheetSkill("character_humanoid");
     const styleAnchor = getRefsheetStyleAnchor(style, "character_humanoid");
     const layoutTemplate = buildLayoutTemplate("four_column", true, "character", styleAnchor);
-
-    const userPrompt = [
-        `【实体】${entityName}（character, source_group=${decision.source_group ?? ""}）`,
-        `【族裔】东亚汉族面部特征`,
-        `【构图模板】${layoutTemplate}`,
-        ``,
-        `【跨场景不变的基础外观描述】`,
-        baseDescription,
-        ``,
-        uniformReference ? `【所属群体的制服设计（本个体服装必须与此制服一致）】\n${uniformReference}\n` : "",
-        `请直接输出提示词。记住：纯白背景、无场景光照（仅 studio lighting）、无任何动作（仅中性站姿；大头区域表情中性视线平视）、无空间定位、无 meta 声明、无编号、无场景变化。`,
-    ].filter(Boolean).join("\n");
+    const identity = store.getIdentity(entityName);
 
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx),
         instructions: ENTITY_REFSHEET_PROMPT.system(styleSection, skill),
-        prompt: userPrompt,
+        prompt: ENTITY_REFSHEET_PROMPT.user({
+            entityName,
+            kind: "character",
+            humanoid: true,
+            ethnicity: identity?.ethnicity ?? "东亚汉族面部特征",
+            layout: "four_column",
+            baseDescription,
+            styleAnchor,
+            layoutTemplate,
+            uniformReference: uniformReference || undefined,
+        }),
     });
 
     const refsheet: EntityRefsheetPrompt = {
@@ -230,14 +220,6 @@ async function generateSourceGroupIndividualRefsheet(
     return refsheet;
 }
 
-/**
- * 群体合照（按场景隔离）。
- *
- * 生成次序：Phase 3，在个体参考图（Phase 1）完成后执行。
- * 此时可读取已生成的 source_group 提升个体图作为成员一致性锚点。
- *
- * 注意：群体合照本身不被任何个体引用（避免循环）。
- */
 export async function generateGroupPhoto(
     ctx: IRunnerContext,
     sceneId: string,
@@ -254,8 +236,6 @@ export async function generateGroupPhoto(
     const decision = store.getRenderDecision(sceneId, groupName);
     if (!decision || decision.strategy !== "group_photo") return null;
 
-    // 注入该场景已独立生成的提升个体作为成员参考（确保视觉一致）
-    // 此时 Phase 1 已完成，可以安全读取
     const stage = store.getStage(sceneId);
     const individualMembers: Array<{ name: string; appearance: string; refId: string }> = [];
     if (stage) {
@@ -347,9 +327,6 @@ export async function generateGroupPhoto(
     return refsheet;
 }
 
-/**
- * 制服三视图（全局共享，但附 scene_id 作为元数据）。
- */
 export async function generateUniformRefsheet(
     ctx: IRunnerContext,
     uniformName: string,

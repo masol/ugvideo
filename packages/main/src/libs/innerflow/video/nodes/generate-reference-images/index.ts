@@ -17,8 +17,6 @@ import type {
     SceneShotPrompt,
 } from "./types.js";
 
-const MAX_CONCURRENT_RENDER = 12;
-
 export async function generateReferenceImages(ctx: IRunnerContext): Promise<void> {
     const store = new RefImgStorage(ctx);
     const allDecisions = store.allRenderDecisions();
@@ -30,7 +28,6 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
 
     const individualPairs: Array<{ sceneId: string; name: string }> = [];
     const groupPhotoPairs: Array<{ sceneId: string; name: string }> = [];
-    const uniforms = new Set<string>();
 
     for (const d of allDecisions) {
         const sid = d.scene_id ?? "unknown";
@@ -38,10 +35,15 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
             individualPairs.push({ sceneId: sid, name: d.name });
         } else if (d.strategy === "group_photo") {
             groupPhotoPairs.push({ sceneId: sid, name: d.name });
-        } else if (d.strategy === "uniform_refsheet" && d.uniform_name) {
-            uniforms.add(d.uniform_name);
         }
     }
+
+    // 制服三视图：为「所有已设计的制服」生成，不再依赖群体是否获得 uniform_refsheet 策略。
+    // 修复根因：当制服化群体的全部成员都被提升为独立个体时，群体本身从不被镜头引用，
+    // referencedShotCount=0 → 决策落到 prompt_only → 永不进入 uniform_refsheet →
+    // 制服三视图永不生成。但制服已被 designUniforms 设计、且已作为文字注入成员定妆词，
+    // 缺的只是三视图这一交付物本身。以已设计制服（char:idx:uniforms）为权威来源即可修复。
+    const uniforms = new Set<string>(store.designedUniformNames());
 
     // ===== Phase 1: 个体参考图 =====
     if (individualPairs.length > 0) {
@@ -55,7 +57,7 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
 
     // ===== Phase 2: 制服三视图 =====
     if (uniforms.size > 0) {
-        ctx.info(`[generateReferenceImages] Phase2: 生成 ${uniforms.size} 个制服三视图`);
+        ctx.info(`[generateReferenceImages] Phase2: 生成 ${uniforms.size} 个制服三视图（覆盖全部已设计制服）`);
         await pMap(Array.from(uniforms), name => generateUniformRefsheet(ctx, name), { concurrency: 2 });
     }
 
@@ -76,27 +78,40 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         await pMap(sceneIds, id => generateSceneEnvironment(ctx, id), { concurrency: 3 });
     }
 
-    // ===== Phase 5: 场景镜头提示词 =====
+    // ===== Phase 5: 场景镜头「视频」提示词（全能参考出视频；不渲染静图）=====
     if (sceneIds.length > 0) {
-        ctx.info(`[generateReferenceImages] Phase5: 生成逐场景镜头提示词`);
+        ctx.info(`[generateReferenceImages] Phase5: 生成逐场景视频镜头提示词`);
         await pMap(sceneIds, id => generateSceneShotPrompts(ctx, id), { concurrency: 3 });
     }
 
-    // ===== Phase 6: 构建渲染任务索引（供下游节点） =====
+    // ===== Phase 6: 构建渲染任务索引（全能参考：仅参考图为渲染交付物；shot 不渲图）=====
     const refTasks = buildRenderTaskDescriptors(store);
-    const eligibleTasks = applyImportanceCutoff(refTasks);
-    store.saveRenderTasks(eligibleTasks);
-    ctx.info(`[generateReferenceImages] Phase6: 渲染任务索引完成，${eligibleTasks.length}/${refTasks.length} 个任务`);
+    store.saveRenderTasks(refTasks);
+    ctx.info(`[generateReferenceImages] Phase6: 渲染任务索引完成，${refTasks.length} 个参考图任务（镜头视频提示词另存于 refimg:shot_*，不进渲染）`);
 
     await buildOverview(ctx);
 }
 
-/** 从 ref_id 反解出用于展示的实体名（env/uniform/entity） */
-function displayNameFromRefId(store: RefImgStorage, refId: string): string {
-    if (refId.startsWith("env:")) return "场景环境";
-    if (refId.startsWith("uniform:")) return refId.slice("uniform:".length);
-    const parsed = store.parseEntityRefsheetKey(refId);
-    return parsed ? parsed.entityName : refId;
+/**
+ * 若该实体属于某制服化群体（且该群体制服已设计），返回其应引用的制服三视图 ref_id。
+ * 覆盖三类归属：
+ * - 提升个体：EntityRefsheetPrompt.source_group
+ * - 独立抽取成员：identity.group_member_of
+ * - 群体本身（group_photo）：entity_name 即群体名
+ */
+function resolveUniformRefId(store: RefImgStorage, prompt: EntityRefsheetPrompt): string | null {
+    let group: string | null = null;
+    if (prompt.source_group) {
+        group = prompt.source_group;
+    } else if (prompt.layout === "group_photo") {
+        group = prompt.entity_name;
+    } else {
+        const identity = store.getIdentity(prompt.entity_name);
+        if (identity?.group_member_of) group = identity.group_member_of;
+    }
+    if (!group) return null;
+    const uniformName = `${group}制服`;
+    return store.getUniform(uniformName) ? `uniform:${uniformName}` : null;
 }
 
 function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[] {
@@ -115,6 +130,16 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
                 : "entity_refsheet";
 
         const referenceImages: Array<{ ref_id: string; entity_name: string; role: string }> = [];
+
+        // 制服化群体成员 → 引用制服三视图（图像级一致性锚点，非仅文字）
+        const uniformRefId = resolveUniformRefId(store, prompt);
+        if (uniformRefId) {
+            referenceImages.push({
+                ref_id: uniformRefId,
+                entity_name: uniformRefId.replace(/^uniform:/, ""),
+                role: "costume_reference（严格参考制服三视图，保持廓形/材质/色彩/构件与制服一致）",
+            });
+        }
 
         // 前序场景参考图
         if (prompt.previous_scene_refs) {
@@ -212,87 +237,7 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
         });
     }
 
-    // ===== 交付帧：场景镜头首尾帧（成片的最终画面）=====
-    // SceneShotPrompt.reference_images 的 entity_name 字段实际存放的是 ref_id
-    // （env:X / sceneId__name / uniform:X），可直接对应渲染任务 id。
-    for (const sceneId of store.sceneIds()) {
-        for (const shot of store.getSceneShotPrompts(sceneId)) {
-            const referenceImages = shot.reference_images.map(r => ({
-                ref_id: r.entity_name,
-                entity_name: displayNameFromRefId(store, r.entity_name),
-                role: r.role,
-            }));
-            tasks.push({
-                id: `shot:${sceneId}:${shot.shot_index}`,
-                type: "scene_shot",
-                prompt: shot.prompt,
-                importance: 10,
-                referenced_shot_count: 1,
-                referenced_scene_count: 1,
-                scene_id: sceneId,
-                reference_images: referenceImages.length > 0 ? referenceImages : undefined,
-                shot_info: {
-                    scene_id: sceneId,
-                    shot_index: shot.shot_index,
-                    shot_type: shot.shot_meta.shot_type,
-                    camera_movement: shot.shot_meta.camera_movement,
-                    duration_estimate: shot.shot_meta.duration_estimate,
-                },
-            });
-        }
-    }
-
     return tasks;
-}
-
-/**
- * cutoff：
- * - 交付帧（scene_shot）与环境图（scene_environment）恒定保留（成片必需）。
- * - 二者依赖闭包内的参考图恒定保留（否则成片帧丢引用）。
- * - 仅对"未被任何交付帧/环境引用的冗余参考图"施加 MAX_CONCURRENT_RENDER 预算上限。
- */
-function applyImportanceCutoff(tasks: RenderTaskDescriptor[]): RenderTaskDescriptor[] {
-    const mustKeep = tasks.filter(t => t.type === "scene_shot" || t.type === "scene_environment");
-    const optional = tasks.filter(t => t.type !== "scene_shot" && t.type !== "scene_environment");
-
-    const byId = new Map(tasks.map(t => [t.id, t] as const));
-
-    // 计算 mustKeep 的依赖闭包
-    const requiredRefIds = new Set<string>();
-    for (const t of mustKeep) {
-        for (const r of t.reference_images ?? []) requiredRefIds.add(r.ref_id);
-    }
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (const id of Array.from(requiredRefIds)) {
-            const dep = byId.get(id);
-            if (!dep) continue;
-            for (const r of dep.reference_images ?? []) {
-                if (!requiredRefIds.has(r.ref_id)) {
-                    requiredRefIds.add(r.ref_id);
-                    changed = true;
-                }
-            }
-        }
-    }
-
-    const requiredOptional = optional.filter(t => requiredRefIds.has(t.id));
-    const freeOptional = optional.filter(t => !requiredRefIds.has(t.id));
-
-    const sortedFree = [...freeOptional].sort((a, b) => {
-        const aShot = a.referenced_shot_count ?? 0;
-        const bShot = b.referenced_shot_count ?? 0;
-        if (aShot !== bShot) return bShot - aShot;
-
-        const aScene = a.referenced_scene_count ?? 0;
-        const bScene = b.referenced_scene_count ?? 0;
-        if (aScene !== bScene) return bScene - aScene;
-
-        return b.importance - a.importance;
-    });
-
-    return [...mustKeep, ...requiredOptional, ...sortedFree.slice(0, MAX_CONCURRENT_RENDER)];
 }
 
 async function buildOverview(ctx: IRunnerContext): Promise<void> {
@@ -310,7 +255,7 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
             }),
             ...uniformNames.map(n => store.uniformPromptKey(n)),
             ...sceneIds.map(id => store.sceneEnvironmentKey(id)),
-            ...sceneIds.map(id => store.shotPromptIdxKey(id)),
+            ...store.sceneIds().map(id => store.shotPromptIdxKey(id)),
         ],
         outputKeys: store.overviewKey(),
     })) {
@@ -346,7 +291,7 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
         }
     }
 
-    sections.push("# 场景镜头提示词（按场景按镜头）");
+    sections.push("# 场景镜头视频提示词（按场景按镜头；全能参考出视频，不渲染静图）");
     for (const sceneId of store.sceneIds()) {
         const shots = store.getSceneShotPrompts(sceneId);
         if (!shots.length) continue;

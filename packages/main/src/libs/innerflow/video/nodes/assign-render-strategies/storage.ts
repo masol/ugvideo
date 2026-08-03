@@ -3,7 +3,7 @@ import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { isDeepStrictEqual } from "node:util";
 import type { GlobalEntity, SceneStage } from "../align-entities/types.js";
-import type { EntityRenderDecision } from "../design-characters/types.js";
+import type { CharacterIdentity, EntityRenderDecision } from "../design-characters/types.js";
 
 const P = "#video:";
 
@@ -45,6 +45,14 @@ export class RenderStratStorage {
         return this.entityNames()
             .map(n => this.getGlobalEntity(n))
             .filter((v): v is GlobalEntity => v != null);
+    }
+
+    identityKey(name: string): string {
+        return `${P}char:identity_${name}`;
+    }
+
+    getIdentity(name: string): CharacterIdentity | null {
+        return this.read<CharacterIdentity>(this.identityKey(name));
     }
 
     designedSceneIds(): string[] {

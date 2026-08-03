@@ -50,6 +50,10 @@ async function inferIdentities(ctx: IRunnerContext): Promise<void> {
         prompt: IDENTITY_INFERRER_PROMPT.user(worldContext, entityRegistry, sceneTexts),
     });
 
+    const validGroupNames = new Set(
+        characters.filter(c => c.count !== 1).map(c => c.name),
+    );
+
     const blocks = text.split(/^##\s+/m).slice(1);
     for (const block of blocks) {
         const lines = block.split("\n").map(l => l.trim()).filter(Boolean);
@@ -61,9 +65,9 @@ async function inferIdentities(ctx: IRunnerContext): Promise<void> {
         );
         if (!entity) continue;
 
-        const identity = parseIdentityBlock(entity.name, lines.slice(1), entity);
+        const identity = parseIdentityBlock(entity.name, lines.slice(1), entity, validGroupNames);
         store.saveIdentity(identity);
-        ctx.info(`[inferIdentities] ${entity.name}: ${identity.identity}｜${identity.ethnicity}`);
+        ctx.info(`[inferIdentities] ${entity.name}: ${identity.identity}｜${identity.ethnicity}｜制服化=${identity.uniformed ?? "-"}｜属群体=${identity.group_member_of ?? "-"}`);
     }
 
     for (const c of characters) {
@@ -75,7 +79,12 @@ async function inferIdentities(ctx: IRunnerContext): Promise<void> {
     ctx.info(`[inferIdentities] 完成，${store.allIdentities().length} 个角色`);
 }
 
-function parseIdentityBlock(name: string, lines: string[], entity: GlobalEntity): CharacterIdentity {
+function parseIdentityBlock(
+    name: string,
+    lines: string[],
+    entity: GlobalEntity,
+    validGroupNames: Set<string>,
+): CharacterIdentity {
     const pick = (label: string): string => {
         const line = lines.find(l => l.replace(/^[-*]\s*/, "").startsWith(label));
         if (!line) return "";
@@ -89,6 +98,26 @@ function parseIdentityBlock(name: string, lines: string[], entity: GlobalEntity)
     else if (/female|女/.test(genderRaw)) gender = "female";
     else if (/androgynous|中性/.test(genderRaw)) gender = "androgynous";
 
+    const isGroup = (entity.count ?? 1) !== 1;
+
+    // 制服化：仅人类群体有意义
+    let uniformed: boolean | null = null;
+    if (isGroup && entity.humanoid) {
+        const raw = pick("是否制服化");
+        if (/^是|true|yes/i.test(raw)) uniformed = true;
+        else if (/^否|false|no/i.test(raw)) uniformed = false;
+    }
+
+    // 所属制服化群体：仅人类个体有意义，且必须命中真实群体名
+    let group_member_of: string | null = null;
+    if (!isGroup && entity.humanoid) {
+        const raw = pick("所属制服化群体").replace(/[「」[\]【】]/g, "").trim();
+        if (raw && !/^无|none|null|不适用/i.test(raw)) {
+            const matched = [...validGroupNames].find(g => g === raw || raw.includes(g) || g.includes(raw));
+            if (matched) group_member_of = matched;
+        }
+    }
+
     return {
         name,
         identity: pick("身份") || "身份不详",
@@ -96,6 +125,8 @@ function parseIdentityBlock(name: string, lines: string[], entity: GlobalEntity)
         age_stage: pick("年龄段") || "成年",
         gender,
         body_type: pick("体型") || "匀称",
+        uniformed,
+        group_member_of,
     };
 }
 
@@ -107,6 +138,8 @@ function defaultIdentity(entity: GlobalEntity): CharacterIdentity {
         age_stage: "成年",
         gender: entity.humanoid ? "unknown" : "androgynous",
         body_type: "匀称",
+        uniformed: null,
+        group_member_of: null,
     };
 }
 
@@ -139,7 +172,6 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
         let previousCostume = "";
 
         for (const sceneId of entity.scenes) {
-            // 修复：从独立 KV 读 time_skips
             const isTimeSkip = alignStore.getTimeSkips(entity.name)[sceneId] ?? false;
             const isFirstScene = sceneId === entity.scenes[0];
 
@@ -199,7 +231,6 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
             const costume = parseCostume(entity.name, text);
             store.saveCostume(entity.name, sceneId, costume);
 
-            // 修复：从独立 KV 写 scene_snapshots，不再刷 registry
             alignStore.upsertSceneSnapshot(entity.name, {
                 scene_id: sceneId,
                 costume_ref: store.costumeKey(entity.name, sceneId),
@@ -217,10 +248,15 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
 async function designUniforms(ctx: IRunnerContext): Promise<void> {
     const store = new CharDesignStorage(ctx);
 
+    // 只为「制服化」的人类群体设计制服。
+    // 由 identity.uniformed 统一判定（替代此前无条件为所有群体设计制服），
+    // 避免为老幼混杂/临时聚合群体（如"死者们"）产出无人消费的孤儿制服。
     const groupCharacters = store.allGlobalEntities()
-        .filter(e => e.kind === "character" && e.humanoid && e.count !== 1);
+        .filter(e => e.kind === "character" && e.humanoid && e.count !== 1)
+        .filter(e => store.getIdentity(e.name)?.uniformed === true);
+
     if (!groupCharacters.length) {
-        ctx.info("[designUniforms] 无群体角色，跳过");
+        ctx.info("[designUniforms] 无制服化群体角色，跳过");
         return;
     }
 
