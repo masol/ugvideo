@@ -1,6 +1,7 @@
 import { throwPrecondition } from '$libs/utils/err.js';
 import type { Provider } from '$types/index.js';
 import { ProviderProtocol } from '$types/shared/model.js';
+import { createAlibaba } from '@ai-sdk/alibaba';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -109,6 +110,12 @@ function createProviderByProtocol(
 
         case 'google-vertex':
             return createGoogleModel(apiKey, baseURL);
+
+        case 'alibaba':
+            return createAlibaba({
+                baseURL,
+                apiKey
+            });
 
         // case 'huggingface':
         //     return createHuggingFaceModel(apiKey, baseURL);

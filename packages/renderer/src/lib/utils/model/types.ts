@@ -302,9 +302,8 @@ export const protocolLabels: Record<ProviderProtocol, string> = {
     "anthropic": "Anthropic",
     "google-vertex": "Google AI",
     "xai": "xai",
-    "ollama": "Ollama",
-    "huggingface": "HuggingFace",
     "deepseek": "Deepseek",
+    "alibaba": "阿里",
 };
 
 export const allProtocols: Record<string, ProviderProtocol> = {
@@ -313,9 +312,8 @@ export const allProtocols: Record<string, ProviderProtocol> = {
     anthropic: "anthropic" as ProviderProtocol,
     vertex: "google-vertex" as ProviderProtocol,
     xai: "xai" as ProviderProtocol,
-    ollama: "ollama" as ProviderProtocol,
-    huggingface: "huggingface" as ProviderProtocol,
-    deepseek: "deepseek" as ProviderProtocol
+    deepseek: "deepseek" as ProviderProtocol,
+    alibaba: "alibaba" as ProviderProtocol,
 };
 
 export function formatTokens(n: number): string {

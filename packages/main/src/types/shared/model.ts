@@ -57,7 +57,8 @@ export enum ProviderProtocol {
     OpenAI = 'openai',
     Anthropic = 'anthropic',
     GoogleVertex = 'google-vertex',
-    Xai = 'xai'
+    Xai = 'xai',
+    alibaba = "alibaba"
 }
 
 /**

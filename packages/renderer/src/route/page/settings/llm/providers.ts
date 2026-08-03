@@ -18,10 +18,19 @@ export const KNOWN_PROVIDERS: KnownProvider = [
             {
                 id: "qwen",
                 label: "通义千问 (阿里云百炼)",
-                protocol: allProtocols.openai,
+                protocol: allProtocols.alibaba,
                 baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
                 website: "https://bailian.console.aliyun.com/?apiKey=1#/api-key",
                 note: "全栈企业级大模型服务平台",
+                maxconn: 60
+            },
+            {
+                id: "modelscope",
+                label: "ModelScope 魔搭",
+                protocol: allProtocols.openai,
+                baseUrl: "https://modelscope.cn/api/v1",
+                website: "https://modelscope.cn/my/apitoken",
+                note: "阿里开源模型托管平台，海量开源模型API",
                 maxconn: 60
             },
             {

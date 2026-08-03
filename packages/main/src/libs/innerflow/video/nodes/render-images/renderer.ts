@@ -1,5 +1,8 @@
 // nodes/render-images/renderer.ts
+import { getSmartImage } from "$libs/model/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { generateImage } from 'ai';
+import { writeFile } from "fs/promises";
 import { RefImgStorage } from "../generate-reference-images/storage.js";
 import type { RenderTaskDescriptor } from "../generate-reference-images/types.js";
 import { RenderStorage } from "./storage.js";
@@ -38,6 +41,7 @@ export function buildGenerateImageParams(
     };
 }
 
+let firstCall = false;
 /**
  * 调用图像生成 API 渲染单个任务。
  *
@@ -60,22 +64,27 @@ export async function callImageAPI(
     );
     ctx.debug(`[callImageAPI] prompt (first 300 chars):\n${params.prompt.slice(0, 300)}${params.prompt.length > 300 ? "\n..." : ""}`);
 
-    // TODO: 用户实现 —— 调用 Vercel AI SDK generateImage
-    // 示例：
-    // import { generateImage } from "ai";
-    // const inputImages = params.referenceImages
-    //     .map(r => r.file_path ?? new RenderStorage(ctx).getRenderResult(r.ref_id)?.file_path)
-    //     .filter(Boolean);
-    // const { image } = await generateImage({
-    //     model: <由调用方指定>,
-    //     prompt: params.prompt,
-    //     size: params.size,
-    //     seed: params.seed,
-    //     n: params.n,
-    //     providerOptions: { /* 依赖参考图 inputImages 按 provider 约定透传 */ },
-    // });
-    // return await persistBase64(image.base64);
+    if (!firstCall) {
+        firstCall = true;
+        // TODO: 用户实现 —— 调用 Vercel AI SDK generateImage
+        // 示例：
+        // import { generateImage } from "ai";
+        const inputImages = params.referenceImages
+            .map(r => r.file_path ?? new RenderStorage(ctx).getRenderResult(r.ref_id)?.file_path)
+            .filter(Boolean);
+        const { image } = await generateImage({
+            model: getSmartImage(undefined, ctx),
+            prompt: params.prompt,
+            size: params.size as `${number}x${number}`,
+            seed: params.seed,
+            n: params.n,
+            // providerOptions: { /* 依赖参考图 inputImages 按 provider 约定透传 */ },
+        });
 
+        ctx.error("inputImages=", inputImages)
+        // return await persistBase64(image.base64);
+        await writeFile('/home/masol/projects/unigen/cyberpunk-cat.png', image.uint8Array);
+    }
     return null;
 }
 
