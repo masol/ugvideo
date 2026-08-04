@@ -9,10 +9,17 @@
   import { getCoreRowModel } from "@tanstack/table-core";
 
   import { projectStore } from "$lib/store/project.svelte";
-  import { IconFolderOpen, IconMoodEmpty } from "@tabler/icons-svelte";
+  import { cn } from "$lib/utils";
+  import {
+    IconArrowDown,
+    IconArrowsSort,
+    IconArrowUp,
+    IconFolderOpen,
+    IconMoodEmpty,
+  } from "@tabler/icons-svelte";
   import { glossaryColumns } from "./columns.js";
   import GlossaryPagination from "./pagination.svelte";
-  import { blueprintStore } from "./store.svelte.js";
+  import { blueprintStore, type BlueprintSortBy } from "./store.svelte.js";
   import GlossaryToolbar from "./toolbar.svelte";
 
   const hasProject = $derived((projectStore.path?.length ?? 0) > 0);
@@ -36,11 +43,28 @@
   function cellClass(column: any): string {
     return (column.columnDef.meta?.class as string | undefined) ?? "";
   }
+
+  /**
+   * 排序图标：根据当前是否激活 / 方向选择渲染哪一个。
+   * - 未激活（该列不是当前排序键）→ 淡色双箭头（提示该列可排序）
+   * - 激活 + asc → 上箭头
+   * - 激活 + desc → 下箭头
+   */
+  function sortIconFor(sortable: BlueprintSortBy) {
+    const active = blueprintStore.sortBy === sortable;
+    if (!active) return IconArrowsSort;
+    return blueprintStore.sortOrder === "asc" ? IconArrowUp : IconArrowDown;
+  }
+
+  function sortLabelFor(sortable: BlueprintSortBy, headerLabel: string) {
+    const active = blueprintStore.sortBy === sortable;
+    if (!active) return `按${headerLabel}排序`;
+    const dir = blueprintStore.sortOrder === "asc" ? "升序" : "降序";
+    return `当前按${headerLabel}${dir}，再次点击切换方向`;
+  }
 </script>
 
-<div
-  class="flex h-full w-full flex-col gap-6"
->
+<div class="flex h-full w-full flex-col gap-6">
   {#if !hasProject}
     <!--╭─────────────────────────────────────────────────────╮ -->
     <!-- │ [可抽取子组件 → glossary-empty-state.svelte]         │ -->
@@ -112,6 +136,9 @@
               {#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
                 <Table.Row class="border-border/50 hover:bg-transparent">
                   {#each headerGroup.headers as header (header.id)}
+                    <!-- eslint-disable-next-line @typescript-eslint/no-explicit-any -->
+                    {@const sortable = (header.column.columnDef.meta as any)
+                      ?.sortable as BlueprintSortBy | undefined}
                     <Table.Head
                       class={[
                         "h-10 px-4 text-xs font-medium text-muted-foreground",
@@ -119,10 +146,48 @@
                       ]}
                     >
                       {#if !header.isPlaceholder}
-                        <FlexRender
-                          content={header.column.columnDef.header}
-                          context={header.getContext()}
-                        />
+                        {#if sortable}
+                          <!--
+                            该列可排序 → 渲染排序按钮：
+                              - 未激活显示 IconArrowsSort（双箭头，提示可排）
+                              - 激活后根据方向显示向上/向下箭头
+                            点按行为：store.setSortBy(...) 统一处理"切键 / 翻方向"。
+                          -->
+                          {@const SortIcon = sortIconFor(sortable)}
+                          {@const active = blueprintStore.sortBy === sortable}
+                          <button
+                            type="button"
+                            class={cn(
+                              "inline-flex w-full items-center gap-1.5 rounded-md px-2 py-0.5 transition-all duration-200",
+                              "cursor-pointer hover:bg-muted hover:text-foreground",
+                              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              active ? "text-primary" : "text-muted-foreground",
+                              cellClass(header.column).includes("text-end")
+                                ? "justify-end"
+                                : "justify-start",
+                            )}
+                            aria-label={sortLabelFor(
+                              sortable,
+                              header.column.columnDef.header as string,
+                            )}
+                            onclick={() => blueprintStore.setSortBy(sortable)}
+                          >
+                            <span class="text-xs font-medium">
+                              {header.column.columnDef.header}
+                            </span>
+                            <SortIcon
+                              size={14}
+                              stroke={1.5}
+                              class={cn("shrink-0", !active && "opacity-50")}
+                            />
+                          </button>
+                        {:else}
+                          <!-- 不可排序列（actions） → 普通表头文本 -->
+                          <FlexRender
+                            content={header.column.columnDef.header}
+                            context={header.getContext()}
+                          />
+                        {/if}
                       {/if}
                     </Table.Head>
                   {/each}

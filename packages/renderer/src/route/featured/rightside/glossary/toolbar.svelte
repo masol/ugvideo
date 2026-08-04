@@ -6,7 +6,7 @@
   import { dialogStore } from "$lib/store/ui/dialog.svelte";
   import { IconPlus, IconRefresh, IconSearch } from "@tabler/icons-svelte";
   import Logger from "electron-log/renderer";
-  import { debounce } from "radashi";
+  import { debounce, getErrorMessage } from "radashi";
   import { push } from "svelte-spa-router";
   import BlueprintSwitcher from "./blueprint-switcher.svelte";
   import NameFilterCombobox from "./name-filter-combobox.svelte";
@@ -73,19 +73,49 @@
     blueprintStore.setName(text);
   }
 
+  /**
+   * 新建流程：
+   *   1. 弹窗收集新名称（trim 后非空）
+   *   2. 先调用 blueprintStore.checkNameExists(name) 做唯一性预检
+   *   3. 已存在 → 弹出错误提示，不跳转
+   *   4. 不存在 → 跳转到编辑器（/new 路由）
+   *
+   * 注意：预检和跳转之间存在一个理论竞态窗口（别的客户端可能并发创建同名条目）。
+   * 这点我**不确认**是否要紧——单用户本地编辑器场景下，按用户交互节奏基本不会发生，
+   * 所以不引入乐观锁 / 服务端二次校验。如果你在意，告诉我即可。
+   */
   async function handleCreate() {
     const name = await dialogStore.safeShow(
       PromptDialog,
       {
         title: `新建${blueprintStore.kindLabel}元素`,
         label: "新名称",
-        placeholder: "请输入新的名称(不能与当前值冲突)",
+        placeholder: "请输入新的名称（不能与当前值冲突）",
         initialValue: "",
-        required: true,
+        required: true, // 非空校验由 PromptDialog 处理
+        validator: async (val: string) => {
+          const trimmed = val.trim();
+          // required 已经保证非空，但防御性处理
+          if (!trimmed) return "名称不能为空";
+          try {
+            const exists = await blueprintStore.checkNameExists(trimmed);
+            if (exists) {
+              return `名称“${trimmed}”已存在，请使用其他名称`;
+            }
+            return ""; // 返回空字符串表示验证通过
+          } catch (err) {
+            Logger.error("[glossary-toolbar] 预检失败：", err);
+            return `无法校验名称唯一性：${getErrorMessage(err)}`;
+          }
+        },
       },
       { size: "sm" },
     );
+
+    // 用户取消或验证失败（对话框不会关闭）→ 返回 undefined/null
     if (!name) return;
+
+    // 验证通过后跳转到编辑器
     push(`/editor/${blueprintStore.kind}/${encodeURIComponent(name)}/new`);
   }
 </script>

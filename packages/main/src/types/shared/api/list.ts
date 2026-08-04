@@ -13,6 +13,9 @@ export const QueryParamsSchema = z.object({
     name: z.string().optional(),
     pageIndex: z.number(),
     pageSize: z.number(),
+    sortBy: z.enum(['key', 'updatedAt']).optional(),
+    sortOrder: z.enum(['asc', 'desc']).optional(),
+    searchMode: z.enum(['prefix', 'fulltext']).optional(),
 });
 
 // 3. Infer types from schemas

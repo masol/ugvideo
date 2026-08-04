@@ -73,8 +73,22 @@ const rmMetaRes = os
             { concurrency: 6 }
         )
     });
+
+
+
+const getURL = os
+    .input(z.string())
+    .output(z.string())
+    .handler(async ({ input, context }) => {
+        const ctx = context as RpcContext;
+        const fullPath = ctx.project.getPath(input, true);
+        return `appfile://${fullPath}`
+    });
+
+
 export default {
     listMetaRes,
     addMetaRes,
     rmMetaRes,
+    getURL,
 }

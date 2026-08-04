@@ -8,7 +8,8 @@ function createBottomPanelStore() {
     let activeTab = $state("logger");
     const tabs = $state<BottomTab[]>([
         { id: "logger", label: "日志", badge: 0 },
-        { id: "dag", label: "DAG", badge: 0 }
+        { id: "dag", label: "DAG", badge: 0 },
+        { id: "media", label: "媒体", badge: 0 }
     ]);
 
     return {

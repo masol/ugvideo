@@ -28,6 +28,8 @@ class ProjectStore {
     #runState = $state<RunState>("idle");
     loading = $state<LoadingAction>(null);
 
+    mediaURL = $state<string>("");
+
     opened = $derived(this.#path.trim().length > 0)
     get path() {
         return this.#path;

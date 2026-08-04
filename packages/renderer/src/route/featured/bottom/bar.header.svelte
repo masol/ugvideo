@@ -3,6 +3,7 @@
 
   import {
     IconAlertTriangle,
+    IconMedicineSyrup,
     IconSparkleHighlight,
   } from "@tabler/icons-svelte";
   import type { Component } from "svelte";
@@ -11,6 +12,7 @@
   const iconMap: Record<string, Component<any>> = {
     logger: IconAlertTriangle as unknown as Component<any>,
     dag: IconSparkleHighlight as unknown as Component<any>,
+    media: IconMedicineSyrup as unknown as Component<any>,
   };
 </script>
 

@@ -2,7 +2,7 @@
 export interface IProjectContext {
     readonly path: string;
     readonly wid: number;
-    getPath(partName: string | string[]): string;
+    getPath(partName: string | string[], root?: boolean): string;
     notify(evtName: string, payload: unknown, srcId?: number): boolean;
     register<T extends IProjectController>(token: ServiceToken<T>): void;
     getService<T extends IProjectController>(token: ServiceToken<T>): T | null;

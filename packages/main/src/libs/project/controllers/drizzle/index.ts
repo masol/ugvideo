@@ -12,6 +12,7 @@ import { app } from "electron";
 import Logger from "electron-log/main.js";
 import { ensureDir, pathExists } from "fs-extra";
 import { dirname, join } from "path";
+import { getErrorMessage } from 'radashi';
 import { fileURLToPath } from "url";
 import { metaDirName, type EmbedKVStore, type IProjectContext } from "../../type.js";
 import { BaseProjectController } from "../base.js";
@@ -105,7 +106,12 @@ export class PrjDB extends BaseProjectController implements EmbedKVStore {
         this.dqlite.pragma('temp_store = MEMORY');
 
         this.db = drizzle(this.dqlite, { schema });
-        migrate(this.db, { migrationsFolder: this.migrationsPath });
+        try {
+            migrate(this.db, { migrationsFolder: this.migrationsPath });
+
+        } catch (e) {
+            Logger.error("[drizzle] 数据库迁移失败，尝试继续执行:", getErrorMessage(e))
+        }
     }
 
     private getInitedDB(): DrizzleDBType {

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { zodSchemaJsonType } from "./metagtype.js";
 
 export const metag = sqliteTable('metag', {
@@ -7,7 +7,7 @@ export const metag = sqliteTable('metag', {
     fieldKey: text('field_key').primaryKey(),
 
     intent: text('intent'),
-    
+
     // // dimesion信息(order)--当前版本只维护直接的dims拆分，无限递归的dims，需要使用SLD Resolution来合一(比如使用swi-prolog).
     dims: text('dims', { mode: 'json' })
         .$type<string[]>()
@@ -28,5 +28,7 @@ export const metag = sqliteTable('metag', {
         .default(sql`CURRENT_TIMESTAMP`)
         .$defaultFn(() => new Date().toISOString())
         .$onUpdate(() => new Date().toISOString()),
-});
+}, (table) => [
+    index('idx_metag_updated_at').on(table.updatedAt),
+]);
 

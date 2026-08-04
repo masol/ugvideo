@@ -1,8 +1,11 @@
 import { configStore } from '$lib/store/config.svelte';
+import { projectStore } from '$lib/store/project.svelte';
 import { confirmStore } from '$lib/store/ui/confirm.svelte';
+import { layoutStore } from '$lib/store/ui/layout.svelte';
 import { safeApi } from '$lib/utils/api';
 import Logger from 'electron-log/renderer';
 import * as monaco from 'monaco-editor';
+import { bottomPanelStore } from '../../featured/bottom/bar.store.svelte';
 import type { BlueprintKind } from '../../featured/rightside/glossary/store.svelte';
 
 export type { BlueprintKind };
@@ -260,10 +263,13 @@ export class EditorStore {
 
     async previewAsset(relative: string): Promise<string | null> {
         try {
-            // TODO: 对齐 main 侧 API 后启用
-            // const url = await (safeApi().project as any).readAssetDataURL(relative);
-            // return typeof url === 'string' && url.length > 0 ? url : null;
-            return null;
+
+            const url = await safeApi().project.getURL(relative);
+            projectStore.mediaURL = url;
+            // 开始确认打开下方面板打开。
+            layoutStore.openPanel("bottom");
+            bottomPanelStore.setActiveTab("media");
+            return url;
         } catch (e) {
             Logger.error(`[EditorStore] previewAsset failed: ${relative}`, e);
             return null;

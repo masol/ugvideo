@@ -3,7 +3,7 @@ import { configStore } from '$lib/store/config.svelte';
 import { projectStore } from '$lib/store/project.svelte';
 import { safeApi } from '$lib/utils/api';
 import type { BlueprintFilterOption, BlueprintKind } from '@app/main/types';
-import log from 'electron-log/renderer';
+import { default as log, default as Logger } from 'electron-log/renderer';
 import { debounce } from 'radashi';
 
 /* ── 蓝图类型（三张同构表）──────────────────────────────────── */
@@ -28,6 +28,9 @@ export type BlueprintPage = {
     pageSize: number
 }
 
+export type BlueprintSortBy = 'key' | 'updatedAt';
+export type BlueprintSortOrder = 'asc' | 'desc';
+
 function capaCanEdit(name: string | undefined): string {
     if (name?.startsWith('#code')) {
         return 'js'
@@ -47,6 +50,8 @@ class BlueprintStore {
     #name = $state('')
     #pageIndex = $state(0)
     #pageSize = $derived(configStore.itemsPerPage)
+    #sortBy = $state<BlueprintSortBy>('key')
+    #sortOrder = $state<BlueprintSortOrder>('asc')
 
     #items = $state.raw<BlueprintTerm[]>([])
     #total = $state(0)
@@ -61,6 +66,8 @@ class BlueprintStore {
     get name() { return this.#name }
     get pageIndex() { return this.#pageIndex }
     get pageSize() { return this.#pageSize }
+    get sortBy() { return this.#sortBy }
+    get sortOrder() { return this.#sortOrder }
     get items() { return this.#items }
     get total() { return this.#total }
     get isLoading() { return this.#isLoading }
@@ -107,7 +114,7 @@ class BlueprintStore {
                 const pattern = /^\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_state$/i;
                 const match = term.name.match(pattern);
                 if (match) {
-                    const uuid = match[1]; // 提取出的 UUID
+                    const uuid = match[1];
                     return uuid;
                 }
             }
@@ -119,7 +126,7 @@ class BlueprintStore {
     async doLoad(): Promise<void> {
         const seq = ++this.#requestSeq
         log.debug(
-            `[BlueprintStore] #doLoad() kind=${this.#kind}, name="${this.#name}", page=${this.#pageIndex}, size=${this.#pageSize}`,
+            `[BlueprintStore] #doLoad() kind=${this.#kind}, name="${this.#name}", page=${this.#pageIndex}, size=${this.#pageSize}, sort=${this.#sortBy}:${this.#sortOrder}`,
         )
         this.#isLoading = true
         this.#error = null
@@ -129,6 +136,8 @@ class BlueprintStore {
                 name: this.#name,
                 pageIndex: this.#pageIndex,
                 pageSize: this.#pageSize,
+                sortBy: this.#sortBy,
+                sortOrder: this.#sortOrder,
             })
             if (seq !== this.#requestSeq) {
                 log.debug(`[BlueprintStore] #doLoad() stale response dropped, seq=${seq}`)
@@ -166,6 +175,9 @@ class BlueprintStore {
         this.#kind = value
         this.#name = ''
         this.#pageIndex = 0
+        // 切换 kind 时把排序重置为安全默认值（避免上次状态误导）
+        this.#sortBy = 'key'
+        this.#sortOrder = 'asc'
         this.load()
     }
 
@@ -173,6 +185,38 @@ class BlueprintStore {
         log.debug(`[BlueprintStore] setName("${value}")`)
         this.#name = value
         this.#pageIndex = 0
+        this.load()
+    }
+
+    /**
+     * 设置排序键。若与当前一致则翻转方向，否则切到该键的默认方向。
+     * 设计：与 TanStack Table 风格的「点列头排序」交互一致。
+     * - key 列：默认 asc
+     * - updatedAt 列：默认 desc（一般看最新）
+     */
+    setSortBy(value: BlueprintSortBy): void {
+        if (this.#sortBy === value) {
+            this.setSortOrder(this.#sortOrder === 'asc' ? 'desc' : 'asc')
+            return
+        }
+        this.#sortBy = value
+        this.#sortOrder = value === 'updatedAt' ? 'desc' : 'asc'
+        this.#pageIndex = 0
+        this.load()
+    }
+
+    setSortOrder(value: BlueprintSortOrder): void {
+        if (this.#sortOrder === value) return
+        this.#sortOrder = value
+        this.#pageIndex = 0
+        this.load()
+    }
+
+    /** 直接跳转到指定页（0-based）。越界会被夹紧到合法范围。 */
+    goToPage(pageIndex: number): void {
+        const target = Math.max(0, Math.min(this.pageCount - 1, pageIndex | 0))
+        if (target === this.#pageIndex) return
+        this.#pageIndex = target
         this.load()
     }
 
@@ -186,6 +230,34 @@ class BlueprintStore {
         if (!this.canNext) return
         this.#pageIndex += 1
         this.load()
+    }
+
+    /**
+     * 检查指定 name 在当前 kind 下是否已存在。
+     * 用于「新建」前的唯一性预检，避免跳转到编辑器后发现冲突。
+     * 注：依赖 list API 的 name 搜索（默认 prefix 匹配）。调用方应当把
+     * 待检测的 name 视为「精确匹配」的诉求，命中即视为存在。
+     */
+    async checkNameExists(name: string): Promise<boolean> {
+        const trimmed = name.trim()
+        if (!trimmed) return false
+        log.debug(`[BlueprintStore] checkNameExists(kind=${this.#kind}, name="${trimmed}")`)
+        try {
+            switch (this.#kind) {
+                case 'capa':
+                case 'metag':
+                    Logger.error(`[checkNameExists] NOT IMPLEMENT ${this.#kind} check`)
+                    return false;
+                case 'glossary': {
+                    const result = await safeApi().project.get(trimmed);
+                    return result !== null
+                }
+            }
+        } catch (e) {
+            log.error('[BlueprintStore] checkNameExists() failed', e)
+            // 预检失败不应当假装「不存在」——保守地返回 true 让用户看到提示，避免覆盖。
+            throw e
+        }
     }
 
     async removeTerm(name: string): Promise<void> {

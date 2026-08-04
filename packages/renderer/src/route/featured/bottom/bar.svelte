@@ -14,6 +14,7 @@
   import BottomPanelTabs from "./bar.header.svelte";
   import { bottomPanelStore } from "./bar.store.svelte";
   import HookLogViewer from "./hooklog/HookLog.svelte";
+  import ViewerPanel from "./media/ViewerPanel.svelte";
 
   let isMaximized = $derived(layoutStore.maximizedPanel === "bottom");
 
@@ -148,6 +149,8 @@
         </div>
         <!-- ╭─── / DagEmptyState ───╮ -->
       {/if}
+    {:else if bottomPanelStore.activeTab === "media"}
+      <ViewerPanel />
     {/if}
   </div>
 </div>

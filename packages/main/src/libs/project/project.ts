@@ -70,17 +70,24 @@ export class ProjectContainer implements IProjectContext {
         return instance ? (instance as T) : null;
     }
 
-    getPath(partName: string | string[]): string {
-        switch (partName) {
-            case 'meta': // 项目
-                return metaDirName;
-            // case 'visualref': // 项目参考图。@todo: video专有，应该使用tapable(hookable)将其改为插件实现！
-            //     return join(this.#path, metaDirName, 'visualref');
+    getPath(partName: string | string[], root = false): string {
+        // 保留原有特殊逻辑：直接返回 meta 目录名（忽略 root 参数）
+        if (partName === 'meta') {
+            return metaDirName;
         }
-        if (Array.isArray(partName)) {
-            return join(this.#path, metaDirName, ...partName);
-        }
-        return join(this.#path, metaDirName, partName);
+
+        // 统一转为数组，方便后续处理
+        const parts = Array.isArray(partName) ? partName : [partName];
+
+        // 关键：将每个片段中的反斜杠替换为正斜杠
+        // 正斜杠在 Windows 和 Unix 上均被识别为路径分隔符，避免跨平台不一致
+        const normalizedParts = parts.map(p => p.replace(/\\/g, '/'));
+
+        // 根据 root 决定是否包含 meta 子目录
+        const base = root ? [] : [metaDirName];
+
+        // 使用 Node.js 的 path.join 拼接并自动规范化（处理 . 和 ..）
+        return join(this.#path, ...base, ...normalizedParts);
     }
 
 
