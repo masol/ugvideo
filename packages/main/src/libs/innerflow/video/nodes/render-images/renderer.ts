@@ -1,21 +1,115 @@
 // nodes/render-images/renderer.ts
 import { getSmartImage } from "$libs/model/index.js";
+import { throwUnprcessable } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
-import { generateImage } from 'ai';
-import { writeFile } from "fs/promises";
+import { generateImage } from "ai";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { RefImgStorage } from "../generate-reference-images/storage.js";
 import type { RenderTaskDescriptor } from "../generate-reference-images/types.js";
 import { RenderStorage } from "./storage.js";
 import type { ImageGenParams, RenderResult } from "./types.js";
 
-/** 全能参考图统一尺寸：16:9 2K（2048×1152）。可按目标模型支持尺寸调整。 */
+/** 全能参考图统一尺寸：16:9 2K（2048×1152）。 */
 const REFERENCE_SIZE_2K_16_9 = "2048x1152";
 
+/** 输出图像子目录（相对 prj.path） */
+const IMAGES_SUBDIR = "imgs";
+
+/** 调试用：只渲染一张图。true 时只跑第一个任务，后续直接跳过。 */
+let DEBUG_onlyOneCall = false;
+
 /**
- * 准备 generateImage 调用参数（本函数只组装参数，不真正调用）。
+ * 参考图读取缓存（绝对路径 → 字节流）。
+ * 生命周期由节点入口管理：进入 renderImages 时 init，退出时 clear。
+ * 同一文件在一次节点运行内只从磁盘读一次。
  *
- * 全能参考工作流：所有任务都是跨镜头一致性参考图，统一 16:9 2K。
- * 最终视频由下游 I2V/T2V 节点基于这套全能参考生成，本管线不渲染镜头帧。
+ * 安全性：单次运行内，每个参考图文件先被渲染（写一次），后被多个 dependent 读取，
+ * 不存在"读后又写同一文件"，故缓存内容在运行内稳定。
+ */
+let referenceCache: Map<string, Uint8Array> | null = null;
+
+export function initReferenceCache(): void {
+    referenceCache = new Map();
+}
+
+export function clearReferenceCache(): void {
+    referenceCache = null;
+}
+
+/**
+ * 根据 task id + seed 生成稳定、跨 OS 安全的文件名（不含扩展名）。
+ *
+ * - 同一 (taskId, seed) 永远得到同一文件名，便于可复现与断点续跑；
+ * - SHA-256 截前 12 位十六进制，碰撞概率 ≈ 1/2^48；
+ * - 16 进制仅含 [0-9a-f]，天然跨 OS 安全。
+ */
+function deriveFileStem(task: RenderTaskDescriptor, seed: number): string {
+    const kindPrefix = (() => {
+        switch (task.type) {
+            case "entity_refsheet": return "entity";
+            case "scene_environment": return "env";
+            case "uniform_turnaround": return "uniform";
+            case "group_photo": return "group";
+            default: return "ref";
+        }
+    })();
+    const hash = createHash("sha256")
+        .update(`${task.id}|${seed}`)
+        .digest("hex")
+        .slice(0, 12);
+    return `${kindPrefix}_${hash}`;
+}
+
+/**
+ * 读取单个参考图文件（带缓存）。
+ * 读取失败直接抛出——由调用方决定如何处理（不在此处静默吞掉）。
+ */
+async function readReferenceFile(ctx: IRunnerContext, absPath: string): Promise<Uint8Array> {
+    if (referenceCache?.has(absPath)) {
+        return referenceCache.get(absPath) as Uint8Array;
+    }
+    const buf = await readFile(absPath);
+    if (referenceCache) referenceCache.set(absPath, buf);
+    return buf;
+}
+
+/**
+ * 异步加载全部参考图为 Uint8Array[]，顺序与 referenceImages 一致。
+ *
+ * 失败即抛出（不静默跳过）：
+ * - file_path 为 null：上游依赖未渲染成功，缺少一致性锚点；
+ * - readFile 抛错：文件缺失或 IO 错误。
+ *
+ * 抛出后由 callImageAPI 捕获，使本任务干净失败并可重试，而非生成缺失参考的错误图。
+ */
+async function loadReferenceBytes(
+    ctx: IRunnerContext,
+    refImages: ImageGenParams["referenceImages"],
+): Promise<Uint8Array[]> {
+    const prjRoot = ctx.prj.path;
+    const out: Uint8Array[] = [];
+
+    for (const r of refImages) {
+        if (!r.file_path) {
+            throwUnprcessable(
+                `参考图 "${r.ref_id}"（${r.entity_name}）尚无渲染结果（file_path 为空），`
+                + `说明其上游渲染失败，无法保证一致性`,
+            );
+        }
+        const abs = path.isAbsolute(r.file_path) ? r.file_path : path.join(prjRoot, r.file_path);
+        try {
+            out.push(await readReferenceFile(ctx, abs));
+        } catch (err) {
+            throwUnprcessable(`读取参考图失败：${abs}（${(err as Error).message}）`);
+        }
+    }
+    return out;
+}
+
+/**
+ * 准备 generateImage 调用参数（纯内存组装，不做 IO）。
  */
 export function buildGenerateImageParams(
     ctx: IRunnerContext,
@@ -41,16 +135,14 @@ export function buildGenerateImageParams(
     };
 }
 
-let firstCall = false;
 /**
  * 调用图像生成 API 渲染单个任务。
  *
- * 用户实现：接收已备好的 generateImage 参数（params），调用 Vercel AI SDK 的 generateImage
- * （model 由调用方指定），返回落盘后的文件路径；失败返回 null。
- *
- * params 里的 referenceImages 已按 prompt 中"图1/图2…"的顺序排列：
- * - file_path 非空 → 直接作为参考图上传
- * - file_path 为空 → 按 ref_id 从渲染结果解析（依赖任务须先渲染）
+ * 流程：
+ *   1. 异步加载参考图字节流（缺失即抛错，任务干净失败）；
+ *   2. 把 prompt 包装成 { images, text } 形态传给 generateImage；
+ *   3. 拿到 image.uint8Array 后落盘到 prj.path/imgs/{stem}.jpg；
+ *   4. 返回相对路径。
  */
 export async function callImageAPI(
     ctx: IRunnerContext,
@@ -59,46 +151,51 @@ export async function callImageAPI(
 ): Promise<string | null> {
     ctx.debug(`[callImageAPI] task=${task.id} type=${task.type}`);
     ctx.debug(
-        `[callImageAPI] size=${params.size} `
-        + `seed=${params.seed} refs=${params.referenceImages.length} n=${params.n}`,
+        `[callImageAPI] size=${params.size} seed=${params.seed} `
+        + `refs=${params.referenceImages.length} n=${params.n}`,
     );
     ctx.debug(`[callImageAPI] prompt (first 300 chars):\n${params.prompt.slice(0, 300)}${params.prompt.length > 300 ? "\n..." : ""}`);
 
-    if (!firstCall) {
-        firstCall = true;
-        // TODO: 用户实现 —— 调用 Vercel AI SDK generateImage
-        // 示例：
-        // import { generateImage } from "ai";
-        const inputImages = params.referenceImages
-            .map(r => r.file_path ?? new RenderStorage(ctx).getRenderResult(r.ref_id)?.file_path)
-            .filter(Boolean);
+    try {
+        const bytes = await loadReferenceBytes(ctx, params.referenceImages);
+
+        const promptInput = bytes.length > 0
+            ? { images: bytes, text: params.prompt }
+            : params.prompt;
+
         const { image } = await generateImage({
             model: getSmartImage(undefined, ctx),
-            prompt: params.prompt,
+            prompt: promptInput,
             size: params.size as `${number}x${number}`,
             seed: params.seed,
             n: params.n,
-            // providerOptions: { /* 依赖参考图 inputImages 按 provider 约定透传 */ },
         });
 
-        ctx.error("inputImages=", inputImages)
-        // return await persistBase64(image.base64);
-        await writeFile('/home/masol/projects/unigen/cyberpunk-cat.png', image.uint8Array);
+        // 落盘
+        const stem = deriveFileStem(task, params.seed);
+        const filename = `${stem}.jpg`;
+        const absDir = path.join(ctx.prj.path, IMAGES_SUBDIR);
+        const absPath = path.join(absDir, filename);
+        const relPath = path.posix.join(IMAGES_SUBDIR, filename);
+
+        await mkdir(absDir, { recursive: true });
+        await writeFile(absPath, image.uint8Array);
+
+        ctx.info(`[callImageAPI] ${task.id} → ${relPath} (${image.uint8Array.length} bytes)`);
+        return relPath;
+    } catch (err) {
+        ctx.warn(`[callImageAPI] ${task.id} 渲染失败：${(err as Error).message ?? err}`);
+        return null;
     }
-    return null;
 }
 
 /**
- * 构建结构化提示词（模块化：参考声明前置 + 人物本体 + 全局一致性）。
+ * 构建结构化提示词（权重前置 + 全局一致性约束）。
  *
- * 采用"权重前置"的模块化结构：
+ * 模块化结构：
  *   ① 参考图使用说明（最高优先级，含每张参考图的强指令）
  *   ② 人物本体与画面描述（task.prompt 原文）
- *   ③ 全局一致性约束（声明"参考图已明确的服装/外观以参考图为准，文字仅作补充"）
- *
- * 关键：当存在制服/角色参考图时，② 中可能重复描述了服装，与参考图潜在冲突。
- * ③ 的优先级声明确保 AI 以参考图为准、文字仅补充参考图未清晰展示的细节，
- * 从而消除"AI 脑补服装 / 文字与参考图打架"的问题。
+ *   ③ 全局一致性约束（含服装优先级声明）
  */
 export function buildStructuredPrompt(
     ctx: IRunnerContext,
@@ -119,7 +216,7 @@ export function buildStructuredPrompt(
 
     const lines: string[] = [];
 
-    // ① 参考声明前置（权重前置）
+    // ① 参考声明前置
     lines.push("【参考图使用说明（最高优先级：与下方文字描述冲突时，一律以参考图为准）】");
     lines.push(`本次生成需融合以下 ${refImages.length} 张参考图，严格按各自用途提取视觉特征：`);
     lines.push("");
@@ -133,7 +230,7 @@ export function buildStructuredPrompt(
     lines.push(task.prompt);
     lines.push("");
 
-    // ③ 全局一致性约束（含服装优先级声明）
+    // ③ 全局一致性约束
     const clothingPrecedence = hasClothingRef
         ? "本角色的服装以上述制服/服装参考图为准；上方文字中的服装描述仅用于补充参考图未清晰展示的细节，若与参考图冲突一律以参考图为准。"
         : "";
@@ -260,19 +357,26 @@ export async function renderTask(
     ctx: IRunnerContext,
     task: RenderTaskDescriptor,
 ): Promise<RenderResult | null> {
+    // 调试开关：只跑一张图就跑完流程
+    if (DEBUG_onlyOneCall) {
+        ctx.warn(`[renderTask] onlyOneCall=true，已跳过 ${task.id}`);
+        return null;
+    }
+    DEBUG_onlyOneCall = true;
+
     const renderStore = new RenderStorage(ctx);
     const params = buildGenerateImageParams(ctx, task);
     renderStore.saveRenderParams(task.id, params);
 
-    const filePath = await callImageAPI(ctx, task, params);
-    if (!filePath) {
-        ctx.warn(`[renderTask] ${task.id} 渲染失败（或 callImageAPI 未实现），参数已备好待调用`);
+    const relPath = await callImageAPI(ctx, task, params);
+    if (!relPath) {
+        ctx.warn(`[renderTask] ${task.id} 渲染失败，参数已备好待重试`);
         return null;
     }
 
     return {
         id: task.id,
-        file_path: filePath,
+        file_path: relPath,
         rendered_at: Date.now(),
         prompt_used: params.prompt,
         seed: params.seed,

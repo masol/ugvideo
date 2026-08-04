@@ -17,8 +17,9 @@ export interface RenderResult {
  *
  * 全能参考工作流：所有任务都是跨镜头一致性参考图，统一 16:9 2K。
  *
- * - referenceImages：依赖参考图，顺序与 prompt 中"图1/图2…"文案严格一致，供多图参考（I2I）。
- *   file_path 在准备时尽力从已渲染结果解析；未渲染则为 null，调用方按 ref_id 自行解析。
+ * - referenceImages：依赖参考图元数据，顺序与 prompt 中"图1/图2…"文案严格一致。
+ *   file_path 是相对路径（imgs/xxx.jpg）；null 表示依赖尚未渲染（上游失败）。
+ *   实际字节流在 callImageAPI 里按需异步读取，不持久化进 params（避免二进制膨胀）。
  * - size：固定 16:9 2K。
  */
 export interface ImageGenParams {

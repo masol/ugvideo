@@ -117,10 +117,12 @@ export function parseItemsWithRegex(
 export function coerceItems(v: unknown): TreeItem[] {
     if (v == null) return [];
     if (typeof v === "string") {
-        // 字符串默认按行切；regex 解析交给 parseItemsWithRegex 自行处理
         return [];
     }
-    if (!Array.isArray(v)) return [];
+    if (!Array.isArray(v)) {
+        console.warn("[tree-util] coerceItems 遇到非数组值，返回空数组。若需展开对象字段，请用 TreeLevel.children（待实现）。", v);
+        return [];
+    }
     return v.map((x, i): TreeItem => normalizeOne(x, i));
 }
 
@@ -132,7 +134,6 @@ export function coerceChildrenFromUnknown(
     if (v == null) return [];
     if (typeof v === "string") {
         if (!childRegex) {
-            // 没正则就按行切，每行一个 id
             return v
                 .split(/\r?\n/)
                 .map((s) => s.trim())
@@ -149,7 +150,6 @@ function normalizeOne(x: unknown, i: number): TreeItem {
     if (x && typeof x === "object") {
         const o = x as Record<string, unknown>;
 
-        // {key, value} 简写形式
         if (
             "key" in o &&
             typeof o.key === "string" &&
@@ -164,7 +164,6 @@ function normalizeOne(x: unknown, i: number): TreeItem {
             };
         }
 
-        // 完整对象
         const id =
             typeof o.id === "string"
                 ? o.id
@@ -196,13 +195,6 @@ function stringifyScalar(v: unknown): string | undefined {
 
 /* ── 根解析 ────────────────────────────────────────────────────── */
 
-/**
- * 根 KV 值 → 根节点 + 根字段。
- *   - 字符串 + rootRegex → 正则解析
- *   - 字符串 + 无 rootRegex → 整段当一个根节点，自动注入 root.key = rootKey
- *   - 数组 → 直接按数组元素解析（每项是 string 或 {id,...} 或 {key,value}）
- *   - null/undefined → 空
- */
 export function parseRoot(
     raw: unknown,
     rootKey: string,
@@ -210,12 +202,10 @@ export function parseRoot(
 ): { items: TreeItem[]; rootFields: RootFields } {
     if (raw == null) return { items: [], rootFields: {} };
 
-    // 数组分支
     if (Array.isArray(raw)) {
         return { items: coerceItems(raw), rootFields: { key: rootKey } };
     }
 
-    // 字符串分支
     if (typeof raw === "string") {
         if (!raw) return { items: [], rootFields: { key: rootKey } };
         if (!rootRegex) {
@@ -229,7 +219,6 @@ export function parseRoot(
         return { items, rootFields: { ...fields, key: rootKey } };
     }
 
-    // 其它类型 → 空
     return { items: [], rootFields: { key: rootKey } };
 }
 

@@ -790,36 +790,67 @@
             }
         },
         {
-            "id": "assets",
-            "label": "素材库",
-            "icon": "IconLibraryPhoto",
+            "id": "scene-tree",
+            "label": "场景树",
+            "icon": "IconMovie",
             "panel": {
                 "type": "panel",
                 "children": [
                     {
                         "type": "tree",
-                        "rootKey": "episodes",
-                        "rootRegex": "^ep_(?<id>\\d+)_(?<label>.+)$",
+                        "rootKey": "#video:parse:idx:scenes",
                         "track": true,
-                        "emptyTitle": "还没有生成内容",
-                        "emptyIcon": "IconListTree",
+                        "emptyTitle": "还没有解析出场景，请先运行 parseScript",
+                        "emptyIcon": "IconMovie",
                         "levels": [
                             {
-                                "keyTemplate": "episode_{id}",
-                                "labelTemplate": "第 {n} 集 · {label}",
+                                "keyTemplate": "#video:parse:scene:{id}",
+                                "labelTemplate": "场景 {id}",
                                 "icon": "IconMovie",
                                 "openIcon": "IconFolderOpen"
                             },
                             {
-                                "keyTemplate": "{parent}_shot_{id}",
-                                "labelTemplate": "镜头 {n}",
-                                "icon": "IconCamera",
+                                "icon": "IconFileText",
                                 "leaf": true,
-                                "childRegex": "shot_(?<id>\\d+)",
                                 "actions": [
                                     {
                                         "type": "logOpen",
-                                        "keyTemplate": "{key}"
+                                        "keyTemplate": "{parent}"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "id": "entity-tree",
+            "label": "实体树",
+            "icon": "IconUsersGroup",
+            "panel": {
+                "type": "panel",
+                "children": [
+                    {
+                        "type": "tree",
+                        "rootKey": "#video:stage:registry:idx",
+                        "track": true,
+                        "emptyTitle": "还没有登记实体，请先运行 alignEntities",
+                        "emptyIcon": "IconUsersGroup",
+                        "levels": [
+                            {
+                                "keyTemplate": "#video:stage:registry:{id}",
+                                "labelTemplate": "{id}",
+                                "icon": "IconUser",
+                                "openIcon": "IconFolderOpen"
+                            },
+                            {
+                                "icon": "IconFileText",
+                                "leaf": true,
+                                "actions": [
+                                    {
+                                        "type": "logOpen",
+                                        "keyTemplate": "{parent}"
                                     }
                                 ]
                             }
