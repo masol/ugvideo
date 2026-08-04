@@ -859,5 +859,210 @@
                 ]
             }
         }
+    ],
+    "blueprintFilters": {
+        "glossary": [
+            {
+                "value": "#video:output:%",
+                "desc": "所有人类可读总览"
+            },
+            {
+                "value": "#video:render:result_%",
+                "desc": "所有已渲染图片路径"
+            },
+            {
+                "value": "#video:render:idx:rendered",
+                "desc": "已渲染任务id列表"
+            },
+            {
+                "value": "#video:render:seed_%",
+                "desc": "渲染任务seed"
+            },
+            {
+                "value": "#video:render:params_%",
+                "desc": "渲染任务图像生成参数"
+            },
+            {
+                "value": "#video:refimg:shot_%",
+                "desc": "视频镜头提示词"
+            },
+            {
+                "value": "#video:refimg:entity_%",
+                "desc": "实体定妆照提示词"
+            },
+            {
+                "value": "#video:refimg:env_%",
+                "desc": "场景环境图提示词"
+            },
+            {
+                "value": "#video:refimg:uniform_%",
+                "desc": "制服三视图提示词"
+            },
+            {
+                "value": "#video:refimg:render_tasks",
+                "desc": "渲染任务描述符列表"
+            },
+            {
+                "value": "#video:refimg:idx:entities",
+                "desc": "实体参考图索引"
+            },
+            {
+                "value": "#video:refimg:idx:scenes",
+                "desc": "环境图索引"
+            },
+            {
+                "value": "#video:refimg:idx:uniforms",
+                "desc": "制服索引"
+            },
+            {
+                "value": "#video:refimg:idx:shots_%",
+                "desc": "镜头索引"
+            },
+            {
+                "value": "#video:shots:design_%",
+                "desc": "分镜序列设计"
+            },
+            {
+                "value": "#video:shots:lighting_%",
+                "desc": "场景光照方案"
+            },
+            {
+                "value": "#video:shots:asset_%",
+                "desc": "实体素材扩写"
+            },
+            {
+                "value": "#video:shots:asset_constraints",
+                "desc": "全局素材约束累积"
+            },
+            {
+                "value": "#video:shots:intent_%",
+                "desc": "场景意图抽象"
+            },
+            {
+                "value": "#video:shots:idx:scenes",
+                "desc": "已设计场景列表"
+            },
+            {
+                "value": "#video:char:identity_%",
+                "desc": "角色身份推断"
+            },
+            {
+                "value": "#video:char:costume_%",
+                "desc": "角色场景服装"
+            },
+            {
+                "value": "#video:char:uniform_%",
+                "desc": "群体制服设计"
+            },
+            {
+                "value": "#video:char:idx:uniforms",
+                "desc": "制服名索引"
+            },
+            {
+                "value": "#video:char:render_decision_%",
+                "desc": "渲染策略决策"
+            },
+            {
+                "value": "#video:char:idx:scene_decisions_%",
+                "desc": "场景决策索引"
+            },
+            {
+                "value": "#video:stage:registry:idx",
+                "desc": "实体登记册索引"
+            },
+            {
+                "value": "#video:stage:registry:%",
+                "desc": "全局实体登记册"
+            },
+            {
+                "value": "#video:output:aligned_text_%",
+                "desc": "名称对齐后场景原文"
+            },
+            {
+                "value": "#video:stage:align:%",
+                "desc": "局部名到全局名映射"
+            },
+            {
+                "value": "#video:stage:time_skips:%",
+                "desc": "时间跳跃标记"
+            },
+            {
+                "value": "#video:stage:snapshots:%",
+                "desc": "场景快照引用"
+            },
+            {
+                "value": "#video:state:stage_%",
+                "desc": "结构化舞台"
+            },
+            {
+                "value": "#video:state:beat_nl_%",
+                "desc": "节拍时间线"
+            },
+            {
+                "value": "#video:state:worn_props_%",
+                "desc": "穿着道具增量"
+            },
+            {
+                "value": "#video:state:stage_nl_%",
+                "desc": "舞台NL草稿"
+            },
+            {
+                "value": "#video:stage:audit:state",
+                "desc": "登记册审计状态"
+            },
+            {
+                "value": "#video:parse:idx:scenes",
+                "desc": "场景id索引"
+            },
+            {
+                "value": "#video:parse:scene:%",
+                "desc": "场景元数据"
+            },
+            {
+                "value": "#video:parse:synopsis",
+                "desc": "剧本梗概"
+            },
+            {
+                "value": "#video:parse:format",
+                "desc": "剧本格式识别"
+            },
+            {
+                "value": "#video:parse:global_items",
+                "desc": "全局信息条目"
+            },
+            {
+                "value": "#video:parse:chunk_result:%",
+                "desc": "chunk处理结果缓存"
+            },
+            {
+                "value": "#video:parse:cursor",
+                "desc": "解析进度游标"
+            },
+            {
+                "value": "#video:output:render_overview",
+                "desc": "渲染总览"
+            },
+            {
+                "value": "#video:output:refimg_overview",
+                "desc": "参考图总览"
+            },
+            {
+                "value": "#video:output:shots_overview",
+                "desc": "分镜总览"
+            },
+            {
+                "value": "#video:output:stage_overview",
+                "desc": "实体对齐总览"
+            },
+            {
+                "value": "#video:output:char_design_overview",
+                "desc": "角色设计总览"
+            }
+        ],
+        "metag": [],
+        "capa": []
+    },
+    "mediaFields": [
+        "file_path"
     ]
 }

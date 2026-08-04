@@ -19,28 +19,22 @@
 
   let { term }: { term: BlueprintTerm } = $props();
 
-  // 是否允许「编辑内容」——由 store 决定（当前固定 true，逻辑由你实现）
   const editContentFmt = $derived(blueprintStore.canEditContent(term));
-
   const showDesignUUID = $derived(blueprintStore.canShowDesign(term));
 
   function handleEdit() {
-    // console.log("blueprintStore.kind=", blueprintStore.kind);
-    push(`/editor/${blueprintStore.kind}/${term.name}/`);
-  }
-
-  function forceMDFormat() {
-    // console.log("blueprintStore.kind=", blueprintStore.kind);
-    push(`/editor/${blueprintStore.kind}/${term.name}/markdown`);
+    // 名称可能含 # / 空格等对 hash 路由敏感的字符，必须编码
+    push(`/editor/${blueprintStore.kind}/${encodeURIComponent(term.name)}/`);
   }
 
   function handleEditContent() {
-    push(`/editor/${blueprintStore.kind}/${term.name}/${editContentFmt}`);
+    push(
+      `/editor/${blueprintStore.kind}/${encodeURIComponent(term.name)}/${editContentFmt}`,
+    );
   }
 
   function handleShowDesign() {
     if (showDesignUUID) {
-      // push(`/flow/view/${showDesignUUID}`);
       flowStore.init(showDesignUUID, "panel");
       layoutStore.openPanel("bottom");
       bottomPanelStore.setActiveTab("dag");
@@ -80,12 +74,6 @@
       <IconEdit size={20} stroke={1.5} />
       编辑
     </DropdownMenu.Item>
-    {#if blueprintStore.kind === "glossary"}
-      <DropdownMenu.Item class="rounded-lg" onclick={forceMDFormat}>
-        <IconFileText size={20} stroke={1.5} />
-        以MD格式编辑
-      </DropdownMenu.Item>
-    {/if}
     {#if editContentFmt.trim().length > 0}
       <DropdownMenu.Item class="rounded-lg" onclick={handleEditContent}>
         <IconFileText size={20} stroke={1.5} />

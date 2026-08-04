@@ -1,5 +1,4 @@
 <!-- src/lib/editor/EditorToolbar.svelte -->
-<!-- 顶部工具栏：仅通过 editorStore 读写状态，与其它子组件零直接通信。 -->
 <script lang="ts">
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -10,7 +9,6 @@
     IconArrowBackUp,
     IconArrowForwardUp,
     IconBrandJavascript,
-    IconCircleCheck,
     IconCommand,
     IconDeviceFloppy,
     IconFileDescription,
@@ -22,6 +20,7 @@
     IconTextWrap,
     IconWand,
   } from "@tabler/icons-svelte";
+  import PathAssetMenu from "./PathAssetMenu.svelte";
   import { editorStore as store } from "./store.svelte";
 
   const langIcon = $derived(
@@ -66,7 +65,7 @@
   <div
     class="flex shrink-0 items-center gap-3 border-b border-border/50 px-4 py-2.5"
   >
-    <!-- 左侧文件元信息 -->
+    <!-- 左侧文件元信息 + 素材下拉 -->
     <div class="flex min-w-0 items-center gap-3">
       {#if store.loading}
         {@const Icon = IconFileDescription}
@@ -94,10 +93,17 @@
       <Badge variant="secondary" class="ml-1 shrink-0 rounded-lg"
         >{store.kindLabel}</Badge
       >
+
+      <!-- 素材下拉：仅在 JSON 编辑器且识别到路径字段时出现 -->
+      {#if store.editorLang === "json" && store.pathAssets?.length > 0}
+        <div class="ml-1">
+          <PathAssetMenu assets={store.pathAssets} />
+        </div>
+      {/if}
     </div>
 
     <div class="ml-auto flex items-center gap-1.5">
-      <!-- ── 三个异步主操作 ── -->
+      <!-- ── 异步主操作：仅保留"保存"与"重新加载" ── -->
       {#if store.dirty}
         {@render toolBtn(
           "保存 (Ctrl+S)",
@@ -109,18 +115,13 @@
           },
         )}
       {/if}
-      {@render toolBtn("验证内容", IconCircleCheck, () => store.validate(), {
-        loading: store.busyAction === "validate",
-        disabled: store.busy && store.busyAction !== "validate",
-      })}
-
       {@render toolBtn("重新加载", IconReload, () => store.reload(), {
         loading: store.busyAction === "reload",
         disabled: store.busy && store.busyAction !== "reload",
       })}
       <Separator orientation="vertical" class="mx-1 h-6" />
 
-      <!-- ── 常用编辑功能（由组件自身实现）── -->
+      <!-- ── 常用编辑功能 ── -->
       {@render toolBtn("撤销", IconArrowBackUp, () => store.undo())}
       {@render toolBtn("重做", IconArrowForwardUp, () => store.redo())}
       {@render toolBtn("格式化文档", IconWand, () => store.format())}

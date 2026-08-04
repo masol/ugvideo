@@ -1,13 +1,18 @@
 import { configStore } from '$lib/store/config.svelte';
 import { confirmStore } from '$lib/store/ui/confirm.svelte';
 import { safeApi } from '$lib/utils/api';
+import Logger from 'electron-log/renderer';
 import * as monaco from 'monaco-editor';
 import type { BlueprintKind } from '../../featured/rightside/glossary/store.svelte';
 
 export type { BlueprintKind };
-/** Monaco 语言类型 —— 由 kind + id + content 派生得出 */
 export type EditorLang = 'markdown' | 'json' | 'js';
 export type CntParam = EditorLang | 'new' | ''
+
+export interface PathAsset {
+    fullKey: string;
+    relative: string;
+}
 
 interface LoadResult {
     content: string;
@@ -16,15 +21,7 @@ interface LoadResult {
 export interface RouteParams {
     kind: BlueprintKind;
     id: string;
-    contentFmt: CntParam; // 只有具有有效值(length>0)，说明编辑内容。
-}
-
-/** 校验结果条目 */
-export interface ValidationIssue {
-    severity: 'error' | 'warning';
-    line: number;
-    column: number;
-    message: string;
+    contentFmt: CntParam;
 }
 
 const MONACO_LANG: Record<EditorLang, string> = {
@@ -45,88 +42,81 @@ const LANG_LABEL: Record<EditorLang, string> = {
     js: 'JavaScript'
 };
 
-// 如果id的值为空，表示请求新建。
-
-/**
- * 编辑器状态枢纽（全局单例）—— 子组件全部读写 editorStore，彼此不直接通信。
- * 组件可频繁销毁/重建；只要身份指纹（kind+id+content）不变，即复用内存内容不重载。
- *
- * ⚠️ kind 是业务类型（glossary/metag/capa），不是语言类型。
- *    语言由 resolveLang(kind,id,content) 派生。
- */
 export class EditorStore {
-    private bCreateNew = false; // 本次编辑请求，是否为新建请求。
-    // ── 路由参数 ──
+    private bCreateNew = false;
+
     kind = $state<BlueprintKind>('glossary');
     id = $state<string>('');
-    /** 路由传入的 content 参数（是否随路由预置内容）-- 如果有值(length>0)，来指示编辑内容还是编辑Row. */
     contentFmt = $state<CntParam>('');
 
-    // ── 内容与状态 ──
     content = $state<string>('');
-    private loadedContent = $state<string>('');
+    loadedContent = $state<string>('');
 
-    /** 当前已加载内容的身份指纹；为空表示尚未加载 */
     private loadedKey: string | null = null;
 
     loading = $state<boolean>(false);
-    /** 任一异步动作（保存/重载/验证）进行中 —— 期间编辑区只读 */
     busy = $state<boolean>(false);
-    busyAction = $state<'save' | 'reload' | 'validate' | null>(null);
+    busyAction = $state<'save' | 'reload' | null>(null);
 
-    issues = $state<ValidationIssue[]>([]);
     lastError = $state<string | null>(null);
 
-    // ── 编辑器元信息（由 MonacoEditor 组件回写，供状态栏读取）──
     cursorLine = $state<number>(1);
     cursorColumn = $state<number>(1);
     selectionLength = $state<number>(0);
     wordWrap = $state<boolean>(true);
     minimap = $state<boolean>(true);
 
-    /**
-     * ── 语言解析（纯函数规则）──
-     * glossary + id 以 "_" 开头 → markdown（含 Frontmatter）
-     * glossary + 其它          → json（可能是纯字符串，仍走 json）
-     * capa + content=true      → js
-     * 其它                     → json（兜底）
-     */
     private resolveLang(
         kind: BlueprintKind,
         id: string,
-        content: string
+        content: CntParam,
+        loadedContent: string
     ): EditorLang {
         if (kind === 'glossary') {
-            if (content) {
-                return 'markdown';
-            }
-            return id.startsWith('_') ? 'markdown' : 'json';
+            if (content) return 'markdown';
+            return sniffContentLang(loadedContent);
         }
         if (kind === 'capa') {
-            if (content) {
-                return content as EditorLang;
-            }
+            if (content) return content as EditorLang;
         }
         return 'json';
     }
 
-    // ── 派生 ──
-    /** 当前编辑语言（Monaco 语言 id 的语义值） */
     editorLang = $derived(
-        this.resolveLang(this.kind, this.id, this.contentFmt)
+        this.resolveLang(this.kind, this.id, this.contentFmt, this.loadedContent)
     );
     language = $derived(MONACO_LANG[this.editorLang]);
-    /** 业务类型标签（Glossary/MetaG/Capa） */
     kindLabel = $derived(KIND_LABEL[this.kind]);
-    /** 语言标签（Markdown/JSON/JavaScript）—— 供状态栏/工具栏展示 */
     langLabel = $derived(LANG_LABEL[this.editorLang]);
     fileName = $derived(`${this.id || 'untitled'}.${this.extForLang(this.editorLang)}`);
     dirty = $derived(this.content !== this.loadedContent);
     readonly = $derived(this.busy || this.loading);
     charCount = $derived(this.content.length);
     lineCount = $derived(this.content.length === 0 ? 1 : this.content.split('\n').length);
-    errorCount = $derived(this.issues.filter((i) => i.severity === 'error').length);
-    warningCount = $derived(this.issues.filter((i) => i.severity === 'warning').length);
+
+    readonly pathAssets = $derived.by<PathAsset[]>(() => {
+        if (this.editorLang !== 'json') return [];
+        const text = this.content.trim();
+        if (!text) return [];
+
+        let obj: unknown;
+        try {
+            obj = JSON.parse(text);
+        } catch {
+            return [];
+        }
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return [];
+
+        const out: PathAsset[] = [];
+        for (const [key, val] of Object.entries(obj as Record<string, unknown>)) {
+            if (!/_path$/i.test(key)) continue;
+            if (typeof val !== 'string') continue;
+            const relative = val.trim();
+            if (!relative || !isRelativePath(relative)) continue;
+            out.push({ fullKey: key, relative });
+        }
+        return out;
+    });
 
     private extForLang(l: EditorLang): string {
         return l === 'markdown' ? 'md' : l === 'js' ? 'js' : 'json';
@@ -136,18 +126,10 @@ export class EditorStore {
         return `${p.kind}::${p.id}::${p.contentFmt}`;
     }
 
-    /**
-     * 由路由页面调用。身份指纹不变 → 直接复用当前 store，不重新加载。
-     * 仅同步参数字段（保持派生正确），内容与 loadedContent 原样保留。
-     */
     async init(params: RouteParams) {
         if (this.id === params.id && this.kind === params.kind) {
-            if ((params.contentFmt === 'new') && this.bCreateNew) {
-                return;
-            }
-            if (params.contentFmt === this.contentFmt) {
-                return;
-            }
+            if ((params.contentFmt === 'new') && this.bCreateNew) return;
+            if (params.contentFmt === this.contentFmt) return;
         }
         if (params.contentFmt === 'new') {
             this.bCreateNew = true;
@@ -155,7 +137,6 @@ export class EditorStore {
             this.loadedKey = null;
         } else {
             this.bCreateNew = false;
-            // 参数字段始终对齐（即便复用也要保证 kind/language 等派生正确）
             this.contentFmt = params.contentFmt;
         }
 
@@ -163,17 +144,10 @@ export class EditorStore {
         this.id = params.id;
         const key = this.fingerprint(params);
 
-        if (this.loadedKey === key && !this.loading) {
-            // 指纹一致：复用内存内容，跳过加载
-            return;
-        }
+        if (this.loadedKey === key && !this.loading) return;
         await this.load(key);
     }
 
-    /**
-     * 异步加载内容 —— 留空业务实现。
-     * ⚠️ 不再从数据源回写 kind；kind 恒由路由参数决定，语言由派生规则决定。
-     */
     async load(key?: string) {
         this.loading = true;
         this.lastError = null;
@@ -181,7 +155,6 @@ export class EditorStore {
             const result = this.bCreateNew ? { content: "" } : (await this.loadFromSource());
             this.content = result.content;
             this.loadedContent = result.content;
-            this.issues = [];
             this.loadedKey = key ?? this.fingerprint({
                 kind: this.kind,
                 id: this.id,
@@ -194,11 +167,6 @@ export class EditorStore {
         }
     }
 
-    // ────────────────────────────────────────────────────────────
-    //  异步业务钩子 —— 留空，仅演示锁定/解锁语义
-    // ────────────────────────────────────────────────────────────
-
-    /** 保存（异步）—— 执行期间 readonly=true，内容区不可操作 */
     async save() {
         if (this.busy) return;
         if (!configStore.silentSave) {
@@ -208,27 +176,34 @@ export class EditorStore {
                 confirmLabel: "保存",
                 destructive: true
             })
-            if (!confirm) {
-                return;
-            }
+            if (!confirm) return;
         }
         this.busy = true;
         this.busyAction = 'save';
         try {
-            safeApi().project.setContent({
+            const code = this.contentFmt.length > 0;
+            let payload = this.content;
+
+            // 术语表在非 code 模式下，存储的必须是合法的 JSON 值。
+            // 当编辑器语言不是 JSON（即用户编辑纯文本/markdown 等）时，需要将其包裹为 JSON 字符串。
+            // 这样后端 JSON.parse 后才能得到正确的字符串原始值。
+            if (this.kind === 'glossary' && !code && this.editorLang !== 'json') {
+                payload = JSON.stringify(this.content);
+            }
+
+            await safeApi().project.setContent({
                 id: this.id,
                 kind: this.kind,
-                content: this.content,
-                code: this.contentFmt.length > 0
-            })
-            this.loadedContent = this.content; // 保存成功后基线对齐
+                content: payload,
+                code
+            });
+            this.loadedContent = this.content;
         } finally {
             this.busy = false;
             this.busyAction = null;
         }
     }
 
-    /** 重新加载（异步）—— 强制覆盖当前编辑内容（忽略指纹缓存） */
     async reload() {
         if (this.busy) return;
         this.busy = true;
@@ -237,7 +212,6 @@ export class EditorStore {
             const result = await this.loadFromSource();
             this.content = result.content;
             this.loadedContent = result.content;
-            this.issues = [];
             this.loadedKey = this.fingerprint({
                 kind: this.kind,
                 id: this.id,
@@ -249,27 +223,6 @@ export class EditorStore {
         }
     }
 
-    /** 校验（异步）—— 结果写入 issues */
-    async validate() {
-        if (this.busy) return;
-        this.busy = true;
-        this.busyAction = 'validate';
-        try {
-            safeApi().project.verifyContent({
-                id: this.id,
-                kind: this.kind,
-                content: this.content,
-                code: this.contentFmt.length > 0
-            })
-            this.issues = [];
-        } finally {
-            this.busy = false;
-            this.busyAction = null;
-        }
-    }
-
-    // ── 编辑区常用功能（由我实现，非留空）──
-
     private _editor: monaco.editor.IStandaloneCodeEditor | null = null;
     attachEditor(ed: monaco.editor.IStandaloneCodeEditor) {
         this._editor = ed;
@@ -277,7 +230,6 @@ export class EditorStore {
     detachEditor(ed?: monaco.editor.IStandaloneCodeEditor) {
         if (!ed || this._editor === ed) this._editor = null;
     }
-    /** 聚焦后延一帧执行：确保焦点事件已派发到 Monaco 焦点跟踪器 */
     private runFocused(fn: (ed: monaco.editor.IStandaloneCodeEditor) => void) {
         const ed = this._editor;
         if (!ed) return;
@@ -288,27 +240,13 @@ export class EditorStore {
             fn(cur);
         });
     }
-    undo() {
-        this.runFocused((ed) => ed.trigger('toolbar', 'undo', null));
-    }
-    redo() {
-        this.runFocused((ed) => ed.trigger('toolbar', 'redo', null));
-    }
-    format() {
-        this.runFocused((ed) => ed.getAction('editor.action.formatDocument')?.run());
-    }
-    find() {
-        this.runFocused((ed) => ed.getAction('actions.find')?.run());
-    }
-    commandPalette() {
-        this.runFocused((ed) => ed.getAction('editor.action.quickCommand')?.run());
-    }
-    toggleWordWrap() {
-        this.wordWrap = !this.wordWrap;
-    }
-    toggleMinimap() {
-        this.minimap = !this.minimap;
-    }
+    undo() { this.runFocused((ed) => ed.trigger('toolbar', 'undo', null)); }
+    redo() { this.runFocused((ed) => ed.trigger('toolbar', 'redo', null)); }
+    format() { this.runFocused((ed) => ed.getAction('editor.action.formatDocument')?.run()); }
+    find() { this.runFocused((ed) => ed.getAction('actions.find')?.run()); }
+    commandPalette() { this.runFocused((ed) => ed.getAction('editor.action.quickCommand')?.run()); }
+    toggleWordWrap() { this.wordWrap = !this.wordWrap; }
+    toggleMinimap() { this.minimap = !this.minimap; }
 
     setCursor(line: number, column: number, selLen: number) {
         this.cursorLine = line;
@@ -316,56 +254,88 @@ export class EditorStore {
         this.selectionLength = selLen;
     }
 
-    /** mock 数据源 —— 按派生语言生成示例，脱离外部依赖也能完整渲染 */
+    onContentChanged(_next: string): void {
+        // no-op：pathAssets 自动跟随 content 派生。
+    }
+
+    async previewAsset(relative: string): Promise<string | null> {
+        try {
+            // TODO: 对齐 main 侧 API 后启用
+            // const url = await (safeApi().project as any).readAssetDataURL(relative);
+            // return typeof url === 'string' && url.length > 0 ? url : null;
+            return null;
+        } catch (e) {
+            Logger.error(`[EditorStore] previewAsset failed: ${relative}`, e);
+            return null;
+        }
+    }
+
+    async openAsset(relative: string): Promise<void> {
+        try {
+            await safeApi().system.openPath({ path: relative });
+        } catch (e) {
+            Logger.error(`[EditorStore] openAsset failed: ${relative}`, e);
+        }
+    }
+
     private async loadFromSource(): Promise<LoadResult> {
-        if (!this.id) {
-            // @TODO: 根据kind,创建模板。
-            return {
-                content: ""
+        if (!this.id) return { content: "" };
+
+        const code = this.contentFmt.length > 0;
+        const raw = await safeApi().project.getContent({
+            kind: this.kind,
+            id: this.id,
+            content: code
+        });
+
+        if (!raw) return { content: "" };
+
+        // 术语表非 code 模式下，存储的是 JSON 值，需要还原为编辑器显示文本。
+        if (this.kind === 'glossary' && !code) {
+            try {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed === 'string') {
+                    // 纯文本内容（如 markdown 原文），直接作为编辑内容
+                    return { content: parsed };
+                } else {
+                    // 对象/数组等，格式化为 JSON 字符串供编辑器展示
+                    return { content: JSON.stringify(parsed, null, 2) };
+                }
+            } catch {
+                // 兼容旧数据：未包装的纯文本（可能无引号），直接使用
+                return { content: raw };
             }
         }
 
-        const content = await safeApi().project.getContent({
-            kind: this.kind,
-            id: this.id,
-            content: this.contentFmt.length > 0
-        });
-
-        return {
-            content
-        }
-
-
-        // await this.mockAsync(650);
-        // const lang = this.resolveLang(this.kind, this.id, this.contentFmt);
-
-        // if (lang === 'markdown') {
-        //     return {
-        //         content: `---\ntitle: ${this.id || 'Untitled'}\nkind: ${this.kind}\ntags: [glossary, markdown]\n---\n\n# ${this.id || 'Untitled'} 词条\n\n> 带 Frontmatter 的 Markdown 文档。\n\n## 说明\n\n- 以 \`_\` 开头的 glossary 词条走 Markdown 渲染。\n`
-        //     };
-        // }
-        // if (lang === 'js') {
-        //     return {
-        //         content: `// ${this.id || 'capability'}.js — capa 能力脚本（纯 JS）\n// 输入 "app." 或 "db." 触发补全项\n\nconst result = app.\n\ndb.query("SELECT * FROM users");\n`
-        //     };
-        // }
-        // // json（含 glossary 非下划线，可能是纯字符串场景）
-        // return {
-        //     content: JSON.stringify(
-        //         {
-        //             id: this.id || 'sample',
-        //             kind: this.kind,
-        //             payload: { autosave: true, wordWrap: 'on' },
-        //             tags: ['electron', 'monaco', this.kind]
-        //         },
-        //         null,
-        //         2
-        //     )
-        // };
+        // 其他情况（code 模式或非 glossary）直接使用原始内容
+        return { content: raw };
     }
 }
 
-/** ── 全局唯一实例：所有子组件共用 ── */
 const KEY = Symbol.for('unigen.renderer.editorStore');
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const editorStore: EditorStore = ((globalThis as any)[KEY] ??= new EditorStore());
+
+function sniffContentLang(text: string): EditorLang {
+    const t = text.trim();
+    if (!t) return 'json';
+    const head = t[0];
+    if (head === '{' || head === '[') {
+        try {
+            const v = JSON.parse(t);
+            if (v && typeof v === 'object') return 'json';
+        } catch { /* fallthrough */ }
+    }
+    return 'markdown';
+}
+
+function isRelativePath(p: string): boolean {
+    const v = p.trim();
+    if (!v) return false;
+    if (v.startsWith('/')) return false;
+    if (v.startsWith('\\\\')) return false;
+    if (/^[a-zA-Z]:[\\/]/.test(v)) return false;
+    if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(v)) return false;
+    if (/^(data|blob):/i.test(v)) return false;
+    return true;
+}

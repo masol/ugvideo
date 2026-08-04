@@ -1,7 +1,8 @@
 // $lib/components/glossary/glossary-store.svelte.ts
 import { configStore } from '$lib/store/config.svelte';
+import { projectStore } from '$lib/store/project.svelte';
 import { safeApi } from '$lib/utils/api';
-import type { BlueprintKind } from '@app/main/types';
+import type { BlueprintFilterOption, BlueprintKind } from '@app/main/types';
 import log from 'electron-log/renderer';
 import { debounce } from 'radashi';
 
@@ -72,6 +73,16 @@ class BlueprintStore {
     readonly kindLabel = $derived(
         BLUEPRINT_OPTIONS.find((o) => o.value === this.#kind)?.label ?? '术语表',
     )
+
+    /**
+     * 当前 kind 对应的候选项（带描述）。
+     * 数据来源：全局 projectStore.activity.blueprintFilters（由 main 下发）。
+     * 空数组/未设置 → toolbar 仅显示纯 Input（与现状一致）。
+     */
+    readonly kindFilterOptions = $derived<BlueprintFilterOption[]>(
+        projectStore.activity?.blueprintFilters?.[this.#kind] ?? [],
+    )
+    readonly hasFilterOptions = $derived(this.kindFilterOptions.length > 0)
 
     /** 防抖包装：短时间内多次触发合并为一次真实 API 调用 */
     #debouncedLoad = debounce({ delay: LOAD_DEBOUNCE_MS }, () => {

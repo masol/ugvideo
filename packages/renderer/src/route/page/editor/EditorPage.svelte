@@ -12,9 +12,9 @@
     params = {},
   }: {
     params?: { kind?: string; id?: string; content?: CntParam };
+    // onOpenMedia 回调已移除，素材操作仅通过 PathAssetMenu（MonacoEditor 内部）实现
   } = $props();
 
-  // main 不判断语言，只把 kind 原样透传（仅做合法性兜底）
   const kind = $derived<BlueprintKind>(
     params.kind === "metag" || params.kind === "capa"
       ? (params.kind as BlueprintKind)
@@ -34,6 +34,7 @@
   class="flex h-full w-full min-h-0 flex-col overflow-hidden bg-background text-foreground"
 >
   <EditorToolbar />
+
   <div class="relative min-h-0 flex-1">
     <MonacoEditor />
   </div>

@@ -1,7 +1,6 @@
-
 import DynEntry from '$lib/components/dyn/Entry.svelte';
 import type { Step } from '$lib/components/ui/walkthrough/ctx';
-import type { InfoCardView, ProjectActivityData, TargetOption } from '@app/main/types';
+import type { BlueprintFilters, InfoCardView, ProjectActivityData, TargetOption } from '@app/main/types';
 import { layoutStore } from '../layout.svelte';
 import type { IValueService } from './type';
 import { ValueService } from './value-service.svelte';
@@ -57,6 +56,20 @@ export class ProjectActivity {
     readonly targets: TargetOption[] = []
     readonly service: IValueService;
 
+    /**
+     * 蓝图（术语表/元术语表/能力表）名称候选。
+     * 由 main 下发的项目级配置，UI 层通过 projectStore.activity?.blueprintFilters 读取。
+     * undefined = 不提供候选（工具栏退回纯文本输入）。
+     */
+    readonly blueprintFilters: BlueprintFilters | undefined;
+
+    /**
+     * 媒体资源字段白名单（如 ["image_path","audio_path"]）。
+     * 编辑器读取 JSON 后，按此白名单筛出"素材"下拉。
+     * 空数组 = 不渲染素材下拉。UI 层通过 projectStore.activity?.mediaFields 读取。
+     */
+    readonly mediaFields: string[];
+
     constructor(data: ProjectActivityData) {
         this.clearTop();
         this.icon = data.icon
@@ -90,6 +103,10 @@ export class ProjectActivity {
             ];
         }
         this.inputKey = data.checkInput?.key || "script";
+
+        // ── 项目级配置：只做持有，不反向调用任何 UI/route store ──
+        this.blueprintFilters = data.blueprintFilters;
+        this.mediaFields = data.mediaFields ?? [];
 
         this.service = new ValueService();
 
