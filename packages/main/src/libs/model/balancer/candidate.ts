@@ -24,7 +24,8 @@ export enum SortStrategy {
 export const DEFAULT_SORT = SortStrategy.VersionDesc;
 
 export interface SelectOptions {
-    category: ModelTags.TextGeneration | ModelTags.ImageGeneration;
+    /** 目标类别标签，例如 TextGeneration、ImageGeneration、VideoGeneration 等 */
+    category: ModelTags;
     requiredAbilities?: ModelTags[];
     preferVersion?: ModelTags;
     minScore?: number;

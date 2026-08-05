@@ -22,6 +22,9 @@ function ensureDefaultConfig(prjdb: ReturnType<typeof PrjDB.ensure>): void {
     const defaults: Record<string, string> = {
         "config:pace": "normal",
         "config:aspectRatio": "9:16",
+        "config:resolution": "480p",
+        "config:frameRate": "24",
+        "config:duration": "3min",
         "config:style": "cinematic",
         "config:audience": "pg",
         "config:colorTone": "neutral",

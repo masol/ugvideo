@@ -254,7 +254,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "resolution"
+                                    "key": "config:resolution"
                                 },
                                 "label": "分辨率",
                                 "icon": "IconDeviceTv",
@@ -301,7 +301,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "frameRate"
+                                    "key": "config:frameRate"
                                 },
                                 "label": "帧率",
                                 "icon": "IconGauge",
@@ -366,7 +366,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "duration"
+                                    "key": "config:duration"
                                 },
                                 "label": "单集长度",
                                 "icon": "IconClock",
@@ -1057,6 +1057,34 @@
             {
                 "value": "#video:output:char_design_overview",
                 "desc": "角色身份+服装设计总览"
+            },
+            {
+                "value": "#video:video:result_%",
+                "desc": "已渲染视频片段结果（路径/时长/种子）"
+            },
+            {
+                "value": "#video:video:idx:rendered",
+                "desc": "已成功渲染的视频 segment 列表"
+            },
+            {
+                "value": "#video:video:params_%",
+                "desc": "单段视频的完整生成参数（含 resolution/fps 等视频规格）"
+            },
+            {
+                "value": "#video:video:seed_%",
+                "desc": "视频渲染种子（删除可换随机结果）"
+            },
+            {
+                "value": "#video:video:segment_%",
+                "desc": "单 segment KV：≤15s 一镜到底的视频生成单元（prompt/对白/参考图）"
+            },
+            {
+                "value": "#video:video:idx:segments_%",
+                "desc": "本场景已切分出的 segment idx 列表"
+            },
+            {
+                "value": "#video:video:concat_plan",
+                "desc": "ffmpeg 拼接计划（含按 config:duration 切分的 episodes[] 集列表）"
             }
         ],
         "metag": [],
