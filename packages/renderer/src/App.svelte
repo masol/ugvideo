@@ -5,6 +5,7 @@
   import ErrorScreen from "$lib/components/error-screen.svelte";
   import LoadingScreen from "$lib/components/loading-screen.svelte";
   import Tour from "$lib/components/Tour.svelte";
+  import * as ImageZoom from "$lib/components/ui/image-zoom/index";
   import { Toaster } from "$lib/components/ui/sonner";
   import { configStore } from "$lib/store/config.svelte";
   import { i18nStore } from "$lib/store/i18n.svelte";
@@ -104,52 +105,54 @@
 
 <Toaster position="bottom-right" richColors></Toaster>
 <ModeWatcher />
-<Tour></Tour>
-<Confirm></Confirm>
-<!-- 整窗：占满视口，外层不滚动 -->
-<div class="app-shell">
-  <AnimatePresence list={[{ key: view }]}>
-    {#if initError}
-      <Motion
-        let:motion
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.4, ease: "easeOut" }}
-      >
-        <div use:motion class="app-fill">
-          <ErrorScreen error={initError} />
-        </div>
-      </Motion>
-    {:else if ready}
-      <Motion
-        let:motion
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-      >
-        <div use:motion class="app-fill">
-          <Layout />
-        </div>
-      </Motion>
-    {:else}
-      <Motion
-        let:motion
-        initial={{ opacity: 1 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.4, ease: "easeIn" }}
-      >
-        <div use:motion class="app-fill">
-          <LoadingScreen />
-        </div>
-      </Motion>
-    {/if}
-  </AnimatePresence>
-</div>
+<ImageZoom.Root gallery={false}>
+  <Tour></Tour>
+  <Confirm></Confirm>
+  <!-- 整窗：占满视口，外层不滚动 -->
+  <div class="app-shell">
+    <AnimatePresence list={[{ key: view }]}>
+      {#if initError}
+        <Motion
+          let:motion
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.4, ease: "easeOut" }}
+        >
+          <div use:motion class="app-fill">
+            <ErrorScreen error={initError} />
+          </div>
+        </Motion>
+      {:else if ready}
+        <Motion
+          let:motion
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+        >
+          <div use:motion class="app-fill">
+            <Layout />
+          </div>
+        </Motion>
+      {:else}
+        <Motion
+          let:motion
+          initial={{ opacity: 1 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.4, ease: "easeIn" }}
+        >
+          <div use:motion class="app-fill">
+            <LoadingScreen />
+          </div>
+        </Motion>
+      {/if}
+    </AnimatePresence>
+  </div>
 
-<DialogHost />
+  <DialogHost />
+</ImageZoom.Root>
 
 <style>
   /* 整窗接管：占满视口，外层不滚动 */

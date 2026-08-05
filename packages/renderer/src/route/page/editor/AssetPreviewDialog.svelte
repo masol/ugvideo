@@ -1,5 +1,6 @@
 <!-- src/lib/editor/AssetPreviewDialog.svelte -->
 <script lang="ts">
+  import * as ImageZoom from "$lib/components/ui/image-zoom/index";
   import type { DialogComponentProps } from "$lib/types/dialog";
   import { IconFileText } from "@tabler/icons-svelte";
   import VideoPlayer from "svelte-video-player";
@@ -35,11 +36,9 @@
   });
 
   let scale = $state(1);
-  let imgViewerKey = $state(0);
 
   function resetScale() {
     scale = 1;
-    imgViewerKey += 1;
   }
 </script>
 
@@ -64,14 +63,17 @@
         </div>
       </div>
     {:else if kind === "image"}
-      {#key imgViewerKey}
-        <div
-          class="flex h-full w-full items-center justify-center overflow-hidden"
-          style="transform: scale({scale}); transform-origin: center; transition: transform 0.2s ease;"
-        >
-          <img {src} alt={label} class="max-h-full max-w-full object-contain" />
-        </div>
-      {/key}
+      <!-- 使用 ImageZoom 自动全屏放大，无需手动处理点击 -->
+      <div
+        class="flex h-full w-full items-center justify-center overflow-hidden"
+        style="transform: scale({scale}); transform-origin: center; transition: transform 0.2s ease;"
+      >
+        <ImageZoom.Trigger
+          {src}
+          alt={label}
+          class="max-h-full max-w-full object-contain cursor-zoom-in"
+        />
+      </div>
     {:else if kind === "video"}
       <div
         class="flex h-full w-full items-center justify-center overflow-hidden"
