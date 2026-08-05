@@ -64,7 +64,7 @@ export const tagLabels: Record<ModelTags, string> = {
     "audio-understanding": "语音识别",
     "embedding": "嵌入",
     "rerank": "重排",
-    "bgm": "背景音乐",
+    "bgm": "音乐音效",
     "ultra": "旗舰版",
     "plus": "专业版",
     "flash": "轻量版",

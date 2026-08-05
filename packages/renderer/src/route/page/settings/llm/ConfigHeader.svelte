@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button";
   import {
-    IconPlus,
-    IconServer,
     IconBrain,
     IconDeviceDesktop,
+    IconPlus,
+    IconServer,
   } from "@tabler/icons-svelte";
 
   let {
@@ -22,9 +22,9 @@
 
 <header class="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
   <div class="space-y-2">
-    <h1 class="text-2xl font-semibold tracking-tight lg:text-3xl">语言模型配置</h1>
+    <h1 class="text-2xl font-semibold tracking-tight lg:text-3xl">AIGC模型配置</h1>
     <p class="text-sm text-muted-foreground">
-      管理 AI 服务提供商及其支持的模型
+      管理 AIGC 服务提供商及其支持的模型
     </p>
     <div class="flex items-center gap-3 pt-1 text-xs text-muted-foreground">
       <span class="flex items-center gap-1.5">

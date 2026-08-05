@@ -2,9 +2,8 @@
 <script lang="ts">
   import PromptDialog from "$lib/components/dialog/Prompt.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { Input } from "$lib/components/ui/input/index.js";
   import { dialogStore } from "$lib/store/ui/dialog.svelte";
-  import { IconPlus, IconRefresh, IconSearch } from "@tabler/icons-svelte";
+  import { IconPlus, IconRefresh } from "@tabler/icons-svelte";
   import Logger from "electron-log/renderer";
   import { debounce, getErrorMessage } from "radashi";
   import { push } from "svelte-spa-router";
@@ -13,8 +12,8 @@
   import { blueprintStore } from "./store.svelte.js";
 
   const DEBOUNCE_MS = 400;
-  let localValue = $derived(blueprintStore.name);
 
+  /** 需要 debounce 的提交（下拉关闭、blur 等） */
   const debouncedSet = debounce({ delay: DEBOUNCE_MS }, (value: string) => {
     blueprintStore.setName(value);
   });
@@ -22,6 +21,17 @@
   $effect(() => {
     return () => debouncedSet.cancel();
   });
+
+  /** 立即提交（选中候选项、清空） */
+  function handleComboCommit(text: string) {
+    debouncedSet.cancel();
+    blueprintStore.setName(text);
+  }
+
+  /** 延迟提交（下拉关闭） */
+  function handleComboInput(text: string) {
+    debouncedSet(text);
+  }
 
   let isRefreshing = $state(false);
 
@@ -48,41 +58,12 @@
     }
   }
 
-  function handleInput(e: Event & { currentTarget: HTMLInputElement }) {
-    localValue = e.currentTarget.value;
-    debouncedSet(localValue);
-  }
-
-  function commitNow() {
-    debouncedSet.cancel();
-    blueprintStore.setName(localValue);
-  }
-
-  function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commitNow();
-    }
-  }
-
-  function handleComboInput(text: string) {
-    debouncedSet(text);
-  }
-  function handleComboCommit(text: string) {
-    debouncedSet.cancel();
-    blueprintStore.setName(text);
-  }
-
   /**
    * 新建流程：
    *   1. 弹窗收集新名称（trim 后非空）
    *   2. 先调用 blueprintStore.checkNameExists(name) 做唯一性预检
    *   3. 已存在 → 弹出错误提示，不跳转
    *   4. 不存在 → 跳转到编辑器（/new 路由）
-   *
-   * 注意：预检和跳转之间存在一个理论竞态窗口（别的客户端可能并发创建同名条目）。
-   * 这点我**不确认**是否要紧——单用户本地编辑器场景下，按用户交互节奏基本不会发生，
-   * 所以不引入乐观锁 / 服务端二次校验。如果你在意，告诉我即可。
    */
   async function handleCreate() {
     const name = await dialogStore.safeShow(
@@ -92,17 +73,16 @@
         label: "新名称",
         placeholder: "请输入新的名称（不能与当前值冲突）",
         initialValue: "",
-        required: true, // 非空校验由 PromptDialog 处理
+        required: true,
         validator: async (val: string) => {
           const trimmed = val.trim();
-          // required 已经保证非空，但防御性处理
           if (!trimmed) return "名称不能为空";
           try {
             const exists = await blueprintStore.checkNameExists(trimmed);
             if (exists) {
-              return `名称“${trimmed}”已存在，请使用其他名称`;
+              return `名称"${trimmed}"已存在，请使用其他名称`;
             }
-            return ""; // 返回空字符串表示验证通过
+            return "";
           } catch (err) {
             Logger.error("[glossary-toolbar] 预检失败：", err);
             return `无法校验名称唯一性：${getErrorMessage(err)}`;
@@ -112,10 +92,8 @@
       { size: "sm" },
     );
 
-    // 用户取消或验证失败（对话框不会关闭）→ 返回 undefined/null
     if (!name) return;
 
-    // 验证通过后跳转到编辑器
     push(`/editor/${blueprintStore.kind}/${encodeURIComponent(name)}/new`);
   }
 </script>
@@ -149,29 +127,12 @@
     </div>
   </div>
 
-  {#if blueprintStore.hasFilterOptions}
-    <NameFilterCombobox
-      value={blueprintStore.name}
-      options={blueprintStore.kindFilterOptions}
-      placeholder="搜索名称 / 拼音 / 描述…"
-      onInput={handleComboInput}
-      onCommit={handleComboCommit}
-    />
-  {:else}
-    <div class="relative">
-      <span
-        class="pointer-events-none absolute inset-y-0 inset-s-0 flex items-center ps-3 text-muted-foreground"
-      >
-        <IconSearch size={20} stroke={1.5} />
-      </span>
-      <Input
-        placeholder="按名称过滤…"
-        value={localValue}
-        oninput={handleInput}
-        onblur={commitNow}
-        onkeydown={handleKeydown}
-        class="w-full rounded-xl ps-10"
-      />
-    </div>
-  {/if}
+  <!-- 统一使用 Combobox：有候选项时支持下拉选择，无候选项时作为纯输入框 -->
+  <NameFilterCombobox
+    value={blueprintStore.name}
+    options={blueprintStore.kindFilterOptions}
+    placeholder="搜索名称 / 拼音 / 描述…"
+    onInput={handleComboInput}
+    onCommit={handleComboCommit}
+  />
 </div>

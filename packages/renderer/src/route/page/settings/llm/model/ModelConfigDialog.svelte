@@ -3,6 +3,7 @@
   import * as Alert from "$lib/components/ui/alert";
   import { Button } from "$lib/components/ui/button";
   import * as Collapsible from "$lib/components/ui/collapsible";
+  import * as Command from "$lib/components/ui/command";
   import {
     DialogDescription,
     DialogFooter,
@@ -11,6 +12,7 @@
   } from "$lib/components/ui/dialog";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
+  import * as Popover from "$lib/components/ui/popover";
   import { Separator } from "$lib/components/ui/separator";
   import {
     DefInputToken,
@@ -18,6 +20,7 @@
     DefScore,
   } from "$lib/store/config.svelte";
   import type { DialogComponentProps } from "$lib/types/dialog";
+  import { cn } from "$lib/utils";
   import { parseModel } from "$lib/utils/model/feature";
   import {
     CAPABILITY_TAGS,
@@ -35,22 +38,24 @@
   import autoAnimate from "@formkit/auto-animate";
   import {
     IconAlertCircle,
+    IconAlertTriangle,
+    IconCheck,
     IconChevronDown,
     IconFilter,
     IconLoader2,
+    IconSearch,
     IconSparkles,
+    IconX,
   } from "@tabler/icons-svelte";
   import { toast } from "svelte-sonner";
+  import { SvelteMap } from "svelte/reactivity";
   import { findPresetByBaseUrl } from "../providers";
   import AbilitySelector from "./AbilitySelector.svelte";
-  import ModelSelectCombobox from "./ModelSelectCombobox.svelte";
+  import { fetchAvailableModels } from "./fetchModels";
+  /* eslint-disable svelte/prefer-svelte-reactivity */
 
   type Props = {
     model?: Partial<Model>;
-    /**
-     * 该提供商下已存在的模型 id 列表，用于提交时检测重名。
-     * 编辑模式下，调用方应排除"自己"当前的 id，避免自我误判。
-     */
     existingModelIds?: string[];
     fetchCtx?: { baseUrl?: string; apiKey?: string };
     onSave?: (model: Model) => Promise<boolean>;
@@ -78,7 +83,6 @@
     let activeFunc: ModelAbility | undefined;
     let activeVersion: ModelAbility | undefined;
     const caps: ModelAbility[] = [];
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const seenCap = new Set<ModelAbility>();
     for (const a of list) {
       if (functionSet.has(a)) activeFunc = a;
@@ -91,7 +95,6 @@
     const result: ModelAbility[] = [];
     if (activeFunc) result.push(activeFunc);
     if (activeVersion) result.push(activeVersion);
-    // 只保留属于当前 function 的 caps（防止跨 function 残留）
     const allowed = new Set(
       (activeFunc && FUNCTION_CAPABILITIES[activeFunc]) || [],
     );
@@ -112,22 +115,74 @@
   let inctx = $state<number | undefined>(model?.inctx);
   let outctx = $state<number | undefined>(model?.outctx);
   let score = $state<number | undefined>(model?.score);
-  let selectedModelId = $state(model?.id ?? "");
 
   let isSubmitting = $state(false);
   let errorMessage = $state("");
   let filterOpen = $state(true);
   let isDetecting = $state(false);
 
+  // ── 合并输入框：下拉选择 + 自由输入 ──
+  let modelDropdownOpen = $state(false);
+  let triggerWidth = $state(0);
+  let triggerHeight = $state(40);
+
   /**
    * 以 endpoint（fetchCtx.baseUrl）反查预设的静态模型清单。
-   * 名称可变、端点不变 —— 因此用 baseUrl 作为稳定锚点定位 preset。
-   * · preset.models 有值 → 显式传给 ModelSelectCombobox（跳过 fetch）
-   * · 无 preset 或无 models → undefined，交给 ModelSelectCombobox 走 fetch 通路
    */
   const staticModels = $derived.by(() => {
     const preset = findPresetByBaseUrl(fetchCtx?.baseUrl);
     return preset?.models;
+  });
+
+  const hasStaticModels = $derived(
+    staticModels !== undefined && staticModels.length > 0,
+  );
+
+  // ── 内部 fetch 通路（仅在无静态模型清单时启用）──
+  let fetchedModels = $state<ModelOption[]>([]);
+  let isFetchingModels = $state(false);
+  let fetchModelsFailed = $state(false);
+
+  async function loadModels() {
+    isFetchingModels = true;
+    fetchModelsFailed = false;
+    try {
+      fetchedModels = await fetchAvailableModels(fetchCtx ?? {});
+    } catch {
+      fetchModelsFailed = true;
+      fetchedModels = [];
+    } finally {
+      isFetchingModels = false;
+    }
+  }
+
+  // 弹层打开且没有静态模型清单时触发 fetch
+  $effect(() => {
+    if (
+      modelDropdownOpen &&
+      !hasStaticModels &&
+      fetchedModels.length === 0 &&
+      !isFetchingModels
+    ) {
+      loadModels();
+    }
+  });
+
+  const modelOptions = $derived(
+    hasStaticModels ? (staticModels as ModelOption[]) : fetchedModels,
+  );
+  const modelsLoading = $derived(hasStaticModels ? false : isFetchingModels);
+  const modelsFailed = $derived(hasStaticModels ? false : fetchModelsFailed);
+
+  /** 按 group 分组 */
+  const modelGroups = $derived.by(() => {
+    const map = new SvelteMap<string, ModelOption[]>();
+    for (const o of modelOptions) {
+      const g = o.group ?? "";
+      if (!map.has(g)) map.set(g, []);
+      map.get(g)!.push(o);
+    }
+    return [...map.entries()].map(([heading, items]) => ({ heading, items }));
   });
 
   function applyPreset(p: Preset | undefined) {
@@ -140,11 +195,11 @@
   }
 
   async function handleModelSelect(option: ModelOption) {
-    selectedModelId = option.id;
     id = option.id;
     let preset: Preset | undefined = option.preset;
     if (!preset) preset = autoDetectPreset(id.trim());
     applyPreset(preset);
+    modelDropdownOpen = false;
   }
 
   function autoDetectPreset(modelId: string): Preset | undefined {
@@ -175,13 +230,16 @@
     if (detectError) toast.error(detectError);
   }
 
+  function getLabel(option: ModelOption): string {
+    return option.label || option.id;
+  }
+
   const currentFunction = $derived(
     abilities.find((a) =>
       (Object.values(FUNCTION_TAGS) as ModelAbility[]).includes(a),
     ),
   );
 
-  /** 当前输入的 id 是否与该提供商下其他模型冲突。编辑模式下调用方已剔除自己。 */
   const duplicateIdError = $derived.by(() => {
     const trimmed = id.trim();
     if (!trimmed) return "";
@@ -195,7 +253,6 @@
     id.trim().length > 0 && !!currentFunction && duplicateIdError === "",
   );
 
-  /** 根据当前 function 派生上下文字段标签；function 切换时自动更新 */
   const currentCtxLabels = $derived(
     (currentFunction && FUNCTION_CONTEXT_LABELS[currentFunction]) || {
       inctxLabel: "最大输入",
@@ -207,7 +264,6 @@
     },
   );
 
-  /** 网格列数 = 1（评分）+ showInctx + showOutctx，最大 3 */
   const ctxGridCols = $derived(
     (currentCtxLabels.showInctx ? 1 : 0) +
       (currentCtxLabels.showOutctx ? 1 : 0) +
@@ -225,7 +281,6 @@
   async function handleSubmit() {
     if (!isValid || isSubmitting) return;
 
-    // 防御性二次校验（即便 isValid 通过，也兜底一次）
     if (duplicateIdError) {
       toast.error(duplicateIdError);
       document.getElementById("dlg-model-id")?.focus();
@@ -261,30 +316,148 @@
 
 <div class="space-y-6 py-4" use:autoAnimate>
   <div class="space-y-4">
-    <div class="space-y-2">
-      <Label>选择模型</Label>
-      <!--
-        以 endpoint 反查得到的静态模型清单优先：
-        · staticModels 有值 → 跳过 fetch（直接使用静态清单）
-        · staticModels === undefined → 组件自动 fetch
-      -->
-      <ModelSelectCombobox
-        options={staticModels}
-        {fetchCtx}
-        selectedId={selectedModelId}
-        onSelect={handleModelSelect}
-      />
-    </div>
+    <!-- 合并后的模型标识输入框：可搜索选择，也可自由输入 -->
     <div class="space-y-2">
       <Label for="dlg-model-id">模型标识 (ID)</Label>
-      <Input
-        id="dlg-model-id"
-        bind:value={id}
-        placeholder="例如: gpt-4o, deepseek-reasoner"
-        class="rounded-xl font-mono"
-        aria-invalid={duplicateIdError ? "true" : undefined}
-        aria-describedby={duplicateIdError ? "dlg-model-id-err" : undefined}
-      />
+      <div bind:clientWidth={triggerWidth} bind:clientHeight={triggerHeight}>
+        <Popover.Root bind:open={modelDropdownOpen}>
+          <Popover.Trigger>
+            {#snippet child({ props })}
+              <button
+                {...props}
+                type="button"
+                class={cn(
+                  "flex h-10 w-full items-center gap-3 rounded-xl border border-input bg-background px-3 text-sm",
+                  "transition-all duration-200 hover:bg-accent/50",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  modelDropdownOpen && "pointer-events-none opacity-0",
+                )}
+              >
+                <IconSearch
+                  size={16}
+                  stroke={1.5}
+                  class="shrink-0 text-muted-foreground"
+                />
+                {#if id}
+                  <span
+                    class="min-w-0 flex-1 truncate text-left font-mono text-foreground"
+                  >
+                    {id}
+                  </span>
+                {:else}
+                  <span class="min-w-0 flex-1 text-left text-muted-foreground">
+                    搜索并选择模型，或直接输入…
+                  </span>
+                {/if}
+                <IconChevronDown
+                  size={16}
+                  stroke={1.5}
+                  class={cn(
+                    "shrink-0 text-muted-foreground transition-transform duration-200",
+                    modelDropdownOpen && "rotate-180",
+                  )}
+                />
+              </button>
+            {/snippet}
+          </Popover.Trigger>
+
+          <Popover.Content
+            class="overflow-hidden rounded-xl border border-border/50 p-0 shadow-xl"
+            align="start"
+            side="bottom"
+            sideOffset={-triggerHeight}
+            style="width: {triggerWidth}px; z-index: 9999;"
+          >
+            <Command.Root shouldFilter={true}>
+              <div class="relative">
+                <Command.Input
+                  bind:value={id}
+                  placeholder="输入模型名称搜索…"
+                  class="pr-10 font-mono"
+                />
+                <button
+                  type="button"
+                  onclick={() => (modelDropdownOpen = false)}
+                  aria-label="关闭"
+                  class={cn(
+                    "absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1",
+                    "text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <IconX size={16} stroke={1.5} />
+                </button>
+              </div>
+
+              <Command.List class="max-h-72">
+                {#if modelsLoading}
+                  <div
+                    class="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"
+                  >
+                    <IconLoader2 size={16} stroke={1.5} class="animate-spin" />
+                    正在获取可用模型…
+                  </div>
+                {:else if modelsFailed}
+                  <div
+                    class="flex flex-col items-center justify-center gap-2 py-8"
+                  >
+                    <IconAlertTriangle
+                      size={18}
+                      stroke={1.5}
+                      class="text-amber-500"
+                    />
+                    <p class="text-sm text-muted-foreground">
+                      无法获取列表，可手动输入
+                    </p>
+                  </div>
+                {:else if modelOptions.length === 0 && id.trim() === ""}
+                  <div class="py-6 text-center text-sm text-muted-foreground">
+                    暂无可用模型，请直接输入模型 ID
+                  </div>
+                {:else}
+                  <Command.Empty>未找到匹配的模型</Command.Empty>
+
+                  {#each modelGroups as group (group.heading)}
+                    <Command.Group heading={group.heading || undefined}>
+                      {#each group.items as option (option.id)}
+                        <Command.Item
+                          value={option.id}
+                          keywords={[
+                            getLabel(option),
+                            option.description ?? "",
+                          ]}
+                          onSelect={() => handleModelSelect(option)}
+                        >
+                          <div class="min-w-0 flex-1 space-y-0.5">
+                            <p class="truncate text-sm font-medium">
+                              {getLabel(option)}
+                            </p>
+                            {#if option.description}
+                              <p class="truncate text-xs text-muted-foreground">
+                                {option.description}
+                              </p>
+                            {/if}
+                          </div>
+                          {#if id.trim() === option.id}
+                            <IconCheck
+                              size={16}
+                              stroke={1.5}
+                              class="ml-auto shrink-0 text-primary"
+                            />
+                          {/if}
+                        </Command.Item>
+                      {/each}
+                    </Command.Group>
+                    {#if group !== modelGroups[modelGroups.length - 1]}
+                      <Command.Separator />
+                    {/if}
+                  {/each}
+                {/if}
+              </Command.List>
+            </Command.Root>
+          </Popover.Content>
+        </Popover.Root>
+      </div>
+
       {#if duplicateIdError}
         <p
           id="dlg-model-id-err"
@@ -296,6 +469,7 @@
     </div>
   </div>
 
+  <!-- 筛选条件（与原始相同，未改动） -->
   <Collapsible.Root
     bind:open={filterOpen}
     class="rounded-2xl border border-border/50 bg-muted/20"
@@ -346,19 +520,10 @@
     <Collapsible.Content>
       <div class="space-y-5 px-4 pb-4">
         <Separator class="bg-border/50" />
-        <!--╭─────────────────────────────────────────────────────╮ -->
-        <!-- │ [子组件 → AbilitySelector.svelte]                   │ -->
-        <!-- ╰─────────────────────────────────────────────────────╯ -->
         <AbilitySelector bind:abilities />
 
         <Separator class="bg-border/50" />
 
-        <!--
-          上下文输入/输出字段：标签与显隐随 function 变化。
-          · image / video：参考图数、输出图数 / 参考视频、视频时长
-          · embedding / audioUnd：仅显示输入长度
-          · audioGen / bgm / rerank：全部隐藏，仅保留评分
-        -->
         <div
           class={[
             "grid grid-cols-1 gap-4",

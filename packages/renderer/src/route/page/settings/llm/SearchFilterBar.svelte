@@ -4,7 +4,7 @@
   import {
     FUNCTION_ABILITIES,
     tagIcons,
-    tagLabels
+    tagLabels,
   } from "$lib/utils/model/types";
   import { IconFilterOff, IconSearch, IconX } from "@tabler/icons-svelte";
   import { searchStore } from "./searchstore.svelte";
@@ -18,8 +18,6 @@
   } = $props();
 
   const functions = FUNCTION_ABILITIES;
-
-  /** 当前 function 下可用的能力 chips（无 function 时为空 → 不渲染） */
   const currentCaps = $derived(searchStore.currentFunctionCapabilities);
 </script>
 
@@ -38,7 +36,7 @@
       oninput={(e: Event) => {
         searchStore.searchQuery = (e.currentTarget as HTMLInputElement).value;
       }}
-      placeholder="搜索提供商或模型名称 / ID"
+      placeholder="搜索提供商或模型名称 / ID（支持拼音）"
       class="rounded-xl pl-9 pr-9"
     />
     {#if searchStore.searchQuery}
@@ -55,7 +53,7 @@
     {/if}
   </div>
 
-  <!-- 功能 Tab（互斥单选，再次点击取消；切换时自动清空标签） -->
+  <!-- 功能 Tab -->
   <div class="flex flex-wrap items-center gap-2">
     <span class="mr-1 text-xs text-muted-foreground">功能(单选)</span>
     {#each functions as ability (ability)}
@@ -78,11 +76,7 @@
     {/each}
   </div>
 
-  <!--
-    能力多选 Chips：仅在选中 function 时渲染，且只展示该 function 拥有的 tag。
-    · 无 function tab → 整块隐藏（避免跨功能 tag 互相干扰）
-    · 切换 function → 由 store 自动清空旧 tag
-  -->
+  <!-- 能力多选 Chips -->
   {#if searchStore.activeFunctionTab && currentCaps.length > 0}
     <div class="flex animate-fade-in flex-wrap items-center gap-2">
       <span class="mr-1 text-xs text-muted-foreground">能力(或)</span>
@@ -104,23 +98,23 @@
           {tagLabels[ability]}
         </button>
       {/each}
-      {#if searchStore.isFiltering}
-        <button
-          type="button"
-          class="ml-2 flex cursor-pointer items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-colors duration-200 hover:text-foreground"
-          onclick={() => searchStore.clearAllFilters()}
-        >
-          <IconFilterOff size={12} stroke={1.5} />
-          清除
-        </button>
-      {/if}
     </div>
   {/if}
 
-  <!-- 筛选结果统计 -->
+  <!-- 筛选汇总行：左侧清除按钮（醒目），右侧统计 -->
   {#if searchStore.isFiltering}
-    <p class="animate-fade-in text-xs text-muted-foreground">
-      找到 {filteredProviderCount} 个提供商，{filteredModelCount} 个模型
-    </p>
+    <div class="flex items-center justify-between animate-fade-in pt-1">
+      <p class="text-xs text-muted-foreground">
+        找到 {filteredProviderCount} 个提供商，{filteredModelCount} 个模型
+      </p>
+      <button
+        type="button"
+        class="flex items-center gap-1.5 rounded-lg border border-border/50 bg-background px-3 py-1.5 text-xs font-medium text-foreground shadow-sm transition-all duration-200 hover:bg-muted hover:border-border hover:shadow"
+        onclick={() => searchStore.clearAllFilters()}
+      >
+        <IconFilterOff size={13} stroke={1.5} />
+        清除全部筛选
+      </button>
+    </div>
   {/if}
 </div>

@@ -11,10 +11,11 @@ const P = "#video:";
 /**
  * 渲染策略判定（按场景隔离）。
  *
- * 核心变化：
- * - 决策 key 改为 (sceneId, entityName)，每个 (实体, 场景) 对独立判定
- * - 群体是否走 uniform_refsheet 由 identity.uniformed 统一判定（不再用外观关键词启发式），
- *   与 design-characters 的制服设计判定同源，避免"设计了制服但渲染判为 group_photo"的孤儿制服。
+ * 核心约束：
+ * - 单场景 + 单镜头 的实体无跨镜头/跨场景一致性复用价值，
+ *   强制降级为 prompt_only（提示词内描述，不出参考图）。
+ * - decision.referenced_scene_count 必须填实体的真实出场场景数
+ *   （不是恒为 1）。原代码此字段恒为 1，是 bug，已修。
  */
 export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void> {
     const store = new RenderStratStorage(ctx);
@@ -72,7 +73,6 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
         `${P}stage:registry:idx`,
         `${P}shots:idx:scenes`,
         ...entities.map(e => `${P}stage:registry:${e.name}`),
-        // identity 决定 uniformed → 制服化判定，必须纳入 gate（design 阶段写、此后只读）
         ...entities.map(e => `${P}char:identity_${e.name}`),
         ...sceneIds.map(id => `${P}shots:design_${id}`),
         ...sceneIds.map(id => `${P}state:stage_${id}`),
@@ -115,13 +115,14 @@ export async function assignRenderStrategies(ctx: IRunnerContext): Promise<void>
 
     ctx.info(`[assignRenderStrategies] 完成，${decisions.length} 个决策（按场景隔离）`);
     for (const d of decisions) {
-        ctx.info(`[assignRenderStrategies]   ${d.scene_id ?? "?"}/${d.name}: ${d.strategy}｜origin=${d.origin}｜shot=${d.referenced_shot_count}`);
+        ctx.info(
+            `[assignRenderStrategies]   ${d.scene_id ?? "?"}/${d.name}: ${d.strategy}`
+            + `｜shot=${d.referenced_shot_count}`
+            + `｜scene=${d.referenced_scene_count}`
+            + (d.strategy === "prompt_only" ? "｜(单场景/单镜头降级)" : ""),
+        );
     }
 }
-
-// ============================================================
-// 扫描分镜（按 (sceneId, entityName) 对统计引用）
-// ============================================================
 
 interface EntityRefStats {
     referencedShotCount: number;
@@ -196,10 +197,25 @@ function extractEntityReferences(text: string): string[] {
     return Array.from(found);
 }
 
-// ============================================================
-// 按场景隔离的判定
-// ============================================================
+/**
+ * 单镜头 + 单场景的实体强制降级为 prompt_only。
+ * 出参考图的成本（LLM 翻译 + 图像生成）远高于把外观写到提示词里，
+ * 且没有跨场景一致性复用价值。
+ */
+function isTrivialOneShot(
+    referencedSceneCount: number,
+    referencedShotCount: number,
+): boolean {
+    return referencedSceneCount <= 1 && referencedShotCount <= 1;
+}
 
+/**
+ * 按场景隔离的判定。
+ *
+ * - referenced_scene_count 取自 entity.scenes.length（实体的全部出场场景数）
+ *   —— 单镜单场降到 prompt_only 的判定之一。
+ * - 单场景单镜头一律 prompt_only，无论 kind 或 origin。
+ */
 function decideStrategy(
     _ctx: IRunnerContext,
     sceneId: string,
@@ -208,35 +224,45 @@ function decideStrategy(
     _closeUpShots: number,
     isUniformed: boolean,
 ): EntityRenderDecision {
+    const referencedSceneCount = Array.isArray(e.scenes) ? e.scenes.length : 1;
+
     const meta = {
         scene_id: sceneId,
         referenced_shot_count: referencedShotCount,
-        referenced_scene_count: 1,
+        referenced_scene_count: referencedSceneCount,
         is_static_in_scene: true,
         origin: e.origin,
         source_group: (e as any).source_group,
     };
 
     if (e.kind === "light") {
-        return { name: e.name, kind: e.kind, strategy: "skip", importance: 0, rationale: "光源", ...meta } as any;
+        return {
+            name: e.name, kind: e.kind,
+            strategy: "skip",
+            importance: 0,
+            rationale: "光源",
+            ...meta,
+        } as any;
+    }
+
+    // ===== 全局门：单场景 + 单镜头一律 prompt_only（任何类型都不能豁免）=====
+    if (isTrivialOneShot(referencedSceneCount, referencedShotCount)) {
+        return {
+            name: e.name, kind: e.kind,
+            strategy: "prompt_only",
+            importance: 1,
+            rationale: `单场景单镜头（scene=${referencedSceneCount}, shot=${referencedShotCount}），无跨镜头一致性复用价值`,
+            ...meta,
+        } as any;
     }
 
     if (e.kind === "prop") {
         if (e.origin !== "scene") {
-            if (referencedShotCount >= 1) {
-                return {
-                    name: e.name, kind: e.kind,
-                    strategy: "individual_refsheet",
-                    importance: computeImportance(8, referencedShotCount, 1),
-                    rationale: `动态道具（origin=${e.origin}）跨 ${referencedShotCount} 镜头，需独立参考图`,
-                    ...meta,
-                } as any;
-            }
             return {
                 name: e.name, kind: e.kind,
-                strategy: "prompt_only",
-                importance: 2,
-                rationale: "动态道具未在镜头引用",
+                strategy: "individual_refsheet",
+                importance: computeImportance(8, referencedShotCount, referencedSceneCount),
+                rationale: `动态道具（origin=${e.origin}）跨 ${referencedShotCount} 镜头 / ${referencedSceneCount} 场景，需独立参考图`,
                 ...meta,
             } as any;
         }
@@ -260,69 +286,46 @@ function decideStrategy(
     }
 
     if (e.kind === "character" && e.count === 1 && e.humanoid) {
-        if (referencedShotCount >= 1) {
-            return {
-                name: e.name, kind: e.kind,
-                strategy: "individual_refsheet",
-                importance: computeImportance(referencedShotCount >= 2 ? 10 : 7, referencedShotCount, 1),
-                rationale: `${referencedShotCount} 镜头`,
-                ...meta,
-            } as any;
-        }
         return {
             name: e.name, kind: e.kind,
-            strategy: "prompt_only",
-            importance: 1,
-            rationale: "未在镜头引用",
+            strategy: "individual_refsheet",
+            importance: computeImportance(
+                referencedShotCount >= 2 ? 10 : 7,
+                referencedShotCount,
+                referencedSceneCount,
+            ),
+            rationale: `多镜头或多场景角色（shot=${referencedShotCount}, scene=${referencedSceneCount}）`,
             ...meta,
         } as any;
     }
 
     if (e.kind === "character" && e.humanoid) {
-        if (referencedShotCount >= 2) {
-            if (isUniformed) {
-                const d: EntityRenderDecision = {
-                    name: e.name, kind: e.kind,
-                    strategy: "uniform_refsheet",
-                    importance: computeImportance(7, referencedShotCount, 1),
-                    rationale: `制服化群体 ${referencedShotCount} 镜头`,
-                    ...meta,
-                } as any;
-                d.uniform_name = `${e.name}制服`;
-                return d;
-            }
-            return {
+        if (isUniformed) {
+            const d: EntityRenderDecision = {
                 name: e.name, kind: e.kind,
-                strategy: "group_photo",
-                importance: computeImportance(6, referencedShotCount, 1),
-                rationale: `非制服化群体 ${referencedShotCount} 镜头`,
+                strategy: "uniform_refsheet",
+                importance: computeImportance(7, referencedShotCount, referencedSceneCount),
+                rationale: `制服化群体成员，跨 ${referencedShotCount} 镜头 / ${referencedSceneCount} 场景`,
                 ...meta,
             } as any;
+            d.uniform_name = `${e.name}制服`;
+            return d;
         }
         return {
             name: e.name, kind: e.kind,
-            strategy: "prompt_only",
-            importance: 2,
-            rationale: "群体单镜头",
+            strategy: "group_photo",
+            importance: computeImportance(6, referencedShotCount, referencedSceneCount),
+            rationale: `非制服化群体成员，跨 ${referencedShotCount} 镜头 / ${referencedSceneCount} 场景`,
             ...meta,
         } as any;
     }
 
     if (e.kind === "character") {
-        if (referencedShotCount >= 2) {
-            return {
-                name: e.name, kind: e.kind,
-                strategy: "individual_refsheet",
-                importance: computeImportance(8, referencedShotCount, 1),
-                rationale: `非类人 ${referencedShotCount} 镜头`,
-                ...meta,
-            } as any;
-        }
         return {
             name: e.name, kind: e.kind,
-            strategy: "prompt_only",
-            importance: 3,
-            rationale: "单镜头非类人",
+            strategy: "individual_refsheet",
+            importance: computeImportance(8, referencedShotCount, referencedSceneCount),
+            rationale: `非类人 ${referencedShotCount} 镜头 / ${referencedSceneCount} 场景`,
             ...meta,
         } as any;
     }

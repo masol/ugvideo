@@ -33,7 +33,7 @@
   import ConnectionSection from "./ConnectionSection.svelte";
   import HeaderEntriesSection from "./HeaderEntriesSection.svelte";
   import ProviderPresetCombobox from "./ProviderPresetCombobox.svelte";
-  import { findPreset } from "./providers";
+  import { findPresetByBaseUrl } from "./providers";
 
   type Props = {
     config?: Partial<ProviderConfig>;
@@ -55,7 +55,14 @@
   }: Props = $props();
 
   const isEditMode = !!config?.id;
-  const initialPreset = config?.id ? findPreset(config.id) : null;
+
+  // ═══════════════════════════════════════════════════════════
+  // 改进：通过端点地址（baseUrl）来判断是哪个供应商预设，
+  // 而非依赖易变的名称（id）。
+  // ═══════════════════════════════════════════════════════════
+  const initialPreset = config?.baseUrl
+    ? findPresetByBaseUrl(config.baseUrl)
+    : null;
 
   let selectedPresetId = $state<string | null>(initialPreset?.id ?? null);
   let isCustomMode = $state(isEditMode && !initialPreset);
@@ -185,6 +192,22 @@
       isSubmitting = false;
     }
   }
+
+  // ── 当 baseUrl 改变时，自动检测是否匹配已知预设 ──
+  $effect(() => {
+    const currentUrl = baseUrl;
+    if (!currentUrl || isCustomMode) return;
+    const matched = findPresetByBaseUrl(currentUrl);
+    if (matched && matched.id !== selectedPresetId) {
+      selectedPresetId = matched.id;
+      websiteUrl = matched.website;
+    } else if (!matched && selectedPresetId && !isCustomMode) {
+      // baseUrl 已改变，不再匹配原预设 → 切换为自定义模式
+      selectedPresetId = null;
+      isCustomMode = true;
+      websiteUrl = "";
+    }
+  });
 </script>
 
 <DialogHeader>

@@ -14,9 +14,8 @@ import type { EntityRefsheetPrompt, RefsheetLayout } from "./types.js";
 const P = "#video:";
 
 /**
- * 制服引用解析：
- * - 提升个体（source_group）→ 用 source_group 制服（elevated 路径）
- * - 独立抽取但语义属于制服化群体的个体 → 用 identity.group_member_of 制服（本路径）
+ * 制服引用解析：返回制服三视图 KV（若存在）+ 制服名。
+ * 用于 entity_refsheet 主流路径与 source_group individual 路径。
  */
 function resolveUniformReference(store: RefImgStorage, groupName: string | null | undefined): string {
     if (!groupName) return "";
@@ -26,6 +25,29 @@ function resolveUniformReference(store: RefImgStorage, groupName: string | null 
         uniform.description,
         ...uniform.items.map(it => `- ${it.item}：${it.material}，${it.color}`),
     ].join("\n");
+}
+
+/**
+ * 解出制服展示名 + 确认制服已设计。返回 null 表示无制服归属。
+ * 与 renderEntitySection 中的 resolveUniformNameForDisplay 同源。
+ */
+function resolveUniformName(store: RefImgStorage, prompts: {
+    source_group?: string;
+    entity_name: string;
+    layout: RefsheetLayout;
+    group_member_of?: string | null;
+}): string | null {
+    let group: string | null = null;
+    if (prompts.source_group) {
+        group = prompts.source_group;
+    } else if (prompts.layout === "group_photo") {
+        group = prompts.entity_name;
+    } else if (prompts.group_member_of) {
+        group = prompts.group_member_of;
+    }
+    if (!group) return null;
+    const candidate = `${group}制服`;
+    return store.getUniform(candidate) ? candidate : null;
 }
 
 export async function generateEntityRefsheet(
@@ -59,9 +81,13 @@ export async function generateEntityRefsheet(
 
     const previousSceneRefs = store.getPreviousSceneRefs(entityName, sceneId);
 
-    // 独立抽取成员的制服归属（如 仵作甲 → 仵作众人制服）
     const identity = store.getIdentity(entityName);
     const uniformReference = resolveUniformReference(store, identity?.group_member_of);
+    const uniformName = resolveUniformName(store, {
+        entity_name: entityName,
+        layout: "four_column", // 暂用，store.saveEntityRefsheet 前会再校
+        group_member_of: identity?.group_member_of,
+    });
     const uniformKeyForGate = identity?.group_member_of
         ? [`${P}char:uniform_${identity.group_member_of}制服`]
         : [];
@@ -116,6 +142,14 @@ export async function generateEntityRefsheet(
         }),
     });
 
+    const finalUniformName = layout === "group_photo"
+        ? resolveUniformName(store, {
+            entity_name: entityName,
+            layout,
+            group_member_of: identity?.group_member_of,
+        })
+        : uniformName;
+
     const refsheet: EntityRefsheetPrompt = {
         entity_name: entityName,
         scene_id: sceneId,
@@ -128,9 +162,12 @@ export async function generateEntityRefsheet(
         referenced_shot_count: decision.referenced_shot_count,
         referenced_scene_count: decision.referenced_scene_count,
         previous_scene_refs: previousSceneRefs,
+        // 制服归属：identity.group_member_of 已体现到 uniformReference 传入 prompt，
+        // 这里也写入 refsheet 字段以供下游渲染与总览使用。
+        uniform_name: finalUniformName ?? undefined,
     };
     store.saveEntityRefsheet(refsheet);
-    ctx.info(`[generateEntityRefsheet] ${sceneId}/${entityName} 参考图提示词完成（${layout}）${uniformReference ? "（含制服归属）" : ""}${previousSceneRefs.length ? `，关联前序场景 ${previousSceneRefs.length} 个` : ""}`);
+    ctx.info(`[generateEntityRefsheet] ${sceneId}/${entityName} 参考图提示词完成（${layout}）${uniformReference ? "（含制服归属）" : ""}${previousSceneRefs.length ? `，关联前序场景 ${previousSceneRefs.length} 个` : ""}${finalUniformName ? `，制服名=${finalUniformName}` : ""}`);
     return refsheet;
 }
 
@@ -159,7 +196,6 @@ async function generateSourceGroupIndividualRefsheet(
             `${P}char:render_decision_${sceneId}_${entityName}`,
             "config:style",
             "config:colorTone",
-            // 制服设计变更时，提升个体定妆词须重算（其服装引用 source_group 制服）
             ...(decision.source_group ? [`${P}char:uniform_${decision.source_group}制服`] : []),
         ],
         outputKeys: store.entityRefsheetKey(sceneId, entityName),
@@ -176,6 +212,11 @@ async function generateSourceGroupIndividualRefsheet(
     }
 
     const uniformReference = resolveUniformReference(store, decision.source_group);
+    const uniformName = resolveUniformName(store, {
+        source_group: decision.source_group,
+        entity_name: entityName,
+        layout: "four_column",
+    });
 
     const skill = getRefsheetSkill("character_humanoid");
     const styleAnchor = getRefsheetStyleAnchor(style, "character_humanoid");
@@ -211,11 +252,13 @@ async function generateSourceGroupIndividualRefsheet(
         referenced_scene_count: decision.referenced_scene_count,
         source_group: decision.source_group,
         previous_scene_refs: [],
+        uniform_name: uniformName ?? undefined,
     };
     store.saveEntityRefsheet(refsheet);
     ctx.info(
         `[generateEntityRefsheet] source_group 个体 ${sceneId}/${entityName} 参考图完成`
-        + (uniformReference ? "（含制服依赖）" : ""),
+        + (uniformReference ? "（含制服依赖）" : "")
+        + (uniformName ? `，制服名=${uniformName}` : ""),
     );
     return refsheet;
 }
@@ -289,6 +332,11 @@ export async function generateGroupPhoto(
     const styleAnchor = getRefsheetStyleAnchor(globalStyle.style, "group_photo");
     const layoutTemplate = buildLayoutTemplate("group_photo", true, "character", styleAnchor, countLabel);
 
+    const uniformName = resolveUniformName(store, {
+        entity_name: groupName,
+        layout: "group_photo",
+    });
+
     const memberAnchor = individualMembers.length > 0
         ? `【已独立抽取的成员（必须在合照中保持外观一致）】\n${individualMembers.map(m => `- ${m.name}：${m.appearance.slice(0, 200)}`).join("\n")}`
         : "";
@@ -321,9 +369,10 @@ export async function generateGroupPhoto(
         referenced_shot_count: decision.referenced_shot_count,
         referenced_scene_count: decision.referenced_scene_count,
         previous_scene_refs: individualRefIds,
+        uniform_name: uniformName ?? undefined,
     };
     store.saveEntityRefsheet(refsheet);
-    ctx.info(`[generateGroupPhoto] ${sceneId}/${groupName} 群体合照提示词完成${memberAnchor ? `（含提升个体锚点 ${individualMembers.length} 个）` : ""}`);
+    ctx.info(`[generateGroupPhoto] ${sceneId}/${groupName} 群体合照提示词完成${memberAnchor ? `（含提升个体锚点 ${individualMembers.length} 个）` : ""}${uniformName ? `，制服名=${uniformName}` : ""}`);
     return refsheet;
 }
 
@@ -381,6 +430,8 @@ export async function generateUniformRefsheet(
         referenced_shot_count: 0,
         referenced_scene_count: groupEntity ? groupEntity.scenes.length : 0,
         previous_scene_refs: [],
+        // 制服三视图自身的 uniform_name 留空，避免循环展示"自己是自己的依赖"
+        uniform_name: undefined,
     };
     store.saveUniformPrompt(refsheet);
     ctx.info(`[generateUniformRefsheet] ${uniformName} 制服三视图提示词完成`);

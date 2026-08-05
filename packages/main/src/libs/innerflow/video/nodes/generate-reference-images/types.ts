@@ -26,6 +26,17 @@ export interface EntityRefsheetPrompt {
     source_group?: string;
     origin?: string;
     previous_scene_refs?: string[];
+    /**
+     * 该实体应参考的制服三视图名（仅在有制服归属时填写）。
+     * - 提升个体：source_group 路径 → 填 `${source_group}制服`
+     * - 独立抽取但语义属于制服化群体的个体：identity.group_member_of 路径 → 填 `${group_member_of}制服`
+     * - 群体合照（group_photo）：填该群体自身的制服名
+     * - 无制服归属：undefined
+     *
+     * 下游渲染任务会据此把 `uniform:<uniform_name>` 写入 reference_images；
+     * 总览（buildOverview）会据此展示「应参考制服：xxx」便于人类核对。
+     */
+    uniform_name?: string;
 }
 
 export interface SceneEnvironmentPrompt {
@@ -48,17 +59,6 @@ export interface SceneEnvironmentPrompt {
     referenced_scene_count: number;
 }
 
-/**
- * 场景镜头「视频」提示词（全能参考出视频的输入）。
- *
- * 重要：这是**视频**镜头描述，不是图像渲染任务。本管线不为 shot 渲染静图。
- * 下游视频节点读取本结构 + reference_images 指向的已渲染参考图，用全能参考生成视频。
- *
- * - prompt：视频镜头的自然语言导演指令（保留运动动词/运镜轨迹/动作时序）。
- * - reference_images[].entity_name：实际存放 ref_id（env:X / sceneId__name / uniform:X），
- *   可直接映射到已渲染参考图的 file_path（RenderStorage.getRenderResult(ref_id)）。
- * - shot_meta：景别/运镜/时长，供下游视频节点排片与时长控制。
- */
 export interface SceneShotPrompt {
     scene_id: string;
     shot_index: number;
@@ -74,13 +74,6 @@ export interface SceneShotPrompt {
     };
 }
 
-/**
- * 渲染任务描述（供下游 render-images 节点消费）。
- *
- * 全能参考工作流：渲染任务只含「跨镜头一致性参考图」，统一 16:9 2K。
- * 镜头（shot）不进渲染任务——它产出的是视频提示词（见 SceneShotPrompt），
- * 由下游视频节点消费，不渲染静图。
- */
 export interface RenderTaskDescriptor {
     id: string;
     type:

@@ -109,7 +109,7 @@
                                 "label": "简介",
                                 "editor": "dialog",
                                 "dialogTitle": "编辑简介",
-                                "dialogDescription": "简要描述项目的核心内容、主题或风格定位。",
+                                "dialogDescription": "项目简介。仅做存档，当前版本尚未接入工作流。",
                                 "emptyHint": "点击添加简介"
                             },
                             {
@@ -120,7 +120,7 @@
                                 "label": "人物要求",
                                 "editor": "dialog",
                                 "dialogTitle": "编辑人物要求",
-                                "dialogDescription": "定义主要角色的性格、背景、关系等设定。",
+                                "dialogDescription": "主要角色的人设要求。仅做存档，当前版本尚未接入工作流。",
                                 "placeholder": "依次写出要求角色的人设要求。除了主角，其它建议在素材表中填写。",
                                 "emptyHint": "点击添加人物要求"
                             },
@@ -132,7 +132,7 @@
                                 "label": "其它要求",
                                 "editor": "dialog",
                                 "dialogTitle": "编辑其它要求",
-                                "dialogDescription": "补充任何特殊的叙事手法、情节约束或创作偏好。",
+                                "dialogDescription": "补充任何特殊的叙事手法、情节约束或创作偏好。仅做存档，当前版本尚未接入工作流。",
                                 "placeholder": "当前版本尚未支持。仅提供了保存。",
                                 "emptyHint": "点击添加其它要求",
                                 "readonly": true
@@ -179,7 +179,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "aspectRatio"
+                                    "key": "config:aspectRatio"
                                 },
                                 "label": "目标视频横纵比",
                                 "icon": "IconAspectRatio",
@@ -458,7 +458,7 @@
                             {
                                 "type": "button-group",
                                 "binding": {
-                                    "key": "pace"
+                                    "key": "config:pace"
                                 },
                                 "label": "叙事节奏",
                                 "icon": "IconGauge",
@@ -553,7 +553,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "audience"
+                                    "key": "config:audience"
                                 },
                                 "label": "受众分级",
                                 "icon": "IconUsersGroup",
@@ -609,7 +609,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "style"
+                                    "key": "config:style"
                                 },
                                 "label": "画面风格",
                                 "icon": "IconPalette",
@@ -684,7 +684,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "colorTone"
+                                    "key": "config:colorTone"
                                 },
                                 "label": "画面色调",
                                 "icon": "IconPalette",
@@ -740,7 +740,7 @@
                             {
                                 "type": "select",
                                 "binding": {
-                                    "key": "cameraMovement"
+                                    "key": "config:cameraMovement"
                                 },
                                 "label": "运镜风格",
                                 "icon": "IconCameraPin",
@@ -868,171 +868,171 @@
             },
             {
                 "value": "#video:render:result_%",
-                "desc": "所有已渲染图片路径"
+                "desc": "已渲染图片（含路径与种子）"
             },
             {
                 "value": "#video:render:idx:rendered",
-                "desc": "已渲染任务id列表"
+                "desc": "已成功渲染的任务 id 列表"
             },
             {
                 "value": "#video:render:seed_%",
-                "desc": "渲染任务seed"
+                "desc": "渲染种子（决定出图结果，删除可换随机结果）"
             },
             {
                 "value": "#video:render:params_%",
-                "desc": "渲染任务图像生成参数"
+                "desc": "单张图的完整生成参数（含组装后的 prompt）"
             },
             {
                 "value": "#video:refimg:shot_%",
-                "desc": "视频镜头提示词"
-            },
-            {
-                "value": "#video:refimg:entity_%",
-                "desc": "实体定妆照提示词"
-            },
-            {
-                "value": "#video:refimg:env_%",
-                "desc": "场景环境图提示词"
-            },
-            {
-                "value": "#video:refimg:uniform_%",
-                "desc": "制服三视图提示词"
-            },
-            {
-                "value": "#video:refimg:render_tasks",
-                "desc": "渲染任务描述符列表"
-            },
-            {
-                "value": "#video:refimg:idx:entities",
-                "desc": "实体参考图索引"
-            },
-            {
-                "value": "#video:refimg:idx:scenes",
-                "desc": "环境图索引"
-            },
-            {
-                "value": "#video:refimg:idx:uniforms",
-                "desc": "制服索引"
+                "desc": "单镜视频导演指令（含运镜/时长/参考图清单）"
             },
             {
                 "value": "#video:refimg:idx:shots_%",
-                "desc": "镜头索引"
+                "desc": "某场景的镜头序号列表"
+            },
+            {
+                "value": "#video:refimg:entity_%",
+                "desc": "实体定妆照提示词（纯白背景、跨场景一致性参考）"
+            },
+            {
+                "value": "#video:refimg:env_%",
+                "desc": "场景环境基底图提示词（无人物、超广角建立镜头）"
+            },
+            {
+                "value": "#video:refimg:uniform_%",
+                "desc": "群体制服三视图提示词（纯白背景）"
+            },
+            {
+                "value": "#video:refimg:render_tasks",
+                "desc": "全部渲染任务描述符（供渲染节点按依赖顺序消费）"
+            },
+            {
+                "value": "#video:refimg:idx:entities",
+                "desc": "已生成的实体参考图列表（格式：场景id__实体名）"
+            },
+            {
+                "value": "#video:refimg:idx:scenes",
+                "desc": "已生成的环境图场景列表"
+            },
+            {
+                "value": "#video:refimg:idx:uniforms",
+                "desc": "已生成的制服三视图列表"
             },
             {
                 "value": "#video:shots:design_%",
-                "desc": "分镜序列设计"
+                "desc": "单场景分镜序列（景别/运镜/画面描述/转场）"
             },
             {
                 "value": "#video:shots:lighting_%",
-                "desc": "场景光照方案"
+                "desc": "场景统一光照方案（主光/补光/色温/氛围）"
             },
             {
                 "value": "#video:shots:asset_%",
-                "desc": "实体素材扩写"
+                "desc": "实体素材扩写（基础描述+本场变化+光影效果）"
             },
             {
                 "value": "#video:shots:asset_constraints",
-                "desc": "全局素材约束累积"
+                "desc": "全局素材约束累积（每实体首次出场锁定的基准描述）"
             },
             {
                 "value": "#video:shots:intent_%",
-                "desc": "场景意图抽象"
+                "desc": "场景意图抽象（核心动作/情绪/人数/空间类型/节奏）"
             },
             {
                 "value": "#video:shots:idx:scenes",
-                "desc": "已设计场景列表"
+                "desc": "已完成分镜设计的场景列表"
             },
             {
                 "value": "#video:char:identity_%",
-                "desc": "角色身份推断"
+                "desc": "角色身份（职业/族裔/年龄段/性别/体型/制服化判定）"
             },
             {
                 "value": "#video:char:costume_%",
-                "desc": "角色场景服装"
+                "desc": "角色在本场景的服装设计（整体描述+构件清单）"
             },
             {
                 "value": "#video:char:uniform_%",
-                "desc": "群体制服设计"
+                "desc": "群体制服设计（廓形/材质/穿着者）"
             },
             {
                 "value": "#video:char:idx:uniforms",
-                "desc": "制服名索引"
+                "desc": "已设计的制服名列表"
             },
             {
                 "value": "#video:char:render_decision_%",
-                "desc": "渲染策略决策"
+                "desc": "渲染策略决策（按 场景×实体 粒度，决定走定妆照/制服/群体合照/仅文字）"
             },
             {
                 "value": "#video:char:idx:scene_decisions_%",
-                "desc": "场景决策索引"
+                "desc": "单场景内已决策实体名列表（策略决策的索引）"
             },
             {
                 "value": "#video:stage:registry:idx",
-                "desc": "实体登记册索引"
+                "desc": "全部已登记实体的规范名列表"
             },
             {
                 "value": "#video:stage:registry:%",
-                "desc": "全局实体登记册"
+                "desc": "单实体登记（类别/外观/出场场景/数量/出生方式）"
             },
             {
                 "value": "#video:output:aligned_text_%",
-                "desc": "名称对齐后场景原文"
+                "desc": "名称对齐后的场景原文（代词全部替换为规范名）"
             },
             {
                 "value": "#video:stage:align:%",
-                "desc": "局部名到全局名映射"
+                "desc": "场景内局部名 → 全局规范名映射"
             },
             {
                 "value": "#video:stage:time_skips:%",
-                "desc": "时间跳跃标记"
+                "desc": "实体在哪些场景发生了时间跳跃（用于换装/衰老提示）"
             },
             {
                 "value": "#video:stage:snapshots:%",
-                "desc": "场景快照引用"
+                "desc": "实体在各场景的 costume 引用快照（避免与服装设计重复）"
             },
             {
                 "value": "#video:state:stage_%",
-                "desc": "结构化舞台"
+                "desc": "结构化舞台（环境+实体清单+开场站位）"
             },
             {
                 "value": "#video:state:beat_nl_%",
-                "desc": "节拍时间线"
+                "desc": "场戏·逐节拍时间线（含动作/台词/情绪/来源群体）"
             },
             {
                 "value": "#video:state:worn_props_%",
-                "desc": "穿着道具增量"
+                "desc": "角色身上穿的道具（避免与服装重复渲染）"
             },
             {
                 "value": "#video:state:stage_nl_%",
-                "desc": "舞台NL草稿"
+                "desc": "舞台抽取·原始草稿（中间产物，可忽略）"
             },
             {
                 "value": "#video:stage:audit:state",
-                "desc": "登记册审计状态"
+                "desc": "实体登记册反向审计状态（合并/拆分结果）"
             },
             {
                 "value": "#video:parse:idx:scenes",
-                "desc": "场景id索引"
+                "desc": "全部场景 id 列表（按行号升序）"
             },
             {
                 "value": "#video:parse:scene:%",
-                "desc": "场景元数据"
+                "desc": "场景元数据（标题/行号/地点/时间/出场人物/转场）"
             },
             {
                 "value": "#video:parse:synopsis",
-                "desc": "剧本梗概"
+                "desc": "从剧本开头自动提取的故事梗概"
             },
             {
                 "value": "#video:parse:format",
-                "desc": "剧本格式识别"
+                "desc": "LLM 自动识别的剧本格式规律（场景标记/集幕划分）"
             },
             {
                 "value": "#video:parse:global_items",
-                "desc": "全局信息条目"
+                "desc": "剧本全局信息条目（梗概/人物表/序言，含行号区间）"
             },
             {
                 "value": "#video:parse:chunk_result:%",
-                "desc": "chunk处理结果缓存"
+                "desc": "单 chunk 处理结果缓存（避免重复调 LLM）"
             },
             {
                 "value": "#video:parse:cursor",
@@ -1040,23 +1040,23 @@
             },
             {
                 "value": "#video:output:render_overview",
-                "desc": "渲染总览"
+                "desc": "渲染结果总览（每任务：✓已渲染 / ✗待渲染）"
             },
             {
                 "value": "#video:output:refimg_overview",
-                "desc": "参考图总览"
+                "desc": "参考图与视频镜头提示词总览"
             },
             {
                 "value": "#video:output:shots_overview",
-                "desc": "分镜总览"
+                "desc": "分镜序列+光照方案+素材描述总览"
             },
             {
                 "value": "#video:output:stage_overview",
-                "desc": "实体对齐总览"
+                "desc": "实体登记册+场景环境/实体/站位总览"
             },
             {
                 "value": "#video:output:char_design_overview",
-                "desc": "角色设计总览"
+                "desc": "角色身份+服装设计总览"
             }
         ],
         "metag": [],

@@ -38,14 +38,8 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         }
     }
 
-    // 制服三视图：为「所有已设计的制服」生成，不再依赖群体是否获得 uniform_refsheet 策略。
-    // 修复根因：当制服化群体的全部成员都被提升为独立个体时，群体本身从不被镜头引用，
-    // referencedShotCount=0 → 决策落到 prompt_only → 永不进入 uniform_refsheet →
-    // 制服三视图永不生成。但制服已被 designUniforms 设计、且已作为文字注入成员定妆词，
-    // 缺的只是三视图这一交付物本身。以已设计制服（char:idx:uniforms）为权威来源即可修复。
     const uniforms = new Set<string>(store.designedUniformNames());
 
-    // ===== Phase 1: 个体参考图 =====
     if (individualPairs.length > 0) {
         ctx.info(`[generateReferenceImages] Phase1: 生成 ${individualPairs.length} 个实体参考图（按场景隔离）`);
         await pMap(
@@ -55,13 +49,11 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         );
     }
 
-    // ===== Phase 2: 制服三视图 =====
     if (uniforms.size > 0) {
         ctx.info(`[generateReferenceImages] Phase2: 生成 ${uniforms.size} 个制服三视图（覆盖全部已设计制服）`);
         await pMap(Array.from(uniforms), name => generateUniformRefsheet(ctx, name), { concurrency: 2 });
     }
 
-    // ===== Phase 3: 群体合照 =====
     if (groupPhotoPairs.length > 0) {
         ctx.info(`[generateReferenceImages] Phase3: 生成 ${groupPhotoPairs.length} 个群体合照（按场景隔离）`);
         await pMap(
@@ -71,20 +63,17 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         );
     }
 
-    // ===== Phase 4: 场景环境图 =====
     const sceneIds = store.sceneIds();
     if (sceneIds.length > 0) {
         ctx.info(`[generateReferenceImages] Phase4: 生成 ${sceneIds.length} 个场景环境图`);
         await pMap(sceneIds, id => generateSceneEnvironment(ctx, id), { concurrency: 3 });
     }
 
-    // ===== Phase 5: 场景镜头「视频」提示词（全能参考出视频；不渲染静图）=====
     if (sceneIds.length > 0) {
         ctx.info(`[generateReferenceImages] Phase5: 生成逐场景视频镜头提示词`);
         await pMap(sceneIds, id => generateSceneShotPrompts(ctx, id), { concurrency: 3 });
     }
 
-    // ===== Phase 6: 构建渲染任务索引（全能参考：仅参考图为渲染交付物；shot 不渲图）=====
     const refTasks = buildRenderTaskDescriptors(store);
     store.saveRenderTasks(refTasks);
     ctx.info(`[generateReferenceImages] Phase6: 渲染任务索引完成，${refTasks.length} 个参考图任务（镜头视频提示词另存于 refimg:shot_*，不进渲染）`);
@@ -98,8 +87,16 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
  * - 提升个体：EntityRefsheetPrompt.source_group
  * - 独立抽取成员：identity.group_member_of
  * - 群体本身（group_photo）：entity_name 即群体名
+ *
+ * 修正：优先用已存证到 refsheet 的 uniform_name（由 refsheet-generator 设置），
+ * 避免再次解析；若 refsheet 尚未携带 uniform_name，回退到解析路径。
  */
 function resolveUniformRefId(store: RefImgStorage, prompt: EntityRefsheetPrompt): string | null {
+    if (prompt.uniform_name) {
+        const exists = store.getUniform(prompt.uniform_name);
+        return exists ? `uniform:${prompt.uniform_name}` : null;
+    }
+
     let group: string | null = null;
     if (prompt.source_group) {
         group = prompt.source_group;
@@ -117,7 +114,6 @@ function resolveUniformRefId(store: RefImgStorage, prompt: EntityRefsheetPrompt)
 function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[] {
     const tasks: RenderTaskDescriptor[] = [];
 
-    // 实体参考图 + 群体合照
     for (const id of store.generatedEntityRefsheets()) {
         const parsed = store.parseEntityRefsheetKey(id);
         if (!parsed) continue;
@@ -131,7 +127,6 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
 
         const referenceImages: Array<{ ref_id: string; entity_name: string; role: string }> = [];
 
-        // 制服化群体成员 → 引用制服三视图（图像级一致性锚点，非仅文字）
         const uniformRefId = resolveUniformRefId(store, prompt);
         if (uniformRefId) {
             referenceImages.push({
@@ -141,7 +136,6 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
             });
         }
 
-        // 前序场景参考图
         if (prompt.previous_scene_refs) {
             for (const prevRefId of prompt.previous_scene_refs) {
                 const prevParsed = store.parseEntityRefsheetKey(prevRefId);
@@ -154,7 +148,6 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
             }
         }
 
-        // 群体合照依赖：提升个体
         if (taskType === "group_photo") {
             const stage = store.getStage(parsed.sceneId);
             if (stage) {
@@ -194,7 +187,6 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
         });
     }
 
-    // 制服
     for (const uniformName of store.uniformPromptIdx()) {
         const prompt = store.getUniformPrompt(uniformName);
         if (!prompt) continue;
@@ -214,7 +206,6 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
         });
     }
 
-    // 环境图
     for (const sceneId of store.generatedSceneIds()) {
         const env = store.getSceneEnvironment(sceneId);
         if (!env) continue;
@@ -256,6 +247,9 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
             ...uniformNames.map(n => store.uniformPromptKey(n)),
             ...sceneIds.map(id => store.sceneEnvironmentKey(id)),
             ...store.sceneIds().map(id => store.shotPromptIdxKey(id)),
+            // 新增：制服依赖产物本身。读者扫总览时可同时核对制服三视图 KV。
+            // 仅当已设计制服时才有意义，由 checkExpiry 内部处理空入参。
+            ...uniformNames.map(n => store.uniformPromptKey(n)),
         ],
         outputKeys: store.overviewKey(),
     })) {
@@ -271,7 +265,7 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
             const parsed = store.parseEntityRefsheetKey(id);
             if (!parsed) continue;
             const prompt = store.getEntityRefsheet(parsed.sceneId, parsed.entityName);
-            if (prompt) sections.push(renderEntitySection(parsed.sceneId, parsed.entityName, prompt));
+            if (prompt) sections.push(renderEntitySection(store, parsed.sceneId, parsed.entityName, prompt));
         }
     }
 
@@ -279,7 +273,7 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
         sections.push("# 制服三视图");
         for (const name of uniformNames) {
             const prompt = store.getUniformPrompt(name);
-            if (prompt) sections.push(renderEntitySection(prompt.scene_id, name, prompt));
+            if (prompt) sections.push(renderEntitySection(store, prompt.scene_id, name, prompt));
         }
     }
 
@@ -306,7 +300,18 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
     ctx.info(`[generateReferenceImages:overview] 总览完成 ${overview.length}字`);
 }
 
+/**
+ * 渲染单个参考图条目（含制服归属/前序场景参考/被依赖反向）。
+ *
+ * 修正：
+ * - 新增「应参考制服」字段：基于 prompt.uniform_name 推导；
+ *   回退路径覆盖 source_group / identity.group_member_of / group_photo 三条来源，
+ *   与 resolveUniformRefId 的回退语义一致。
+ * - 新增「被参考」字段：扫描全部 EntityRefsheetPrompt 找出引用了
+ *   `${sceneId}__${name}` 的实体（含群成员/前序场景），便于人类核对依赖图。
+ */
 function renderEntitySection(
+    store: RefImgStorage,
     sceneId: string,
     name: string,
     prompt: EntityRefsheetPrompt,
@@ -324,13 +329,93 @@ function renderEntitySection(
         ? `｜前序场景参考：${prompt.previous_scene_refs.join("、")}`
         : "";
 
-    return [
-        `## ${sceneId} / ${name}（${prompt.kind}${prompt.humanoid ? "·类人" : ""}${srcGroupLabel}${prevRefsLabel}）`,
+    // 制服归属展示：优先用 prompt.uniform_name；空时按 resolveUniformRefId 的回退语义显式推导展示
+    const uniformName = resolveUniformNameForDisplay(store, prompt);
+    const uniformLabel = uniformName
+        ? `｜应参考制服：${uniformName}`
+        : `｜应参考制服：（无）`;
+
+    // 反向依赖：扫全部 refsheet，找谁把我当成 ref（uniform_turnaround 本身是纯产出，不查）
+    const referencedBy = collectReferencedBy(store, sceneId, name, prompt.layout);
+
+    const refByLabel = referencedBy.length > 0
+        ? `｜被参考：${referencedBy.join("、")}`
+        : "";
+
+    const lines: string[] = [
+        `## ${sceneId} / ${name}（${prompt.kind}${prompt.humanoid ? "·类人" : ""}${srcGroupLabel}${uniformLabel}${prevRefsLabel}${refByLabel}）`,
         `布局：${layoutLabel}｜重要度：${prompt.importance}｜跨镜头：${prompt.referenced_shot_count}`,
         ``,
-        `### 参考图提示词（纯白背景）`,
-        prompt.prompt,
-    ].join("\n");
+    ];
+
+    // 制服参考图自身的 prompt 字段已是「纯白背景三视图」，不再附额外说明；
+    // 其余则附「参考图使用说明」摘要
+    if (uniformName && prompt.layout !== "uniform_turnaround") {
+        lines.push(`### 制服参考约束（${uniformName}）`);
+        lines.push(`本个体的服装必须与该制服三视图保持一致：廓形/材质/色彩/构件以制服为准，本场景如换装/破损另在素材扩写中说明。`);
+        lines.push(``);
+    }
+
+    lines.push(`### 参考图提示词（纯白背景）`);
+    lines.push(prompt.prompt);
+
+    return lines.join("\n");
+}
+
+/**
+ * 解出用于展示的制服名（与 resolveUniformRefId 同源，但不依赖 ref_id 形式）。
+ * 返回 null 表示「无制服归属」。
+ */
+function resolveUniformNameForDisplay(store: RefImgStorage, prompt: EntityRefsheetPrompt): string | null {
+    if (prompt.uniform_name && store.getUniform(prompt.uniform_name)) {
+        return prompt.uniform_name;
+    }
+
+    let group: string | null = null;
+    if (prompt.source_group) {
+        group = prompt.source_group;
+    } else if (prompt.layout === "group_photo") {
+        group = prompt.entity_name;
+    } else {
+        const identity = store.getIdentity(prompt.entity_name);
+        if (identity?.group_member_of) group = identity.group_member_of;
+    }
+    if (!group) return null;
+
+    const candidateName = `${group}制服`;
+    return store.getUniform(candidateName) ? candidateName : null;
+}
+
+/**
+ * 反向收集：哪些 refsheet 把我（${sceneId}__${name}）列为 previous_scene_refs 或 uniform ref。
+ * 制服三视图本身就是纯产出，不查其反向。
+ */
+function collectReferencedBy(
+    store: RefImgStorage,
+    sceneId: string,
+    name: string,
+    selfLayout: EntityRefsheetPrompt["layout"],
+): string[] {
+    if (selfLayout === "uniform_turnaround") return [];
+
+    const myId = `${sceneId}__${name}`;
+    const referencedBy = new Set<string>();
+    const allRefsheets = store.generatedEntityRefsheets();
+
+    for (const id of allRefsheets) {
+        const parsed = store.parseEntityRefsheetKey(id);
+        if (!parsed) continue;
+        if (id === myId) continue;
+
+        const p = store.getEntityRefsheet(parsed.sceneId, parsed.entityName);
+        if (!p) continue;
+
+        const prevRefs = p.previous_scene_refs ?? [];
+        if (prevRefs.includes(myId)) {
+            referencedBy.add(id);
+        }
+    }
+    return Array.from(referencedBy);
 }
 
 function renderSceneEnvSection(

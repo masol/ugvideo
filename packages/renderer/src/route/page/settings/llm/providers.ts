@@ -20,7 +20,7 @@ export const KNOWN_PROVIDERS: KnownProvider = [
                 label: "通义千问 (阿里云百炼)",
                 protocol: allProtocols.alibaba,
                 baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-                website: "https://bailian.console.aliyun.com/?apiKey=1#/api-key",
+                website: "https://platform.qianwenai.com/home/api-keys",
                 note: "全栈企业级大模型服务平台",
                 maxconn: 60
             },
@@ -63,9 +63,9 @@ export const KNOWN_PROVIDERS: KnownProvider = [
             {
                 id: "doubao",
                 label: "豆包大模型 (火山引擎)",
-                protocol: allProtocols.openai,
+                protocol: allProtocols.openaiCompatible,
                 baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-                website: "https://volcengine.com",
+                website: "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
                 note: "你的全能 AI 伙伴",
                 maxconn: 30
             },
