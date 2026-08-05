@@ -108,7 +108,7 @@ export class LanceEmbeding {
                 }
                 return result?.embeddings;
             },
-            { concurrency: 6 }
+            { concurrency: configService().get("concurrency") }
         );
         return nestedResults.flat();
     }

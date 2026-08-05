@@ -28,6 +28,7 @@ class ConfigStore {
     #silentSave = $state<boolean>(false)
     #parallelRun = $state<boolean>(false)
     #telemetry = $state<string>("");
+    #concurrency = $state<number>(12);
 
     #itemsPerPage = $state(10);
     #fontSize = $state(14);
@@ -61,6 +62,7 @@ class ConfigStore {
     get silentSave() { return this.#silentSave }
     get parallelRun() { return this.#parallelRun }
     get telemetry() { return this.#telemetry }
+    get concurrency() { return this.#concurrency }
 
     // ── 只读门面：init 异步状态 ──
     get isLoading() { return this.#isLoading }
@@ -135,6 +137,9 @@ class ConfigStore {
             case 'rmblueprint':
                 this.#rmblueprint = value as AppConfig['rmblueprint'];
                 break;
+            case 'concurrency':
+                this.#concurrency = value as AppConfig['concurrency'];
+                break;
             case 'silentSave':
                 this.#silentSave = value as AppConfig['silentSave'];
                 break;
@@ -201,6 +206,7 @@ class ConfigStore {
         this.#silentSave = config.silentSave
         this.#parallelRun = config.parallelRun
         this.#telemetry = config.telemetry
+        this.#concurrency = config.concurrency
 
         this.applyTheme();
         this.keybinding.onKeybindingUpdate(config.keybindings);

@@ -1,4 +1,5 @@
 import { PrjDB } from '$libs/project/controllers/drizzle/index.js';
+import { configService } from '$libs/store/index.js';
 import { ProjectDbKeys } from '$libs/utils/db/dbkeys.js';
 import { throwCancel, throwUnprcessable } from '$libs/utils/err.js';
 import { knowledgeCenter } from '$libs/utils/kc.js';
@@ -11,8 +12,6 @@ import { join } from 'path';
 import { collectJobs } from './collect.js';
 import { parseFlags } from './flags.js';
 import { runJob, type WriteResult } from './write.js';
-
-const CONCURRENCY = 8;
 
 /** 对外唯一入口：解析目标目录后执行导出 */
 export async function runCmd(ctx: IRunnerContext): Promise<void> {
@@ -86,7 +85,7 @@ async function runExport(ctx: IRunnerContext, targetPath: string): Promise<void>
                 return null;
             }
         },
-        { concurrency: CONCURRENCY, stopOnError: false },
+        { concurrency: configService().get("concurrency"), stopOnError: false },
     );
 
     if (errors.length > 0) {

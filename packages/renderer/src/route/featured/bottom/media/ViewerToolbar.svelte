@@ -84,7 +84,7 @@
             </Button>
           {/snippet}
         </Tooltip.Trigger>
-        <Tooltip.Content>缩小</Tooltip.Content>
+        <Tooltip.Content class="z-9999">缩小</Tooltip.Content>
       </Tooltip.Root>
 
       <Tooltip.Root>
@@ -102,7 +102,7 @@
             </Button>
           {/snippet}
         </Tooltip.Trigger>
-        <Tooltip.Content>放大</Tooltip.Content>
+        <Tooltip.Content class="z-9999">放大</Tooltip.Content>
       </Tooltip.Root>
 
       <Tooltip.Root>
@@ -120,7 +120,7 @@
             </Button>
           {/snippet}
         </Tooltip.Trigger>
-        <Tooltip.Content>重置缩放</Tooltip.Content>
+        <Tooltip.Content class="z-9999">重置缩放</Tooltip.Content>
       </Tooltip.Root>
     </Tooltip.Provider>
 

@@ -58,7 +58,8 @@ export enum ProviderProtocol {
     Anthropic = 'anthropic',
     GoogleVertex = 'google-vertex',
     Xai = 'xai',
-    alibaba = "alibaba"
+    alibaba = "alibaba",
+    Comfy = 'comfy',
 }
 
 /**
@@ -81,6 +82,8 @@ export interface Model {
     inctx?: number;           // 输入上下文窗口 (Tokens)
     outctx?: number;          // 最大输出限制 (Tokens)
     score?: number;           // 能力评分
+
+    extra?: string;           // 额外设置--即便是JSON,也stringfy之后保存。 -- comfy之类的工具会使用此字段。
 
     // 计费扩展
     // pricingType?: PricingType;

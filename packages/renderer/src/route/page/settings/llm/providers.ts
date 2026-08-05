@@ -328,6 +328,29 @@ export const KNOWN_PROVIDERS: KnownProvider = [
         ]
     },
     {
+        "heading": "ComfyUI 服务",
+        "presets": [
+            {
+                "id": "comfycloud",
+                "label": "Comfy Cloud (官方云服务)",
+                "protocol": allProtocols.comfy,
+                "baseUrl": "https://cloud.comfy.org",
+                "website": "https://platform.comfy.org/",
+                "note": "ComfyUI 官方云服务。",
+                "maxconn": 10
+            },
+            {
+                "id": "self-hosted",
+                "label": "自托管 ComfyUI",
+                "protocol": allProtocols.comfy,
+                "baseUrl": "http://127.0.0.1:8189",
+                "website": "https://github.com/comfyanonymous/ComfyUI",
+                "note": "自主维护的ComfyUI服务。",
+                "maxconn": 10
+            }
+        ]
+    },
+    {
         heading: "本地部署",
         presets: [
             {
@@ -387,7 +410,7 @@ let _baseUrlIndex: Map<string, ProviderPreset> | null = null;
 
 function getBaseUrlIndex(): Map<string, ProviderPreset> {
     if (_baseUrlIndex) return _baseUrlIndex;
-     
+
     const idx = new Map<string, ProviderPreset>();
     for (const p of ALL_PRESETS) {
         const key = normalizeBaseUrl(p.baseUrl);

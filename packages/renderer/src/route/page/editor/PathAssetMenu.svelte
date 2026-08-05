@@ -1,20 +1,16 @@
 <!-- src/lib/editor/PathAssetMenu.svelte -->
-<!--
-  顶部「素材」下拉：
-    - 当 JSON 内容中出现 *_path 字段且值为相对路径字符串时出现。
-    - 点击「本地显示」 → 通过 store.previewAsset 读出 dataURL 并在 popover 中展示。
-    - 点击「打开文件」 → 通过 store.openPath 调系统默认程序打开。
--->
 <script lang="ts">
   import { Button } from "$lib/components/ui/button/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import * as Popover from "$lib/components/ui/popover/index.js";
+  import { dialogStore } from "$lib/store/ui/dialog.svelte";
+  import { safeApi } from "$lib/utils/api";
   import { IconExternalLink, IconEye, IconPhoto } from "@tabler/icons-svelte";
+  import AssetPreviewDialog from "./AssetPreviewDialog.svelte";
   import { editorStore, type PathAsset } from "./store.svelte";
 
   let { assets }: { assets: PathAsset[] } = $props();
 
-  /** 当前选中查看的资产 dataURL（由 previewAsset 返回） */
   let previewUrl = $state<string | null>(null);
   let previewName = $state<string>("");
 
@@ -26,6 +22,16 @@
 
   async function handleOpen(a: PathAsset) {
     await editorStore.openAsset(a.relative);
+  }
+
+  async function handleView(a: PathAsset) {
+    const url = await safeApi().project.getURL(a.relative);
+    if (!url) return;
+    await dialogStore.safeShow(
+      AssetPreviewDialog,
+      { src: url, name: a.fullKey, path: a.relative },
+      { size: "xl6", showCloseButton: true },
+    );
   }
 </script>
 
@@ -46,7 +52,7 @@
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" class="min-w-64 rounded-xl">
     {#each assets as a (a.fullKey)}
-      <DropdownMenu.Item class="rounded-lg">
+      <DropdownMenu.Item class="rounded-lg" onSelect={() => handleView(a)}>
         <div class="flex w-full items-center justify-between gap-3">
           <div class="flex min-w-0 flex-col">
             <span class="truncate text-sm font-medium">{a.fullKey}</span>
@@ -58,7 +64,6 @@
             </span>
           </div>
           <div class="flex shrink-0 items-center gap-1">
-            <!-- 本地显示 -->
             <Popover.Root>
               <Popover.Trigger>
                 {#snippet child({ props: p })}
@@ -68,7 +73,10 @@
                     size="icon"
                     aria-label="本地显示"
                     class="size-7 rounded-lg"
-                    onclick={() => handlePreview(a)}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      handlePreview(a);
+                    }}
                   >
                     <IconEye size={20} stroke={1.5} />
                   </Button>
@@ -92,13 +100,15 @@
               </Popover.Content>
             </Popover.Root>
 
-            <!-- 打开文件 -->
             <Button
               variant="ghost"
               size="icon"
               aria-label="打开文件"
               class="size-7 rounded-lg"
-              onclick={() => handleOpen(a)}
+              onclick={(e) => {
+                e.stopPropagation();
+                handleOpen(a);
+              }}
             >
               <IconExternalLink size={20} stroke={1.5} />
             </Button>

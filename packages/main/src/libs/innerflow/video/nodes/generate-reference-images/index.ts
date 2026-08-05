@@ -1,5 +1,6 @@
 // nodes/generate-reference-images/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
+import { configService } from "$libs/store/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import pMap from "p-map";
 import { generateSceneEnvironment } from "./environment-generator.js";
@@ -45,7 +46,7 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         await pMap(
             individualPairs,
             pair => generateEntityRefsheet(ctx, pair.sceneId, pair.name),
-            { concurrency: 4 },
+            { concurrency: configService().get("concurrency") },
         );
     }
 
@@ -59,7 +60,7 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         await pMap(
             groupPhotoPairs,
             pair => generateGroupPhoto(ctx, pair.sceneId, pair.name),
-            { concurrency: 3 },
+            { concurrency: configService().get("concurrency") },
         );
     }
 

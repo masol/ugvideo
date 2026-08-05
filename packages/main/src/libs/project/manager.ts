@@ -1,3 +1,4 @@
+import { configService } from '$libs/store/index.js';
 import { appLife } from '$libs/utils/tapable/applife.js';
 import Logger from 'electron-log/main.js';
 import pMap from 'p-map';
@@ -15,7 +16,7 @@ class ProjectManager {
             await pMap(
                 this.projects,
                 (prj) => prj.close(),
-                { concurrency: 6 }
+                { concurrency: configService().get("concurrency") }
             )
             console.log('[ProjectManager] 清理资源完成。');
         });

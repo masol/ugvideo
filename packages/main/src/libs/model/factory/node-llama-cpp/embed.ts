@@ -1,3 +1,4 @@
+import { configService } from '$libs/store/index.js';
 import { throwPrecondition } from '$libs/utils/err.js';
 import { appLife } from '$libs/utils/tapable/applife.js';
 import { EmbedManyResult, EmbedResult } from 'ai';
@@ -74,7 +75,7 @@ class LocalEmbeding {
         const embeddingObjects = await pMap(
             values,
             async (text) => this.embeddingContext!.getEmbeddingFor(text),
-            { concurrency: 6 }
+            { concurrency: configService().get("concurrency") }
         )
         return {
             values,

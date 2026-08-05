@@ -16,10 +16,11 @@
   import { configStore } from "$lib/store/config.svelte";
   import { confirmStore } from "$lib/store/ui/confirm.svelte";
   import { PinyinFuseSearch, type SearchItem } from "$lib/utils/fuse";
-  import type { ProviderConfig } from "$lib/utils/model/types";
+  import { allProtocols, type ProviderConfig } from "$lib/utils/model/types";
   import { type Model, type Provider } from "@app/main/types";
   import ConfigHeader from "./ConfigHeader.svelte";
   import EmptyProvidersState from "./EmptyProvidersState.svelte";
+  import ComfyModelConfigDialog from "./model/ComfyModelConfigDialog.svelte";
   import ModelConfigDialog from "./model/ModelConfigDialog.svelte";
   import ProviderCard from "./ProviderCard.svelte";
   import ProviderConfigDialog from "./ProviderConfigDialog.svelte";
@@ -111,11 +112,9 @@
     const abilityFilter = searchStore.activeAbilityFilters;
 
     let list = configStore.providers.filter((p) => {
-      // 文本搜索匹配
       const textMatch = fuseResult.providerIds.has(p.id);
       if (!textMatch) return false;
 
-      // 隐藏已禁用提供商的控制
       if (!showDisabled && p.disabled) return false;
 
       if (!tab && abilityFilter.length === 0) return true;
@@ -207,11 +206,39 @@
     await configStore.removeProvider(providerId);
   }
 
+  /**
+   * 按 provider 协议路由到不同的模型配置对话框：
+   * · protocol === comfy → ComfyModelConfigDialog（暂为只读预览）
+   * · 其余 → ModelConfigDialog（既有逻辑保持不变）
+   *
+   * 协议判定的稳定性说明：以 `provider.protocol` 为唯一锚点。
+   * 若 provider 未设置协议，默认按"非 comfy"处理（即走原对话框）。
+   */
   async function upsertModel(pid: string, model?: Model): Promise<void> {
     const provider = configStore.findProviderById(pid);
     if (!provider) {
       throw new Error(`请求增加的模型，其所属供应商${pid}无效。`);
     }
+    const isComfy = provider.protocol === allProtocols.comfy;
+
+    if (isComfy) {
+      // Comfy 协议：路由到专用对话框。
+      // 当前实现版本不对接 Model 类型（虚拟模型概念 ≠ 字符串 ID 模型），
+      // 因此 fetchCtx 不传——Comfy 对话框不调用 /models 接口。
+      await dialogStore.safeShow(
+        ComfyModelConfigDialog,
+        {
+          // 传入"虚拟模型"形状由 Comfy 对话框自身管理；
+          // 未来真正持久化时，这里再做 model↔ComfyVirtualModel 适配。
+          abilities: model?.abilities ?? [],
+          existingModelIds: [], // Comfy 虚拟模型走独立命名空间，暂不与既有 Model.id 冲突检测
+        },
+        { size: "xl" },
+      );
+      return;
+    }
+
+    // 既有路径：通用模型配置对话框
     const oldId = model?.id;
     const existingModelIds = provider.models
       .map((m) => m.id)
@@ -248,7 +275,6 @@
         filteredProviderCount={filteredProviders.length}
         {filteredModelCount}
       />
-      <!-- 排序切换 + 隐藏/显示已禁用开关 + 分隔线 -->
       <div class="flex items-center gap-3 h-5">
         <button
           type="button"
@@ -269,9 +295,7 @@
 
         <Separator orientation="vertical" class="" />
 
-        <!-- 隐藏/显示已禁用提供商开关 -->
         <div class="flex items-center gap-2 text-xs text-muted-foreground">
-          <!-- 赋予 role="button" 使其成为交互元素；tabindex 可聚焦 -->
           <Label
             for="setting-disabled-ctrl"
             class="cursor-pointer"

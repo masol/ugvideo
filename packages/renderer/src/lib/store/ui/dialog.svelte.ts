@@ -7,7 +7,7 @@ type DialogComponent<R = unknown, P extends BaseProps = BaseProps> = Component<
     DialogComponentProps<R> & P
 >;
 
-export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'xl2' | 'full';
+export type DialogSize = 'sm' | 'md' | 'lg' | 'xl' | 'xl2' | 'xl6' | 'full';
 
 export const DIALOG_SIZE_CLASSES: Record<DialogSize, string> = {
     sm: '!max-w-sm',
@@ -15,6 +15,7 @@ export const DIALOG_SIZE_CLASSES: Record<DialogSize, string> = {
     lg: '!max-w-lg',
     xl2: '!max-w-2xl',
     xl: '!max-w-4xl',
+    xl6: '!max-w-6xl',
     full: 'w-screen h-screen max-w-none',
 };
 

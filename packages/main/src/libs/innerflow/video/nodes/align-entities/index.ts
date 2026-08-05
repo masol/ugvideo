@@ -1,5 +1,6 @@
 // nodes/align-entities/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
+import { configService } from "$libs/store/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import pMap from "p-map";
 import { alignAllScenes } from "./entity-aligner.js";
@@ -23,7 +24,7 @@ export async function alignEntities(ctx: IRunnerContext): Promise<void> {
         async (sceneId) => {
             await buildSceneStage(ctx, sceneId);
         },
-        { concurrency: 8 },
+        { concurrency: configService().get("concurrency") },
     );
 
     ctx.info(`[alignEntities] A+B+C 完成，共 ${sceneIds.length} 场`);

@@ -1,5 +1,6 @@
 // nodes/design-shots/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
+import { configService } from "$libs/store/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import pMap from "p-map";
 import { designScene, initAssetConstraints } from "./shot-designer.js";
@@ -23,7 +24,7 @@ export async function designShots(ctx: IRunnerContext): Promise<void> {
         async (sceneId) => {
             await designScene(ctx, sceneId);
         },
-        { concurrency: 4 },
+        { concurrency: configService().get("concurrency") },
     );
 
     ctx.info(`[designShots] 全部场景设计完成`);

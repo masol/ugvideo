@@ -1,5 +1,6 @@
 // nodes/render-videos/index.ts
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
+import { configService } from "$libs/store/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import pMap from "p-map";
 import { VideoSegmentStorage } from "../plan-video-segments/storage.js";
@@ -12,8 +13,6 @@ import {
 import { VideoRenderStorage } from "./storage.js";
 import type { VideoGenParams, VideoRenderResult } from "./types.js";
 import { planSegmentOrder } from "./video-dag.js";
-
-const MAX_CONCURRENT_VIDEO = 4;
 
 /**
  * 渲染所有 video segment。
@@ -140,7 +139,7 @@ export async function renderVideos(ctx: IRunnerContext): Promise<void> {
                 renderStore.saveRenderResult(result);
                 succeeded++;
                 ctx.info(`[renderVideos] ${seg.segment_id} 完成：${result.file_path}`);
-            }, { concurrency: MAX_CONCURRENT_VIDEO });
+            }, { concurrency: configService().get("concurrency") });
         }
 
         ctx.info(

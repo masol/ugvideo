@@ -31,6 +31,12 @@ export const configSchema: Schema<AppConfig> = {
         minimum: 3,
         maximum: 50
     },
+    concurrency: {
+        type: 'integer',
+        default: 12,
+        minimum: 1,
+        maximum: 3000
+    },
     lineNumbers: {
         type: 'boolean',
         default: true

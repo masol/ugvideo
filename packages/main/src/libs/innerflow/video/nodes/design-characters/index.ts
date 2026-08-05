@@ -1,6 +1,7 @@
 // nodes/design-characters/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
+import { configService } from "$libs/store/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText } from "ai";
 import pMap from "p-map";
@@ -240,7 +241,7 @@ async function designCostumes(ctx: IRunnerContext): Promise<void> {
             previousCostume = formatCostume(costume);
             ctx.info(`[designCostumes] ${entity.name}@${sceneId} 服装设计完成${isTimeSkip ? "（时间跳跃）" : ""}${wornPropsForCharacter.length ? `（合并 ${wornPropsForCharacter.length} 件穿着道具）` : ""}`);
         }
-    }, { concurrency: 3 });
+    }, { concurrency: configService().get("concurrency") });
 
     ctx.info("[designCostumes] 服装设计完成");
 }
@@ -317,7 +318,7 @@ async function designUniforms(ctx: IRunnerContext): Promise<void> {
         const uniform = parseUniform(uniformName, entity.name, text);
         store.saveUniform(uniform);
         ctx.info(`[designUniforms] ${uniformName} 制服设计完成`);
-    }, { concurrency: 2 });
+    }, { concurrency: configService().get("concurrency") });
 
     ctx.info("[designUniforms] 制服设计完成");
 }

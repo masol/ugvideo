@@ -1,6 +1,7 @@
 // nodes/plan-video-segments/index.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
+import { configService } from "$libs/store/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText } from "ai";
 import pMap from "p-map";
@@ -99,7 +100,7 @@ async function planSceneSegments(ctx: IRunnerContext, sceneId: string): Promise<
     const finalSegments = await pMap(
         cache.segments,
         async (segSpec, i) => buildSegment(ctx, store, sceneId, segSpec, i, cache),
-        { concurrency: 3 },
+        { concurrency: configService().get("concurrency") },
     );
 
     store.saveAllSegments(sceneId, finalSegments);

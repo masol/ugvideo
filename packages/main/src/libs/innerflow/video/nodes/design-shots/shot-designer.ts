@@ -1,6 +1,7 @@
 // nodes/design-shots/shot-designer.ts
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
+import { configService } from "$libs/store/index.js";
 import { throwPrecondition } from "$libs/utils/err.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText } from "ai";
@@ -394,7 +395,7 @@ async function designAssetsForScene(
                 timelineContext: params.timelineContext,
             });
         },
-        { concurrency: 3 },
+        { concurrency: configService().get("concurrency") },
     );
 
     ctx.info(`[PassD] ${sceneId} 素材扩写完成，${params.stage.entities.length} 个实体`);

@@ -1,4 +1,5 @@
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
+import { configService } from "$libs/store/index.js";
 import { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText, Output } from "ai";
 import Logger from "electron-log/main.js";
@@ -155,7 +156,7 @@ async function critiqueAll(
             return { ...c.output, dimension: d.name };
         },
         {
-            concurrency: 8,
+            concurrency: configService().get("concurrency"),
         }
     );
     ctx?.notify(

@@ -1,4 +1,5 @@
 
+import { configService } from "$libs/store/index.js";
 import { os } from "@orpc/server";
 import { randomUUID } from 'crypto';
 import Logger from 'electron-log/main.js';
@@ -45,7 +46,7 @@ const addMetaRes = os
                 await copy(src, dest);
                 return dest;
             },
-            { concurrency: 6 }
+            { concurrency: configService().get("concurrency") }
         )
         return result;
     });
@@ -70,7 +71,7 @@ const rmMetaRes = os
                     Logger.error(`[Project VisualRef] 请求删除参考图${src},但是它不位于项目素材目录${visualrefDir}中，忽略请求。`)
                 }
             },
-            { concurrency: 6 }
+            { concurrency: configService().get("concurrency") }
         )
     });
 
