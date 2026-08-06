@@ -375,17 +375,21 @@
                   placeholder="输入模型名称搜索…"
                   class="pr-10 font-mono"
                 />
-                <button
-                  type="button"
-                  onclick={() => (modelDropdownOpen = false)}
-                  aria-label="关闭"
-                  class={cn(
-                    "absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1",
-                    "text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  <IconX size={16} stroke={1.5} />
-                </button>
+                {#if id}
+                  <button
+                    type="button"
+                    onclick={() => {
+                      id = "";
+                    }}
+                    aria-label="清空输入"
+                    class={cn(
+                      "absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1",
+                      "text-muted-foreground transition-all duration-200 hover:bg-muted hover:text-foreground",
+                    )}
+                  >
+                    <IconX size={16} stroke={1.5} />
+                  </button>
+                {/if}
               </div>
 
               <Command.List class="max-h-72">

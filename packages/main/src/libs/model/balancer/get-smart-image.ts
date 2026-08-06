@@ -8,6 +8,7 @@ import {
 } from '@ai-sdk/provider';
 import Logger from 'electron-log/main.js';
 import { createImageModel } from '../index.js';
+import { getImageOptsTransformer } from '../opts-transform/registry.js';
 import { selectCandidates, SortStrategy, type Candidate } from './candidate.js';
 import { getLimiter, syncAndGetProviders } from './pool-registry.js';
 
@@ -56,6 +57,7 @@ function buildImageProxy(
     const models = candidates.map((c) => ({
         c,
         model: createImageModel(c.provider, c.model.id),
+        transformer: getImageOptsTransformer(c.provider)
     }));
 
     const first = models[0].model;
@@ -76,9 +78,10 @@ function buildImageProxy(
                 if (ctx?.isAborted) {
                     throw new DOMException('Aborted by context', 'AbortError');
                 }
-                const { c, model } = models[i];
+                const { c, model, transformer } = models[i];
                 try {
-                    return await c.limiter.run(() => model.doGenerate(merged));
+                    const transformed = transformer ? transformer(merged, c.provider, c.model.id) : merged;
+                    return await c.limiter.run(() => model.doGenerate(transformed));
                 } catch (e) {
                     lastErr = e;
                     if (isAbortError(e) || ctx?.isAborted) {

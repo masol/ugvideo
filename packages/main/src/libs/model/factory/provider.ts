@@ -99,6 +99,7 @@ function createProviderByProtocol(
     baseURL?: string
 ): ProviderV4 {
     switch (protocol) {
+        case 'seedance':
         case 'openai':
             return createOpenAIModel(apiKey, baseURL);
 

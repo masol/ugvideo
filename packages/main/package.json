@@ -15,6 +15,7 @@
   "dependencies": {
     "@ai-sdk/alibaba": "^2.0.22",
     "@ai-sdk/anthropic": "^4.0.27",
+    "@ai-sdk/bytedance": "^2.0.25",
     "@ai-sdk/deepseek": "^3.0.19",
     "@ai-sdk/google": "^4.0.31",
     "@ai-sdk/mcp": "^2.0.22",

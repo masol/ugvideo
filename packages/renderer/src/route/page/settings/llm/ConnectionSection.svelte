@@ -1,20 +1,11 @@
 <!-- ConnectionSection.svelte -->
 <script lang="ts">
-  import * as DropdownMenu from "$lib/components/ui/dropdown-menu";
   import { Input } from "$lib/components/ui/input";
   import { Label } from "$lib/components/ui/label";
-  import {
-    allProtocols,
-    protocolLabels,
-    type ProviderProtocol,
-  } from "$lib/utils/model/types";
-  import {
-    IconCheck,
-    IconChevronDown,
-    IconRouter,
-    IconServer,
-    IconWorld,
-  } from "@tabler/icons-svelte";
+  import ProtocolCombobox from "./ProtocolCombobox.svelte";
+
+  import { type ProviderProtocol } from "$lib/utils/model/types";
+  import { IconRouter, IconServer, IconWorld } from "@tabler/icons-svelte";
 
   let {
     protocol = $bindable<ProviderProtocol | undefined>(),
@@ -51,41 +42,7 @@
   <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
     <div class="space-y-2">
       <Label>接口协议</Label>
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger>
-          {#snippet child({ props })}
-            <button
-              {...props}
-              type="button"
-              class="flex h-9 w-full items-center justify-between rounded-xl border border-input bg-background px-3 text-sm transition-all duration-200 hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span
-                class={protocol ? "text-foreground" : "text-muted-foreground"}
-              >
-                {protocol ? protocolLabels[protocol] : "选择协议"}
-              </span>
-              <IconChevronDown class="size-4 shrink-0 text-muted-foreground" />
-            </button>
-          {/snippet}
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Content
-          class="w-48 rounded-xl"
-          align="start"
-          style="z-index: 9999;"
-        >
-          {#each Object.values(allProtocols) as proto (proto)}
-            <DropdownMenu.Item
-              class="flex items-center justify-between rounded-lg"
-              onclick={() => (protocol = proto)}
-            >
-              <span>{protocolLabels[proto]}</span>
-              {#if protocol === proto}<IconCheck
-                  class="size-4 text-primary"
-                />{/if}
-            </DropdownMenu.Item>
-          {/each}
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
+      <ProtocolCombobox bind:protocol />
     </div>
 
     <div class="space-y-2">

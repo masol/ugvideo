@@ -304,6 +304,8 @@ export const protocolLabels: Record<ProviderProtocol, string> = {
     "xai": "xai",
     "deepseek": "Deepseek",
     "alibaba": "阿里",
+    "seedance": "豆包",
+    "kling": "可灵",
     "comfy": "Comfy"
 };
 
@@ -316,6 +318,8 @@ export const allProtocols: Record<string, ProviderProtocol> = {
     deepseek: "deepseek" as ProviderProtocol,
     alibaba: "alibaba" as ProviderProtocol,
     comfy: "comfy" as ProviderProtocol,
+    seedance: "seedance" as ProviderProtocol,
+    kling: "kling" as ProviderProtocol,
 };
 
 export function formatTokens(n: number): string {

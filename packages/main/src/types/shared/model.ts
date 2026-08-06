@@ -52,14 +52,16 @@ export enum ModelTags {
  * 接口协议枚举：区分不同的调用标准
  */
 export enum ProviderProtocol {
-    Deepseek = "deepseek",
     OpenAICompatible = "openai-compatible",
     OpenAI = 'openai',
     Anthropic = 'anthropic',
     GoogleVertex = 'google-vertex',
     Xai = 'xai',
+    Deepseek = "deepseek",
     alibaba = "alibaba",
     Comfy = 'comfy',
+    Seedance = "seedance",
+    Kling = "kling"
 }
 
 /**

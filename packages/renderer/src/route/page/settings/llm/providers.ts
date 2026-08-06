@@ -63,7 +63,7 @@ export const KNOWN_PROVIDERS: KnownProvider = [
             {
                 id: "doubao",
                 label: "豆包大模型 (火山引擎)",
-                protocol: allProtocols.openaiCompatible,
+                protocol: allProtocols.seedance,
                 baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
                 website: "https://console.volcengine.com/ark/region:cn-beijing/apiKey",
                 note: "你的全能 AI 伙伴",

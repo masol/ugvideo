@@ -19,6 +19,8 @@ export function createVideoModel(
     provider: Provider,
     modelId: string,
 ): VideoModelV4 {
+
+    // if(provider.protocol === "")
     // TODO: 未来接入时替换为真实实现
     // const pvInst = createProvider(provider);
     // return pvInst.videoModel(modelId);
