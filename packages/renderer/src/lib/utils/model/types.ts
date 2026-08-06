@@ -296,19 +296,6 @@ export const FUNCTION_CONTEXT_LABELS: Partial<Record<ModelTags, ContextFieldLabe
     },
 };
 
-export const protocolLabels: Record<ProviderProtocol, string> = {
-    "openai-compatible": "OpenAI兼容",
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "google-vertex": "Google AI",
-    "xai": "xai",
-    "deepseek": "Deepseek",
-    "alibaba": "阿里",
-    "seedance": "豆包",
-    "kling": "可灵",
-    "comfy": "Comfy"
-};
-
 export const allProtocols: Record<string, ProviderProtocol> = {
     openaiCompatible: "openai-compatible" as ProviderProtocol,
     openai: "openai" as ProviderProtocol,
