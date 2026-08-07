@@ -45,7 +45,7 @@ const ASYNC_SUBMIT_PATH = '/api/v1/services/aigc/image-generation/generation';
 const TASK_PATH = '/api/v1/tasks';
 
 const POLL_INTERVAL_MS = 10_000;
-const MAX_POLL_MS = 5 * 60 * 1000;
+const MAX_POLL_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IMAGES_PER_CALL = 4;
 
 /** anchor 总像素,落在 z-image 推荐区间 [1024², 1536²] 内。 */

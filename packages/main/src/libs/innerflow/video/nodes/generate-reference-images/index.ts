@@ -41,6 +41,10 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
 
     const uniforms = new Set<string>(store.designedUniformNames());
 
+    // ===== Phase 1：所有 individual_refsheet（含提升个体）=====
+    // 关键修复：先把所有 individual_refsheet 跑完，并保证它们的 refsheet 已写入
+    // generatedEntityRefsheets 索引，下游 group_photo 才能通过 ids.has() 在 DAG
+    // 中正确建立依赖边。
     if (individualPairs.length > 0) {
         ctx.info(`[generateReferenceImages] Phase1: 生成 ${individualPairs.length} 个实体参考图（按场景隔离）`);
         await pMap(
@@ -50,12 +54,56 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         );
     }
 
+    // ===== Phase 2：制服三视图（uniform_refsheet）=====
     if (uniforms.size > 0) {
         ctx.info(`[generateReferenceImages] Phase2: 生成 ${uniforms.size} 个制服三视图（覆盖全部已设计制服）`);
         await pMap(Array.from(uniforms), name => generateUniformRefsheet(ctx, name), { concurrency: 2 });
     }
 
+    // ===== Phase 3：group_photo 必须在 Phase1 之后跑 =====
+    // 修复：把 group_photo 的成员 refsheet 完整性校验提前到 Phase3 之前；
+    // 若成员 refsheet 不在索引中（即 individual_refsheet 生成失败或缺失），
+    // 强制补生成一次，确保 generatedEntityRefsheets 索引完备后 group_photo
+    // 才能拿到正确的 previous_scene_refs，DAG 才能建立边。
     if (groupPhotoPairs.length > 0) {
+        const membersToBackfill = new Map<string, { sceneId: string; name: string }>();
+
+        for (const pair of groupPhotoPairs) {
+            const stage = store.getStage(pair.sceneId);
+            if (!stage) continue;
+            for (const e of stage.entities) {
+                if (e.source_group !== pair.name) continue;
+
+                const memberRefKey = store.entityRefsheetKey(pair.sceneId, e.name);
+                const memberRefExists = store.getEntityRefsheet(pair.sceneId, e.name) != null;
+                const inIndex = store.generatedEntityRefsheets().includes(`${pair.sceneId}__${e.name}`);
+
+                if (!memberRefExists || !inIndex) {
+                    membersToBackfill.set(memberRefKey, { sceneId: pair.sceneId, name: e.name });
+                }
+            }
+        }
+
+        if (membersToBackfill.size > 0) {
+            ctx.info(
+                `[generateReferenceImages] Phase3-precheck: 补生成 ${membersToBackfill.size} 个成员 refsheet`
+                + `（group_photo 依赖，必须先存在才能建 DAG 边）`,
+            );
+            await pMap(
+                Array.from(membersToBackfill.values()),
+                async (member) => {
+                    const result = await generateEntityRefsheet(ctx, member.sceneId, member.name);
+                    if (!result) {
+                        ctx.warn(
+                            `[generateReferenceImages] 成员 ${member.sceneId}__${member.name} 补生成失败，`
+                            + `依赖它的 group_photo 任务的 DAG 边可能缺失`,
+                        );
+                    }
+                },
+                { concurrency: configService().get("concurrency") },
+            );
+        }
+
         ctx.info(`[generateReferenceImages] Phase3: 生成 ${groupPhotoPairs.length} 个群体合照（按场景隔离）`);
         await pMap(
             groupPhotoPairs,
@@ -75,23 +123,13 @@ export async function generateReferenceImages(ctx: IRunnerContext): Promise<void
         await pMap(sceneIds, id => generateSceneShotPrompts(ctx, id), { concurrency: 3 });
     }
 
-    const refTasks = buildRenderTaskDescriptors(store);
+    const refTasks = buildRenderTaskDescriptors(ctx, store);
     store.saveRenderTasks(refTasks);
     ctx.info(`[generateReferenceImages] Phase6: 渲染任务索引完成，${refTasks.length} 个参考图任务（镜头视频提示词另存于 refimg:shot_*，不进渲染）`);
 
     await buildOverview(ctx);
 }
 
-/**
- * 若该实体属于某制服化群体（且该群体制服已设计），返回其应引用的制服三视图 ref_id。
- * 覆盖三类归属：
- * - 提升个体：EntityRefsheetPrompt.source_group
- * - 独立抽取成员：identity.group_member_of
- * - 群体本身（group_photo）：entity_name 即群体名
- *
- * 修正：优先用已存证到 refsheet 的 uniform_name（由 refsheet-generator 设置），
- * 避免再次解析；若 refsheet 尚未携带 uniform_name，回退到解析路径。
- */
 function resolveUniformRefId(store: RefImgStorage, prompt: EntityRefsheetPrompt): string | null {
     if (prompt.uniform_name) {
         const exists = store.getUniform(prompt.uniform_name);
@@ -112,7 +150,7 @@ function resolveUniformRefId(store: RefImgStorage, prompt: EntityRefsheetPrompt)
     return store.getUniform(uniformName) ? `uniform:${uniformName}` : null;
 }
 
-function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[] {
+function buildRenderTaskDescriptors(ctx: IRunnerContext, store: RefImgStorage): RenderTaskDescriptor[] {
     const tasks: RenderTaskDescriptor[] = [];
 
     for (const id of store.generatedEntityRefsheets()) {
@@ -137,24 +175,23 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
             });
         }
 
-        if (prompt.previous_scene_refs) {
-            for (const prevRefId of prompt.previous_scene_refs) {
-                const prevParsed = store.parseEntityRefsheetKey(prevRefId);
-                if (!prevParsed) continue;
-                referenceImages.push({
-                    ref_id: prevRefId,
-                    entity_name: prevParsed.entityName,
-                    role: "previous_scene_reference（前序场景参考，保持外观一致性）",
-                });
-            }
-        }
-
+        // 关键修复：group_photo 任务的成员 ref 必须通过两条独立路径收集，
+        // 任何一条找到都加；这是 DAG 建边的输入，不能漏。
         if (taskType === "group_photo") {
             const stage = store.getStage(parsed.sceneId);
             if (stage) {
                 for (const e of stage.entities) {
                     if (e.source_group === prompt.entity_name) {
                         const memberRefId = `${parsed.sceneId}__${e.name}`;
+                        // 成员 refsheet 必须在 generatedEntityRefsheets 索引里才能建边；
+                        // Phase3-precheck 已确保这一点。这里再加一次校验防止漏网。
+                        if (!store.generatedEntityRefsheets().includes(memberRefId)) {
+                            ctx.warn(
+                                `[buildRenderTaskDescriptors] ${memberRefId} 不在 refsheet 索引中，`
+                                + `跳过该成员的 ref_id（会导致 group_photo 的 DAG 边缺失）`,
+                            );
+                            continue;
+                        }
                         referenceImages.push({
                             ref_id: memberRefId,
                             entity_name: e.name,
@@ -162,6 +199,21 @@ function buildRenderTaskDescriptors(store: RefImgStorage): RenderTaskDescriptor[
                         });
                     }
                 }
+            }
+        }
+
+        if (prompt.previous_scene_refs) {
+            for (const prevRefId of prompt.previous_scene_refs) {
+                if (referenceImages.some(r => r.ref_id === prevRefId)) continue;
+                const prevParsed = store.parseEntityRefsheetKey(prevRefId);
+                if (!prevParsed) continue;
+                // 同样的索引校验
+                if (!store.generatedEntityRefsheets().includes(prevRefId)) continue;
+                referenceImages.push({
+                    ref_id: prevRefId,
+                    entity_name: prevParsed.entityName,
+                    role: "previous_scene_reference（前序场景参考，保持外观一致性）",
+                });
             }
         }
 
@@ -248,8 +300,6 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
             ...uniformNames.map(n => store.uniformPromptKey(n)),
             ...sceneIds.map(id => store.sceneEnvironmentKey(id)),
             ...store.sceneIds().map(id => store.shotPromptIdxKey(id)),
-            // 新增：制服依赖产物本身。读者扫总览时可同时核对制服三视图 KV。
-            // 仅当已设计制服时才有意义，由 checkExpiry 内部处理空入参。
             ...uniformNames.map(n => store.uniformPromptKey(n)),
         ],
         outputKeys: store.overviewKey(),
@@ -301,16 +351,6 @@ async function buildOverview(ctx: IRunnerContext): Promise<void> {
     ctx.info(`[generateReferenceImages:overview] 总览完成 ${overview.length}字`);
 }
 
-/**
- * 渲染单个参考图条目（含制服归属/前序场景参考/被依赖反向）。
- *
- * 修正：
- * - 新增「应参考制服」字段：基于 prompt.uniform_name 推导；
- *   回退路径覆盖 source_group / identity.group_member_of / group_photo 三条来源，
- *   与 resolveUniformRefId 的回退语义一致。
- * - 新增「被参考」字段：扫描全部 EntityRefsheetPrompt 找出引用了
- *   `${sceneId}__${name}` 的实体（含群成员/前序场景），便于人类核对依赖图。
- */
 function renderEntitySection(
     store: RefImgStorage,
     sceneId: string,
@@ -330,13 +370,11 @@ function renderEntitySection(
         ? `｜前序场景参考：${prompt.previous_scene_refs.join("、")}`
         : "";
 
-    // 制服归属展示：优先用 prompt.uniform_name；空时按 resolveUniformRefId 的回退语义显式推导展示
     const uniformName = resolveUniformNameForDisplay(store, prompt);
     const uniformLabel = uniformName
         ? `｜应参考制服：${uniformName}`
         : `｜应参考制服：（无）`;
 
-    // 反向依赖：扫全部 refsheet，找谁把我当成 ref（uniform_turnaround 本身是纯产出，不查）
     const referencedBy = collectReferencedBy(store, sceneId, name, prompt.layout);
 
     const refByLabel = referencedBy.length > 0
@@ -349,8 +387,6 @@ function renderEntitySection(
         ``,
     ];
 
-    // 制服参考图自身的 prompt 字段已是「纯白背景三视图」，不再附额外说明；
-    // 其余则附「参考图使用说明」摘要
     if (uniformName && prompt.layout !== "uniform_turnaround") {
         lines.push(`### 制服参考约束（${uniformName}）`);
         lines.push(`本个体的服装必须与该制服三视图保持一致：廓形/材质/色彩/构件以制服为准，本场景如换装/破损另在素材扩写中说明。`);
@@ -363,10 +399,6 @@ function renderEntitySection(
     return lines.join("\n");
 }
 
-/**
- * 解出用于展示的制服名（与 resolveUniformRefId 同源，但不依赖 ref_id 形式）。
- * 返回 null 表示「无制服归属」。
- */
 function resolveUniformNameForDisplay(store: RefImgStorage, prompt: EntityRefsheetPrompt): string | null {
     if (prompt.uniform_name && store.getUniform(prompt.uniform_name)) {
         return prompt.uniform_name;
@@ -387,10 +419,6 @@ function resolveUniformNameForDisplay(store: RefImgStorage, prompt: EntityRefshe
     return store.getUniform(candidateName) ? candidateName : null;
 }
 
-/**
- * 反向收集：哪些 refsheet 把我（${sceneId}__${name}）列为 previous_scene_refs 或 uniform ref。
- * 制服三视图本身就是纯产出，不查其反向。
- */
 function collectReferencedBy(
     store: RefImgStorage,
     sceneId: string,

@@ -99,7 +99,6 @@ function createProviderByProtocol(
     baseURL?: string
 ): ProviderV4 {
     switch (protocol) {
-        case 'seedance':
         case 'openai':
             return createOpenAIModel(apiKey, baseURL);
 
@@ -117,7 +116,6 @@ function createProviderByProtocol(
                 baseURL,
                 apiKey
             });
-
         // case 'huggingface':
         //     return createHuggingFaceModel(apiKey, baseURL);
 
@@ -133,6 +131,7 @@ function createProviderByProtocol(
             throwUnprcessable("comfy协议配置错误。");
             break;
         case 'openai-compatible':
+        case 'seedance':
         default:
             if (!baseURL) {
                 throwPrecondition("openai兼容协议必须提供URL地址。")

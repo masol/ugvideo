@@ -7,11 +7,12 @@ import { experimental_generateVideo as generateVideo } from "ai";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { RenderStorage } from "../render-images/storage.js";
 import { VideoRenderStorage } from "./storage.js";
 import type { VideoGenParams, VideoRenderResult } from "./types.js";
 
 const VIDS_SUBDIR = "vids";
-const MAX_REFERENCE_IMAGES = 9; // Seedance 全能参考图上限
+const MAX_REFERENCE_IMAGES = 50; // Seedance 全能参考图上限
 
 let referenceCache: Map<string, Uint8Array> | null = null;
 
@@ -23,24 +24,17 @@ function deriveFileStem(segId: string, seed: number): string {
     return `vid_${hash}`;
 }
 
-/**
- * 把语义分辨率标签（480p / 720p / 1080p / 4k）转为 AI SDK 要求的 16:9 像素规格。
- * 16:9 约定（与 config:aspectRatio 9:16 不冲突——这是显示画幅比例，不是像素分辨率）。
- */
 function resolveResolution(spec: string): `${number}x${number}` | undefined {
-    switch (spec) {
-        case "480p": return "854x480";
-        case "720p": return "1280x720";
-        case "1080p": return "1920x1080";
-        case "4k": return "3840x2160";
-        default: return undefined;
-    }
+    return spec as `${number}x${number}`;
+    // switch (spec) {
+    //     case "480p": return "854x480";
+    //     case "720p": return "1280x720";
+    //     case "1080p": return "1920x1080";
+    //     case "4k": return "3840x2160";
+    //     default: return undefined;
+    // }
 }
 
-/**
- * 在编排前由 caller 校验每个 segment 的 referenceImages 是否都有 file_path。
- * 返回缺失依赖列表；若非空，**放弃整个 segment 的渲染**，由 caller 级联取消下游。
- */
 export function validateSegmentDependencies(
     params: VideoGenParams,
 ): { ready: boolean; missing: string[] } {
@@ -60,16 +54,18 @@ export function buildVideoParams(
     refImages: Array<{ ref_id: string; entity_name: string; role: string }>,
     durationSeconds: number,
 ): VideoGenParams {
-    const storage = new VideoRenderStorage(ctx);
+    // 修复：用两个不同的 storage：
+    //   - VideoRenderStorage：管理视频 segment 自身的 seed/params/result
+    //   - RenderStorage：管理图片参考图的渲染结果（env:<sceneId>、<sceneId>__<entityName>、uniform:<name>）
+    // 之前用错 storage 导致所有图片 ref 的 file_path 永远为 null。
+    const videoStore = new VideoRenderStorage(ctx);
+    const imageStore = new RenderStorage(ctx);
     const prjdb = PrjDB.ensure(ctx.prj);
 
-    // 与 design-shots / plan-video-segments / render-videos/index.ts 同源：从 PrjDB config:* 读；
-    // parse-script/index.ts 已默认落，本处兜底同值。
     const aspectRatio = prjdb.get<string>("config:aspectRatio") ?? "9:16";
     const frameRate = parseInt(prjdb.get<string>("config:frameRate") ?? "24", 10);
-    const seed = storage.getOrCreateSeed(segmentId);
+    const seed = videoStore.getOrCreateSeed(segmentId);
 
-    // Seedance 上限 9 张图；超限时优先保留：环境图(1) + 主要角色图(<=8)
     const truncated = truncateReferences(refImages, MAX_REFERENCE_IMAGES);
     if (truncated.omitted.length > 0) {
         ctx.warn(
@@ -78,27 +74,25 @@ export function buildVideoParams(
         );
     }
 
+    // 修复：从 RenderStorage 读图片渲染结果（不是从 VideoRenderStorage 读视频结果）
     const referenceImages = truncated.kept.map(r => ({
         ref_id: r.ref_id,
         entity_name: r.entity_name,
         role: r.role,
-        file_path: storage.getRenderResult(r.ref_id)?.file_path ?? null,
+        file_path: imageStore.getRenderResult(r.ref_id)?.file_path ?? null,
     }));
 
     return {
         segment_id: segmentId,
         prompt,
         referenceImages,
-        duration_seconds: Math.min(15, durationSeconds),
+        duration_seconds: durationSeconds,
         aspect_ratio: aspectRatio,
         frame_rate: Number.isFinite(frameRate) && frameRate > 0 ? frameRate : 24,
         seed,
     };
 }
 
-/**
- * 截断参考图：保留环境图（ref_id 以 env: 开头）+ 其余按顺序。
- */
 function truncateReferences(
     refs: Array<{ ref_id: string; entity_name: string; role: string }>,
     max: number,
@@ -137,20 +131,6 @@ async function loadReferenceBytes(
     return out;
 }
 
-/**
- * 调用视频生成 API。
- *
- * 输入形态：
- *   - prompt 字段：纯文本（自然语言导演指令 + 时间戳 + 对白 + 负面约束）
- *   - inputReferences 字段：[{ data: Uint8Array, mediaType: "image/jpeg" }, ...]
- *     （全能参考模式；不走 frameImages 的首尾帧路径）
- *
- * 全能参考 vs 首尾帧的关键区别：本工作流是 reference-to-video，
- * 图像提供"外观锚点"，而非"首帧/末帧"。
- *
- * 分辨率：来自 config:resolution（480p/720p/1080p/4k），映射成 16:9 像素规格传 AI SDK。
- * 帧率：来自 config:frameRate（默认 24）。无效值兜底 24。
- */
 export async function callVideoAPI(
     ctx: IRunnerContext,
     params: VideoGenParams,
@@ -162,17 +142,16 @@ export async function callVideoAPI(
             ? bytes.map(b => ({ data: b, mediaType: "image/jpeg" as const }))
             : undefined;
 
-        // 读分辨率（语义值 → 像素规格）
         const resolutionSpec = PrjDB.ensure(ctx.prj).get<string>("config:resolution") ?? "480p";
         const resolution = resolveResolution(resolutionSpec);
 
         const { video } = await generateVideo({
             model: getSmartVideo(undefined, ctx),
-            prompt: params.prompt,                  // 纯文本（全能参考不走图混入 prompt）
-            inputReferences,                        // 多参考图全部走这条路径
+            prompt: params.prompt,
+            inputReferences,
             duration: params.duration_seconds,
             aspectRatio: params.aspect_ratio as `${number}:${number}`,
-            resolution,                             // 例 "1280x720"；未知 spec 时 undefined
+            resolution,
             fps: params.frame_rate,
             seed: params.seed,
         });
@@ -181,7 +160,7 @@ export async function callVideoAPI(
         const filename = `${stem}.mp4`;
         const absDir = path.join(ctx.prj.path, VIDS_SUBDIR);
         const absPath = path.join(absDir, filename);
-        const relPath = path.posix.join(VIDS_SUBDIR, filename);
+        const relPath = path.join(VIDS_SUBDIR, filename);
 
         await mkdir(absDir, { recursive: true });
         await writeFile(absPath, video.uint8Array);
@@ -199,9 +178,6 @@ export async function callVideoAPI(
     }
 }
 
-/**
- * 渲染单个 segment。返回 null = 放弃（依赖缺失或 API 失败）。
- */
 export async function renderSegment(
     ctx: IRunnerContext,
     segmentId: string,
@@ -209,10 +185,9 @@ export async function renderSegment(
     refImages: Array<{ ref_id: string; entity_name: string; role: string }>,
     durationSeconds: number,
 ): Promise<VideoRenderResult | null> {
-    const storage = new VideoRenderStorage(ctx);
+    const videoStore = new VideoRenderStorage(ctx);
     const params = buildVideoParams(ctx, segmentId, prompt, refImages, durationSeconds);
 
-    // ===== 依赖校验：缺失即放弃 =====
     const validation = validateSegmentDependencies(params);
     if (!validation.ready) {
         ctx.warn(
@@ -220,12 +195,11 @@ export async function renderSegment(
             + `缺失 ${validation.missing.join("、")}；`
             + `其下游依赖者也将被级联取消。`,
         );
-        // 落盘 params（含缺失依赖信息）便于排查，但不写 result
-        storage.saveRenderParams(segmentId, params);
+        videoStore.saveRenderParams(segmentId, params);
         return null;
     }
 
-    storage.saveRenderParams(segmentId, params);
+    videoStore.saveRenderParams(segmentId, params);
 
     const relPath = await callVideoAPI(ctx, params);
     if (!relPath) {

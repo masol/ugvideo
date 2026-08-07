@@ -18,7 +18,7 @@ const REFERENCE_SIZE_2K_16_9 = "2048x1152";
 const IMAGES_SUBDIR = "imgs";
 
 /** 调试用：只渲染一张图。true 时只跑第一个任务，后续直接跳过。 */
-let DEBUG_onlyOneCall = false;
+// const DEBUG_onlyOneCall = false;
 
 /**
  * 参考图读取缓存（绝对路径 → 字节流）。
@@ -176,7 +176,7 @@ export async function callImageAPI(
         const filename = `${stem}.jpg`;
         const absDir = path.join(ctx.prj.path, IMAGES_SUBDIR);
         const absPath = path.join(absDir, filename);
-        const relPath = path.posix.join(IMAGES_SUBDIR, filename);
+        const relPath = path.join(IMAGES_SUBDIR, filename);
 
         await mkdir(absDir, { recursive: true });
         await writeFile(absPath, image.uint8Array);
@@ -358,11 +358,11 @@ export async function renderTask(
     task: RenderTaskDescriptor,
 ): Promise<RenderResult | null> {
     // 调试开关：只跑一张图就跑完流程
-    if (DEBUG_onlyOneCall) {
-        ctx.warn(`[renderTask] onlyOneCall=true，已跳过 ${task.id}`);
-        return null;
-    }
-    DEBUG_onlyOneCall = true;
+    // if (DEBUG_onlyOneCall) {
+    //     ctx.warn(`[renderTask] onlyOneCall=true，已跳过 ${task.id}`);
+    //     return null;
+    // }
+    // DEBUG_onlyOneCall = true;
 
     const renderStore = new RenderStorage(ctx);
     const params = buildGenerateImageParams(ctx, task);

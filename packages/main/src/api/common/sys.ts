@@ -16,6 +16,7 @@ import { knowledgeCenter } from '$libs/utils/kc.js'
 import { dataCenter } from '$libs/utils/sys/data.js'
 import { appLife } from '$libs/utils/tapable/applife.js'
 import { projectTypeSchema } from '$types/shared/template/prjtype.js'
+import pTimeout from 'p-timeout'
 
 // ─── Zod Schemas ─────────────────────────────────────────────
 const fileFilterPresetSchema = z.enum(FileFilterPreset)
@@ -218,8 +219,12 @@ const openExternal = os
 /**
  * 使用系统默认程序打开本地文件（如用 Finder/Explorer 打开图片、PDF 等）
  */
+// 假设 Logger 和 shell 已经导入
+
+const OPEN_TIMEOUT_MS = 10_000; // 10秒超时
+
 const openPath = os
-    .input(z.object({ path: z.string() }))
+    .input(z.object({ path: z.string(), timeout: z.number().optional() }))
     .output(
         z.object({
             success: z.boolean(),
@@ -227,14 +232,25 @@ const openPath = os
         }),
     )
     .handler(async ({ input }) => {
-        const errorMessage = await shell.openPath(input.path)
-        if (errorMessage) {
-            Logger.error(`无法使用系统默认应用打开请求的文件：${input.path}`)
-            return { success: false, errorMessage }
+        try {
+            const errorMessage = await pTimeout(
+                shell.openPath(input.path),
+                {
+                    milliseconds: input.timeout ?? OPEN_TIMEOUT_MS,
+                    message: `打开文件超时: ${input.path}`,
+                },
+            );
+            if (errorMessage) {
+                Logger.error(`无法使用系统默认应用打开请求的文件：${input.path}, 错误: ${errorMessage}`);
+                return { success: false, errorMessage };
+            }
+            return { success: true };
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            Logger.error(`打开文件异常：${input.path}, ${message}`);
+            return { success: false, errorMessage: message };
         }
-        return { success: true }
-    })
-
+    });
 /**
  * 在文件管理器中显示 / 高亮文件
  */

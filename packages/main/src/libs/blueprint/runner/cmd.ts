@@ -7,13 +7,13 @@ import { SpanStatusCode } from '@opentelemetry/api';
 import { parse, ParseEntry } from 'shell-quote';
 import yargsParser from 'yargs-parser';
 import { BaseRunner, withSpan } from './base.js';
+import { runCmd as doAIGC } from './commands/aigc/index.js';
 import { runCmd as doExport } from './commands/export/runCmd.js';
 import { runCmd as doKV } from './commands/kv.js';
 import { runCmd as doPlan } from './commands/plan/index.js';
 import { runCmd as doPreprism } from './commands/preprism.js';
 import { runCmd as doPrism } from './commands/prism.js';
 import { runCmd as doRun } from './commands/run.js';
-
 
 /**
  * 安全地将 shell-quote 的每一项还原为字符串
@@ -117,6 +117,9 @@ export class CmdRunner extends BaseRunner {
                 break;
             case 'kv':
                 await doKV(ctx);
+                break;
+            case 'aigc':
+                await doAIGC(ctx);
                 break;
             case 'test':
                 await delay(10000, ctx.signal);

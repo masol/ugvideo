@@ -8,22 +8,37 @@
 <script lang="ts">
   import { RuntimeIcon } from "$lib/components/runtimeicon";
   import { Badge } from "$lib/components/ui/badge";
+  import { projectStore } from "$lib/store/project.svelte";
   import { layoutStore } from "$lib/store/ui/layout.svelte";
+  import { safeApi } from "$lib/utils/api";
   import type { InfoCardView } from "@app/main/types";
   import {
     IconChevronRight,
     IconCircleCheckFilled,
+    IconLoader2,
   } from "@tabler/icons-svelte";
-  import { toast } from "svelte-sonner";
   import { resolveCardStatus } from "./card-status.svelte";
 
-  function onOpen(card: InfoCardView) {
-    if (!card.activity) {
-      toast.warning(`「${card.title}」尚未配置对应面板`);
-      return;
+  // 追踪当前正在执行操作的卡片 ID，用于显示加载状态并禁用所有卡片
+  let loadingCardId = $state<string | null>(null);
+
+  async function onOpen(card: InfoCardView) {
+    // 防止重复点击
+    if (loadingCardId) return;
+    loadingCardId = card.id;
+    try {
+      if (!card.activity) {
+        //打开项目目录:
+        await safeApi().system.showItemInFolder({ path: projectStore.path });
+      } else {
+        layoutStore.setActiveActivity(card.activity);
+        layoutStore.openPanel("left");
+        // 如果 setActiveActivity 或 openPanel 是异步的，可以在此处 await
+        // 目前假设为同步操作，但仍保留 try/finally 保证状态清理
+      }
+    } finally {
+      loadingCardId = null;
     }
-    layoutStore.setActiveActivity(card.activity);
-    layoutStore.openPanel("left");
   }
 
   const cards: InfoCardView[] = [
@@ -32,16 +47,16 @@
       icon: "IconBook2",
       title: "输入",
       subtitle: "原始素材",
-      summary: "管理任务的原始输入与要求，点击进入查看与编辑。",
+      summary: "管理原始输入，点击进入查看与编辑。",
       activity: "input-manager",
-      hint: "点击进行配置",
+      hint: "点击指定输入",
     },
     {
       id: "spec-setting",
       icon: "IconSparkles",
       title: "设置",
       subtitle: "任务配置",
-      summary: "调整生成规格与常用选项，点击进入详细设置。",
+      summary: "调整生成规格，点击进入详细设置。",
       activity: "spec-setting",
       hint: "点击进行配置",
     },
@@ -50,8 +65,8 @@
       icon: "IconFileTextFilled",
       title: "输出",
       subtitle: "结果导出",
-      summary: "查看与导出 AI 处理完成后的结果。",
-      activity: "output-manager",
+      summary: "查看AI 处理结果，点击打开项目目录。",
+      activity: "",
       hint: "点击查看结果",
     },
   ];
@@ -64,7 +79,8 @@
       type="button"
       id={`ib-${card.id}`}
       onclick={() => onOpen(card)}
-      class="group flex flex-col gap-5 rounded-2xl border border-border/50 bg-card p-6 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      disabled={loadingCardId !== null}
+      class="group flex flex-col gap-5 rounded-2xl border border-border/50 bg-card p-6 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-70"
     >
       <div class="flex items-start justify-between">
         <div
@@ -107,11 +123,15 @@
         class="mt-auto flex items-center justify-between border-t border-border/50 pt-4 text-xs text-muted-foreground"
       >
         <span>{card.hint ?? "点击查看详情"}</span>
-        <IconChevronRight
-          size={16}
-          stroke={1.5}
-          class="transition-transform duration-200 group-hover:translate-x-0.5"
-        />
+        {#if loadingCardId === card.id}
+          <IconLoader2 size={16} stroke={1.5} class="animate-spin" />
+        {:else}
+          <IconChevronRight
+            size={16}
+            stroke={1.5}
+            class="transition-transform duration-200 group-hover:translate-x-0.5"
+          />
+        {/if}
       </div>
     </button>
   {/each}

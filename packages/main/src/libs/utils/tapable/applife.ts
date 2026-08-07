@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { App } from 'electron';
+import Logger from 'electron-log/main.js';
 import { Hookable, type HookCallback } from 'hookable';
 import pTimeout from 'p-timeout';
 import { TrackableDeferred } from '../promise.js';
@@ -43,12 +44,12 @@ class AppLife {
                     this.beforeQuit.promise(),
                     { milliseconds: timeoutMs, message: '退出清理超时' }
                 );
-                console.error(`[AppLife] 所有任务按时完成。耗时: ${Date.now() - startTs}ms`);
+                Logger.error(`[AppLife] 所有任务按时完成。耗时: ${Date.now() - startTs}ms`);
             } catch (err: any) {
                 if (err.name === 'TimeoutError') {
-                    console.error(`[AppLife] 退出清理超时`);
+                    Logger.error(`[AppLife] 退出清理超时`);
                 } else {
-                    console.error(`[AppLife] 退出钩子错误:`, err);
+                    Logger.error(`[AppLife] 退出钩子错误:`, err);
                 }
             } finally {
                 this.isCleanedUp = true;

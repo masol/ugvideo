@@ -1,10 +1,13 @@
 // src/lib/stores/msg.svelte.ts
 import type { Message } from "$lib/components/markdown/type";
+import { projectStore } from "$lib/store/project.svelte";
+import { layoutStore } from "$lib/store/ui/layout.svelte";
 import { safeApi } from "$lib/utils/api";
 import evtbus from "$lib/utils/evtbus";
 import Logger from "electron-log/renderer.js";
 import pTimeout, { TimeoutError } from "p-timeout";
 import { toast } from "svelte-sonner"; // 按你的项目实际 toast 库调整
+import { bottomPanelStore } from "../../bottom/bar.store.svelte";
 
 export type ReflectPhase = {
     title: string;
@@ -144,7 +147,14 @@ class MessageStore {
                         });
                         responsed = true;
                     } else {
-                        this.phase = evt.phase;
+                        if (evt.phase.title === "show-asset") {
+                            projectStore.mediaURL = evt.phase.detail;
+                            // 开始确认打开下方面板打开。
+                            layoutStore.openPanel("bottom");
+                            bottomPanelStore.setActiveTab("media");
+                        } else {
+                            this.phase = evt.phase;
+                        }
                     }
                 }
                 else finalText = evt.text;

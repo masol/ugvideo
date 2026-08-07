@@ -1,7 +1,19 @@
+import { throwNotfound } from '$libs/utils/err.js';
 import type { Provider } from '$types/index.js';
+import { createByteDance } from '@ai-sdk/bytedance';
+import { createKlingAI } from '@ai-sdk/klingai';
 import type { ImageModelV4 } from '@ai-sdk/provider';
 import { createProvider } from '../provider.js';
 import { resolveImageAdapter } from './registry.js';
+
+
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const imageProviderCreators: Record<string, (config: { apiKey: string; baseURL: string }) => any> = {
+    seedance: createByteDance,
+    kling: createKlingAI,
+};
+
 
 /**
  * provider: $llama-cpp / node-llama-cpp: 以 $ 开头的 Provider 为内建 Provider。
@@ -18,6 +30,16 @@ export function createImageModel(
     const adapter = resolveImageAdapter(provider);
     if (adapter) {
         return adapter(provider, modelId);
+    }
+
+    const createFn = imageProviderCreators[provider.protocol ?? ""];
+    if (createFn) {
+        const vp = createFn({ apiKey: provider.apiKey ?? "", baseURL: provider.baseUrl });
+        const model = vp.imageModel?.(modelId) || vp.image?.(modelId);
+        if (!model) {
+            throwNotfound(`${provider.protocol}协议未能加载模型${modelId}`);
+        }
+        return model;
     }
 
     const pvInst = createProvider(provider);

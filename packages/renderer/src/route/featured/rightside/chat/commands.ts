@@ -25,6 +25,12 @@ export const chatCommands: ChatCommand[] = [
 --no-codegen: 规划完毕即退出，不执行代码生成。可设置为true或on,默认off。
 ` },
     {
+        id: "aigc", label: "/aigc", desc: `执行指定的AGIC,测试并验证当前配置:
+--type: text|image|video|tts|asr|bgm|mt
+--size: 1024x1024  指定生成图像尺寸  480p 指定生成视频尺寸。
+--duration: 1 指定生成视频/音频时长，单位秒。
+` },
+    {
         id: "run", label: "/run", desc: `执行指定ID的capa，默认直接执行当前任务的入口：
 --plan: 执行规划结果.
 --cap: 执行指定的能力.
