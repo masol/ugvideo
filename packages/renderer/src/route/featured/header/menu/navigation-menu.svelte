@@ -7,7 +7,7 @@
   import {
     IconArrowLeft,
     IconArrowRight,
-    IconLayoutDashboard,
+    IconHome2,
   } from "@tabler/icons-svelte";
   import { push } from "svelte-spa-router";
   import MenuShortcut from "./menu-shortcut.svelte";
@@ -21,11 +21,7 @@
   </Menubar.Trigger>
   <Menubar.Content align="start" class="select-none z-200 min-w-48">
     <Menubar.Item onSelect={() => push("/")}>
-      <IconLayoutDashboard
-        size={20}
-        stroke={1.5}
-        class="mr-2 text-muted-foreground"
-      />
+      <IconHome2 size={20} stroke={1.5} class="mr-2 text-muted-foreground" />
       主控台
       <MenuShortcut command="navigation.home" />
     </Menubar.Item>

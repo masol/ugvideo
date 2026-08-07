@@ -10,6 +10,7 @@ export enum ModelTags {
     AudioUnderstanding = 'audio-understanding',
     BGM = "bgm",
     MT = 'mt',
+    G3D = 'g3d',
     // —— 版本区别 ——
     Ultra = 'ultra',
     Plus = 'plus',

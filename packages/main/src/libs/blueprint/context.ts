@@ -110,10 +110,7 @@ export class RunnerContext implements IRunnerContext {
         if (this.fnNotify) {
             this.fnNotify(title, detail);
         } else {
-            this.prj.notify("task_progess_report", {
-                title,
-                detail
-            });
+            this.prj.notify("task_progess_report", `${title} : ${detail}`);
             // log.silly(arg);
         }
     }

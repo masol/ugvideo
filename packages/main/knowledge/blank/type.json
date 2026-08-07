@@ -1,9 +1,9 @@
 {
-    "icon": "IconSquarePlus",
-    "statusText": "空白项目",
+    "icon": "IconWorkflow",
+    "statusText": "工作流工坊",
     "header": {
-        "title": "空白类型工作台",
-        "detail": "用于开发AI工作流"
+        "title": "工作流工坊",
+        "detail": "开发与导出 AI 工作流 · 让其它项目类型基于此生成"
     },
     "hints": {
         "idle": "空白项目，需要编辑工作流才可以继续。"

@@ -43,7 +43,9 @@ jobs:
       matrix:
         os:
           - windows-latest
+          - windows-11-arm
           - ubuntu-latest
+          - ubuntu-26.04-arm
           - macos-latest
 
     runs-on: ${{ matrix.os }}
@@ -62,7 +64,7 @@ jobs:
         run: |
           node -e "require('better-sqlite3'); console.log('sqlite OK')"
           node -e "require('@lancedb/lancedb'); console.log('lancedb OK')"
-    
+
       - name: Rebuild Electron native modules
         run: npx electron-builder install-app-deps
 

@@ -9,7 +9,6 @@
   import autoAnimate from "@formkit/auto-animate";
   import {
     IconAlertTriangle,
-    IconCheck,
     IconChevronDown,
     IconClock,
     IconDatabase,
@@ -49,15 +48,6 @@
     }
   }
 
-  // const steps: Step[] = [
-  //   {
-  //     target: "ib-input-manager",
-  //     title: "没有剧本",
-  //     description: "点击这里打开剧本集管理，添加剧本后，开始运行",
-  //     position: "top",
-  //   },
-  // ];
-
   async function handleMainbutton(): Promise<void> {
     if (dashboardStore.runState === "idle") {
       if (projectStore.activity?.intputSteps) {
@@ -87,10 +77,6 @@
   ></div>
 
   <div class="relative flex flex-col items-center gap-8">
-    <!--╭─────────────────────────────────────────────────────╮ -->
-    <!-- │ [可抽取子组件 → RunTargetSelector.svelte]          │ -->
-    <!-- │ 职责：运行终止点下拉选择器，支持禁用与异步加载态     │ -->
-    <!-- ╰─────────────────────────────────────────────────────╯ -->
     {#if currentTarget}
       {@const TARGET_OPTIONS = projectStore.activity?.targets ?? []}
       <div class="flex w-full max-w-md flex-col items-center gap-3">
@@ -108,6 +94,7 @@
           disabled={isLocked}
         >
           <Select.Trigger
+            icon={false}
             class="group flex h-auto w-full items-center justify-between gap-3 rounded-xl border border-border/50 bg-background px-4 py-3 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0 disabled:hover:shadow-sm"
           >
             <div class="flex min-w-0 flex-1 items-center gap-3">
@@ -181,13 +168,6 @@
                       {opt.desc}
                     </span>
                   </div>
-                  {#if selected}
-                    <IconCheck
-                      size={16}
-                      stroke={1.5}
-                      class="shrink-0 text-primary"
-                    />
-                  {/if}
                 {/snippet}
               </Select.Item>
             {/each}
@@ -204,7 +184,6 @@
         {/if}
       </div>
     {/if}
-    <!-- ╭─── / RunTargetSelector ───╮ -->
 
     <div class="h-px w-full max-w-md bg-border/50"></div>
 

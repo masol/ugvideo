@@ -13,9 +13,9 @@ function mergeInfocards(data: ProjectActivityData): InfoCardView[] {
             icon: "IconBook2",
             title: "输入",
             subtitle: "原始素材",
-            summary: "管理任务的原始输入与要求，点击进入查看与编辑。",
+            summary: "管理原始输入，点击进入查看与编辑。",
             activity: "input-manager",
-            hint: "点击进行配置",
+            hint: "点击指定输入",
             ...data.infocards?.['input-manager']
         },
         {
@@ -23,7 +23,7 @@ function mergeInfocards(data: ProjectActivityData): InfoCardView[] {
             icon: "IconSparkles",
             title: "设置",
             subtitle: "任务配置",
-            summary: "调整生成规格与常用选项，点击进入详细设置。",
+            summary: "调整生成规格，点击进入详细设置。",
             activity: "spec-setting",
             hint: "点击进行配置",
             ...data.infocards?.['spec-setting']
@@ -32,9 +32,9 @@ function mergeInfocards(data: ProjectActivityData): InfoCardView[] {
             id: "output",
             icon: "IconFileTextFilled",
             title: "输出",
-            subtitle: "结果导出",
-            summary: "查看与导出 AI 处理完成后的结果。",
-            activity: "output-manager",
+            subtitle: "查看结果",
+            summary: "查看AI 处理结果，点击打开项目目录。",
+            activity: "",
             hint: "点击查看结果",
             ...data.infocards?.output
         },

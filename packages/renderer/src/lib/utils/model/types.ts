@@ -1,6 +1,7 @@
 // types.ts
 import type { ModelOption, ModelTags, Provider, ProviderProtocol } from "@app/main/types";
 import {
+    Icon3dCubeSphere,
     IconArrowsLeftRight,
     IconArrowsSort,
     IconBolt,
@@ -65,6 +66,7 @@ export const tagLabels: Record<ModelTags, string> = {
     "embedding": "嵌入",
     "rerank": "重排",
     "bgm": "音乐音效",
+    "g3d": "3D",
     "ultra": "旗舰版",
     "plus": "专业版",
     "flash": "轻量版",
@@ -99,6 +101,7 @@ export const tagIcons: Record<ModelTags, typeof IconMessage> = {
     "audio-generation": IconMusic,
     "audio-understanding": IconMicrophone2,
     "embedding": IconDatabase,
+    'g3d': Icon3dCubeSphere,
     "rerank": IconArrowsSort,
     "bgm": IconDisc,
     "ultra": IconDiamond,
@@ -138,6 +141,7 @@ export const FUNCTION_TAGS: Record<string, ModelTags> = {
     embedding: 'embedding' as ModelTags,
     rerank: 'rerank' as ModelTags,
     mt: 'mt' as ModelTags,
+    g3d: 'g3d' as ModelTags,
 };
 
 export const VERSION_TAGS: Record<string, ModelTags> = {

@@ -12,6 +12,7 @@ export enum ModelTags {
     AudioGeneration = 'audio-generation',   // ← 新增（语音合成 TTS）
     AudioUnderstanding = 'audio-understanding', // ← 新增（ASR / 语音理解）    
     BGM = "bgm",
+    G3D = 'g3d', // generate 3D.
     // 以上为类别。
 
     // CodeGeneration = 'code-generation',

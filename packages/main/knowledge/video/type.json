@@ -14,43 +14,48 @@
     },
     "targets": [
         {
-            "label": "镜头目标",
-            "desc": "确定镜头要表达的目标",
-            "icon": "IconCamera"
-        },
-        {
             "label": "实体生成",
-            "desc": "完成人物 / 场景实体抽取后停止",
+            "desc": "完成实体抽取后停止",
             "icon": "IconUsers"
         },
         {
-            "label": "语音生成",
-            "desc": "完成台词配音合成后停止",
-            "icon": "IconMicrophone"
+            "label": "角色设计",
+            "desc": "完成角色资产设计后停止",
+            "icon": "IconUserPlus"
         },
         {
-            "label": "镜头确定",
-            "desc": "确定镜头拍摄细节",
-            "icon": "IconScissors"
-        },
-        {
-            "label": "分镜绘制",
-            "desc": "完成分镜草图后停止",
+            "label": "分镜设计",
+            "desc": "完成分镜设计后停止",
             "icon": "IconLayoutGrid"
         },
         {
-            "label": "视觉生成",
-            "desc": "完成关键帧成片渲染后停止",
-            "icon": "IconPalette"
+            "label": "渲染策略",
+            "desc": "完成渲染策略分配后停止",
+            "icon": "IconAdjustmentsCode"
         },
         {
-            "label": "视频生成",
-            "desc": "完成视频片段合成后停止",
+            "label": "参考图生成",
+            "desc": "完成参考图提示词生成后停止",
+            "icon": "IconImageGeneration"
+        },
+        {
+            "label": "视频分段",
+            "desc": "完成视频分段规划后停止",
             "icon": "IconVideo"
         },
         {
+            "label": "图片渲染",
+            "desc": "完成图片渲染后停止",
+            "icon": "IconPhoto"
+        },
+        {
+            "label": "视频渲染",
+            "desc": "完成视频渲染后停止",
+            "icon": "IconMovie"
+        },
+        {
             "label": "后期处理",
-            "desc": "完成全流程产出最终交付",
+            "desc": "完成全流程，产出最终视频",
             "icon": "IconWand"
         }
     ],

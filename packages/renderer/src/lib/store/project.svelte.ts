@@ -101,28 +101,14 @@ class ProjectStore {
     private async setupUI(activityData: ProjectActivityData) {
         const status = activityData.status;
         if (status) {
-            const statusArr = status.split(":");
             await confirmStore.request({
-                title: "项目类型未就绪",
+                title: "状态说明",
                 hideCancel: true,
                 confirmLabel: "我知道了",
                 variant: "warning",
                 markdown: true,
                 size: "xl2",
-                message: `## 状态限制与操作指引
-
-类型当前处于 **【${statusArr[0]}】** 状态，因此**普通用户无法直接使用**该类型。
-
-### 技术指引（右侧面板操作）
-查看AI规划的DAG，请按以下步骤操作：
-1. 在界面**右侧面板**中，进入 **蓝图 → 术语表**。
-2. 找到名为 **.${statusArr[1] ?? "ID"}_state** 的条目。
-3. 点击该条目**左侧的行动按钮**，并选择 **“面板显示”** 。
-
-### 推荐做法
-- 前往 **“反思助手”** ，使用'/plan'指令，让 AI 助手帮您将现有规划完善为**可执行的工作流**。
-
-> ⚠️ **温馨提示**：非技术人员不推荐直接运行此模块。`,
+                message: status,
             })
         }
         this.#activity = new ProjectActivity(activityData);

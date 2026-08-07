@@ -1,7 +1,6 @@
 [中文](Home) | **English**
+
 > 🌐 This is a translation. The **Chinese version is authoritative** — if anything here conflicts with the [Chinese original](Home), the Chinese version prevails, and translations may lag behind it.
-
-
 
 # 🎯 Welcome to Unigen
 
@@ -14,6 +13,17 @@ From a script to a finished video. From one idea to an entire novel. From requir
 - **Time is not the constraint** — a single run taking days or even weeks is acceptable, **as long as quality never collapses**.
 
 Today's mainstream ReAct-style agents are a poor fit here: a single execution is too long to gather feedback by acting one step at a time, and for sufficiently complex workflows, quality evaluation is itself a major open topic. Unigen takes a different road — **separate planning from execution; code as skeleton, LLM as filler; zero tolerance for long-chain drift.**
+
+## What This Is: A Predefined Workflow, Not an Autonomous Agent
+
+What runs inside Unigen is not an "LLM-driven autonomous agent" (an Agentic System like OpenClaw or Hermes that improvises step by step and re-explores every time) — it is a **predefined workflow pipeline**. It belongs to the same family as Coze, Dify, and n8n; if you don't care about the internals, just treat it as an alternative to those platforms. The one difference that matters: its workflows aim above all for **no hallucination, no drift**, rather than for flexible autonomy.
+
+Two things set it apart from those platforms:
+
+1. Workflows are **created and continuously updated by AI**, and that creation and updating is constrained by a logical system (if you don't care about the principle, think of it as a mechanism that makes workflows more stable).
+2. A workflow's hallucination probability can be **evaluated in a stable, computable way** — even when maintained by a human, there is a deterministic method to estimate how likely it is to go wrong (again, if you don't care about the principle, treat it as a set of predefined workflow techniques).
+
+In one line: you get a pipeline that reliably runs to completion, not an agent that re-explores from scratch every time. If its workflows feel more stable and less hallucination-prone to you than those platforms', the positioning holds — and that is exactly the goal.
 
 ---
 
@@ -51,7 +61,7 @@ The evolution path (see [[Roadmap|Roadmap.en]]):
 
 ## Project Status
 
-Early stage. The core runtime is usable: an Electron desktop app (Windows / Linux / macOS), with portable builds downloadable from Releases. Currently ships with a built-in **Script-to-Video** project type (for testing and demonstration) and a **Blank** project type (for developers, with workflow-development capabilities built in).
+Early stage. The core runtime is usable: an Electron desktop app (Windows / Linux / macOS), with portable builds downloadable from Releases. Currently ships with a runnable **Script-to-Video** project type (AI-generated and only verified to be runnable — not yet deeply polished; see the caveats in [[Getting Started|Getting-Started.en]]) and a **Workflow Studio** project type (for developers — the project type used to build workflows and export them as new project types).
 
 The built-in reasoning methods can be tried directly in the Reflection Assistant;
 the planner is progressing through three stages — Prism → Loom → HTN — with each stage's status documented on its own page.

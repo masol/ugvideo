@@ -4,7 +4,13 @@
   import * as Tooltip from "$lib/components/ui/tooltip";
   import { configStore } from "$lib/store/config.svelte";
   import { windowStore } from "$lib/store/window.svelte";
-  import { IconDeviceDesktop, IconMoon, IconSun } from "@tabler/icons-svelte";
+  import {
+    IconDeviceDesktop,
+    IconHome2,
+    IconMoon,
+    IconSun,
+  } from "@tabler/icons-svelte";
+  import { push, router } from "svelte-spa-router";
   import Brand from "./header/brand.svelte";
   import CommandPaletteBar from "./header/CommandPaletteBar.svelte";
   import LayoutGroup from "./header/layout.svelte";
@@ -24,6 +30,9 @@
   function cycleTheme() {
     configStore.cycleTheme();
   }
+
+  const currentLocation = $derived(router.location);
+  const isNotHome = $derived(currentLocation !== "/");
 </script>
 
 <header
@@ -39,6 +48,28 @@
   <!-- │ 应用主菜单（项目 / 运行 / 帮助）                         │ -->
   <!-- ╰─────────────────────────────────────────────────────────╯ -->
   <AppMenu></AppMenu>
+
+  {#if isNotHome}
+    <Tooltip.Root>
+      <Tooltip.Trigger>
+        {#snippet child({ props })}
+          <button
+            {...props}
+            onclick={() => push("/")}
+            aria-label="回到控制台"
+            class="group mx-6 flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-primary transition-all duration-200 hover:scale-210 hover:bg-primary/20 active:scale-95"
+          >
+            <IconHome2
+              size={18}
+              stroke={1.8}
+              class="transition-transform group-hover:scale-110"
+            />
+          </button>
+        {/snippet}
+      </Tooltip.Trigger>
+      <Tooltip.Content class="z-200">回到控制台</Tooltip.Content>
+    </Tooltip.Root>
+  {/if}
 
   <!-- ╭─────────────────────────────────────────────────────────╮ -->
   <!-- │ [可抽取子组件 → WindowTitle.svelte]                      │ -->

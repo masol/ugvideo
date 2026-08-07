@@ -64,6 +64,7 @@ const CATEGORY_PRIORITY: ModelTags[] = [
     T.AudioGeneration,
     T.BGM,
     T.MT,
+    T.G3D,   // 新增：3D 生成优先级排在 MT 之后
 ];
 
 // ============================================================================
@@ -108,6 +109,11 @@ const TOKEN_CATEGORY_MAP: Record<string, ModelTags> = {
     translation: T.MT,
     translate: T.MT,
     translator: T.MT,
+    // —— 3D 生成 ——（新增）
+    g3d: T.G3D,
+    '3d': T.G3D,
+    hyper3d: T.G3D,
+    hitem3d: T.G3D,
 };
 
 const TOKEN_SPLIT_RE = /[-_/.:@\s]+/;
@@ -176,6 +182,10 @@ const CATEGORY_SIGNALS: Array<{ tag: ModelTags; re: RegExp }> = [
         tag: T.MT,
         re: /(?:^|[-_/])mt(?:[-_./]|$)|translat|翻译/
     },
+    {
+        tag: T.G3D,
+        re: /\bg3d\b|hyper3d|hitem3d|(?<![a-zA-Z])3d(?![a-zA-Z])/
+    },
 ];
 
 /**
@@ -220,7 +230,7 @@ const VERSION_TAGS: Array<{ re: RegExp; tag: ModelTags }> = [
 const CATEGORY_TAGS: ModelTags[] = [
     T.Embedding, T.Rerank, T.ImageGeneration,
     T.VideoGeneration, T.AudioGeneration, T.AudioUnderstanding,
-    T.BGM, T.MT,
+    T.BGM, T.MT, T.G3D,   // 新增 G3D
 ];
 // LLM 功能标签：类别模型命中时会全部剥离
 const LLM_FUNCTIONAL_TAGS: ModelTags[] = [
@@ -373,7 +383,7 @@ interface CategoryDefaults {
  * 类别模型的默认规格与默认子能力：
  * - 视频生成：注入 omni/ff/mff（全能/首尾帧/多帧），素材数量 4，最大时长 15s
  * - 绘图：注入 nlp/human/env（自然/人物/环境），素材数量 8，最大输出 4 张
-  * - 其余类别：沿用原有的上下文/评分默认值
+ * - 其余类别：沿用原有的上下文/评分默认值
  * 命中类别返回默认规格；非类别模型返回 null（由调用方走 LLM 默认逻辑）。
  * 检查顺序对齐 CATEGORY_PRIORITY，确保多标签残留时以高优先级类别为准。
  */
@@ -417,6 +427,10 @@ function applyCategoryDefaults(abilities: ModelTags[]): CategoryDefaults | null 
     }
     if (abilities.includes(T.MT)) {
         return { inctx: CTX.K32, outctx: DEFAULT_OUT, score: 73 };
+    }
+    // 新增：3D 生成默认规格
+    if (abilities.includes(T.G3D)) {
+        return { inctx: CTX.K8, outctx: undefined, score: 72 };
     }
     return null;
 }

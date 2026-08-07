@@ -2,7 +2,6 @@
 
 > 🌐 This is a translation. The **Chinese version is authoritative** — if anything here conflicts with the [Chinese original](Developer-Guide), the Chinese version prevails, and translations may lag behind it.
 
-
 # 📐 Workflow Development Overview (Developer Guide)
 
 This page is for developers who **build** workflows — it is the entry point and map for all developer documentation.
@@ -11,7 +10,9 @@ This page is for developers who **build** workflows — it is the entry point an
 
 In Unigen, workflows exist as **code** (called **blueprints** in the UI) and are dynamically loadable. Choosing code over a configuration DSL is a deliberate decision: **so that the planner — not only humans — can modify workflows.** The planner improves a workflow precisely by editing its blueprint.
 
-"Developing a workflow" is itself a workflow, and therefore also a project type — in the current version, the **Blank project type** has this capability built in.
+One thing to be clear about first: what runs inside Unigen is a **predefined workflow**, not an improvising autonomous agent (Agentic System). It belongs to the same family as Coze, Dify, and n8n — the difference being that **the workflows themselves are created and continuously updated by AI, constrained by a logical system, with "no hallucination, no drift" as the top goal** (see the positioning section on the [[Welcome|Home.en]] page).
+
+"Developing a workflow" is itself a workflow, and therefore also a project type — in the current version, the **Workflow Studio** project type (used to build workflows and export them as new project types) has this capability built in.
 
 ## Two Core Working Surfaces
 
@@ -31,7 +32,7 @@ Click **Blueprint** to view and edit every detail of the workflow. Two things to
 ## The Path from Development to Publication
 
 ```
-Blank project → develop with the Reflection Assistant → polish the workflow in the Blueprint → validate with real runs → /export as a project type → publish to creators
+Workflow Studio → develop with the Reflection Assistant → polish the workflow in the Blueprint → validate with real runs → /export as a project type → publish to creators
 ```
 
 ## Approach Two: Planner Generation (Evolving)

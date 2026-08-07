@@ -1,3 +1,4 @@
+<!-- ProviderCard.svelte -->
 <script lang="ts">
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -49,7 +50,6 @@
   let isDisabled = $derived(provider.disabled === true);
 
   function handleToggleEnabled(checked: boolean) {
-    // 阻断事件冒泡，防止外层 Collapsible.Trigger 折叠/展开。
     provider.disabled = !checked;
     onToggleEnabled?.(checked);
   }
@@ -187,78 +187,65 @@
 
     <!-- ─── Content ─── -->
     <Collapsible.Content>
-      <div
-        class={[
-          "space-y-6 px-6 pb-6 transition-opacity duration-200",
-          isDisabled && "opacity-60",
-        ]}
-      >
+      <div class="space-y-6 px-6 pb-6">
         <Separator />
 
-        {#if isDisabled}
-          <!--╭─────────────────────────────────────────────────────╮ -->
-          <!-- │ [可抽取子组件 → DisabledBanner.svelte]              │ -->
-          <!-- │ 职责：提供商禁用状态下的提示横幅与快捷启用按钮       │ -->
-          <!-- ╰─────────────────────────────────────────────────────╯ -->
-          <div
-            class="flex items-center gap-4 rounded-xl border border-dashed border-destructive/20 bg-destructive/5 p-4"
-          >
+        <!-- 使用 autoAnimate 包裹互斥的两个块，确保切换时高度不变且有动画 -->
+        <div use:autoAnimate>
+          {#if isDisabled}
+            <!-- 禁用横幅（垂直 padding 与编辑行保持一致：py-2） -->
             <div
-              class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-destructive/10"
+              class="flex items-center gap-4 rounded-xl border border-dashed border-destructive/20 bg-destructive/5 px-4"
             >
-              <IconCloudOff size={16} stroke={1.5} class="text-destructive" />
+              <div
+                class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-destructive/10"
+              >
+                <IconCloudOff size={16} stroke={1.5} class="text-destructive" />
+              </div>
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-medium text-foreground">
+                  提供商【<span class="font-bold">{provider.id}</span>】已被禁用
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                class="shrink-0 gap-1.5 rounded-xl text-xs"
+                onclick={() => handleToggleEnabled(true)}
+              >
+                重新启用
+              </Button>
             </div>
-            <div class="min-w-0 flex-1">
-              <p class="text-sm font-medium text-foreground">
-                该提供商已被禁用
-              </p>
-              <p class="mt-0.5 text-xs text-muted-foreground">
-                禁用期间其下所有模型将不可用于对话或任务，配置与模型列表仍然保留。
-              </p>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              class="shrink-0 gap-1.5 rounded-xl text-xs"
-              onclick={() => handleToggleEnabled(true)}
-            >
-              重新启用
-            </Button>
-          </div>
-          <!-- ╭─── / DisabledBanner ───╮ -->
-        {/if}
+          {:else}
+            <!-- 提供商配置行（增加 py-2，与横幅等高） -->
+            <div class="flex flex-wrap items-center justify-between gap-4">
+              <Button
+                variant="outline"
+                size="sm"
+                class="gap-2 rounded-xl text-xs"
+                onclick={() => onEditConfig?.()}
+              >
+                <IconSettings size={14} stroke={1.5} />
+                编辑提供商
+              </Button>
 
-        <!-- ─── Provider Config Row ─── -->
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <Button
-            variant="outline"
-            size="sm"
-            class="gap-2 rounded-xl text-xs"
-            onclick={() => onEditConfig?.()}
-          >
-            <IconSettings size={14} stroke={1.5} />
-            编辑提供商
-          </Button>
-
-          {#if provider.maxConn}
-            <div
-              class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
-            >
-              <span class="flex items-center gap-1">
-                <IconServer size={12} stroke={1.5} />
-                最大并发 {provider.maxConn}
-              </span>
+              {#if provider.maxConn}
+                <div
+                  class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
+                >
+                  <span class="flex items-center gap-1">
+                    <IconServer size={12} stroke={1.5} />
+                    最大并发 {provider.maxConn}
+                  </span>
+                </div>
+              {/if}
             </div>
           {/if}
         </div>
 
         <Separator />
 
-        <!-- ─── Models Section ─── -->
-        <!--╭─────────────────────────────────────────────────────╮ -->
-        <!-- │ [可抽取子组件 → ModelListSection.svelte]            │ -->
-        <!-- │ 职责：模型列表标题栏、网格渲染及空态展示             │ -->
-        <!-- ╰─────────────────────────────────────────────────────╯ -->
+        <!-- 模型列表区 -->
         <div class="space-y-4">
           <div class="flex items-center justify-between">
             <h3
@@ -275,16 +262,17 @@
                 </span>
               {/if}
             </h3>
-            <Button
-              variant="outline"
-              size="sm"
-              class="gap-1.5 rounded-xl text-xs"
-              onclick={() => onAddModel?.()}
-              disabled={isDisabled}
-            >
-              <IconPlus size={14} stroke={1.5} />
-              添加模型
-            </Button>
+            {#if !isDisabled}
+              <Button
+                variant="outline"
+                size="sm"
+                class="gap-1.5 rounded-xl text-xs"
+                onclick={() => onAddModel?.()}
+              >
+                <IconPlus size={14} stroke={1.5} />
+                添加模型
+              </Button>
+            {/if}
           </div>
 
           {#if visibleModels.length > 0}
@@ -329,9 +317,8 @@
             </div>
           {/if}
         </div>
-        <!-- ╭─── / ModelListSection ───╮ -->
 
-        <!-- ─── Danger Zone ─── -->
+        <!-- 危险操作区 -->
         <Separator />
         <div class="flex items-center justify-between">
           <p class="text-xs text-muted-foreground">
