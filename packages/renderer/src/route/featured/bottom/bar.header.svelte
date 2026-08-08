@@ -1,13 +1,13 @@
 <script lang="ts">
   /* eslint-disable @typescript-eslint/no-explicit-any */
 
+  import { bottomPanelStore } from "$lib/store/local/bottombar.store.svelte";
   import {
     IconAlertTriangle,
     IconMedicineSyrup,
     IconSparkleHighlight,
   } from "@tabler/icons-svelte";
   import type { Component } from "svelte";
-  import { bottomPanelStore } from "./bar.store.svelte";
 
   const iconMap: Record<string, Component<any>> = {
     logger: IconAlertTriangle as unknown as Component<any>,

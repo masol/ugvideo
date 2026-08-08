@@ -1,5 +1,6 @@
 // src/lib/stores/msg.svelte.ts
 import type { Message } from "$lib/components/markdown/type";
+import { bottomPanelStore } from "$lib/store/local/bottombar.store.svelte";
 import { projectStore } from "$lib/store/project.svelte";
 import { layoutStore } from "$lib/store/ui/layout.svelte";
 import { safeApi } from "$lib/utils/api";
@@ -7,7 +8,6 @@ import evtbus from "$lib/utils/evtbus";
 import Logger from "electron-log/renderer.js";
 import pTimeout, { TimeoutError } from "p-timeout";
 import { toast } from "svelte-sonner"; // 按你的项目实际 toast 库调整
-import { bottomPanelStore } from "../../bottom/bar.store.svelte";
 
 export type ReflectPhase = {
     title: string;

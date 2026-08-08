@@ -1,11 +1,11 @@
 import { configStore } from '$lib/store/config.svelte';
+import { bottomPanelStore } from '$lib/store/local/bottombar.store.svelte';
 import { projectStore } from '$lib/store/project.svelte';
 import { confirmStore } from '$lib/store/ui/confirm.svelte';
 import { layoutStore } from '$lib/store/ui/layout.svelte';
 import { safeApi } from '$lib/utils/api';
 import Logger from 'electron-log/renderer';
 import * as monaco from 'monaco-editor';
-import { bottomPanelStore } from '../../featured/bottom/bar.store.svelte';
 import type { BlueprintKind } from '../../featured/rightside/glossary/store.svelte';
 
 export type { BlueprintKind };

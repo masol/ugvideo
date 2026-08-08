@@ -1,18 +1,44 @@
 {
-    "icon": "IconWorkflow",
+    "icon": "IconSquarePlus",
     "statusText": "工作流工坊",
     "header": {
         "title": "工作流工坊",
-        "detail": "开发与导出 AI 工作流 · 让其它项目类型基于此生成"
+        "detail": "用自然语言描述人类工作流，Unigen 自动构建、迭代、导出可执行 AI 工作流"
     },
     "hints": {
-        "idle": "空白项目，需要编辑工作流才可以继续。"
+        "idle": "在「输入管理」中描述您的工作流，然后点击「运行」开始自动构建。"
     },
-    "needInput": {
-        "title": "没有输入",
-        "description": "点击这里打开输入管理，然后可以开始运行"
+    "checkInput": {
+        "title": "尚未定义工作流",
+        "description": "请先在「输入管理」中添加工作流描述或步骤清单。"
     },
-    "targets": [],
+    "targets": [
+        {
+            "label": "工作流理解",
+            "desc": "解析用户输入，提取任务、步骤、约束",
+            "icon": "IconFileSearch"
+        },
+        {
+            "label": "工作流设计",
+            "desc": "生成初始工作流骨架（步骤、依赖、分支）",
+            "icon": "IconHierarchy"
+        },
+        {
+            "label": "工作流测试",
+            "desc": "使用模拟数据执行工作流，验证逻辑完整性",
+            "icon": "IconBug"
+        },
+        {
+            "label": "工作流优化",
+            "desc": "根据人工或自动评价迭代改进工作流",
+            "icon": "IconArrowsUp"
+        },
+        {
+            "label": "工作流导出",
+            "desc": "产出标准化工作流定义（JSON/YAML）及执行报告",
+            "icon": "IconFileDownload"
+        }
+    ],
     "activities": [
         {
             "id": "input-manager",
@@ -23,25 +49,96 @@
                 "children": [
                     {
                         "type": "accordion-section",
-                        "title": "输入集",
+                        "title": "工作流描述",
                         "icon": "IconScript",
                         "defaultOpen": true,
+                        "children": [
+                            {
+                                "type": "text-list",
+                                "binding": {
+                                    "key": "workflow_description"
+                                },
+                                "addLabel": "添加描述片段",
+                                "emptyTitle": "还没有描述",
+                                "emptyIcon": "IconFileText",
+                                "addDialogTitle": "添加工作流描述",
+                                "editDialogTitle": "编辑描述",
+                                "editDialogDescription": "用自然语言描述工作流的步骤、规则、输入输出、异常处理等。",
+                                "editAlert": true,
+                                "confirmTitle": "删除描述",
+                                "confirmMessage": "删除后需重新构建，确定继续吗？"
+                            },
+                            {
+                                "type": "field",
+                                "binding": {
+                                    "key": "workflow_name"
+                                },
+                                "label": "工作流名称",
+                                "editor": "inline",
+                                "placeholder": "例如：周报自动生成流水线"
+                            },
+                            {
+                                "type": "field",
+                                "binding": {
+                                    "key": "workflow_goal"
+                                },
+                                "label": "目标与产出",
+                                "editor": "dialog",
+                                "dialogTitle": "编辑目标",
+                                "dialogDescription": "描述该工作流要解决什么问题、最终产出什么。",
+                                "emptyHint": "点击设定目标与产出"
+                            }
+                        ]
+                    },
+                    {
+                        "type": "accordion-section",
+                        "title": "输入输出样例",
+                        "icon": "IconArrowLeftRight",
                         "badge": "count",
                         "children": [
                             {
                                 "type": "text-list",
                                 "binding": {
-                                    "key": "script"
+                                    "key": "io_examples"
                                 },
-                                "addLabel": "添加输入",
-                                "emptyTitle": "还没有输入",
-                                "emptyIcon": "IconBook2",
-                                "addDialogTitle": "添加输入",
-                                "editDialogTitle": "编辑输入",
-                                "editDialogDescription": "输入变动，需要重新计算，相当于新建项目，非必要不改动输入。",
-                                "editAlert": true,
-                                "confirmTitle": "删除输入",
-                                "confirmMessage": "确定要删除这段输入吗？此操作无法撤销。"
+                                "addLabel": "添加样例",
+                                "emptyTitle": "暂无输入输出样例",
+                                "emptyIcon": "IconCode",
+                                "addDialogTitle": "添加输入输出样例",
+                                "editDialogTitle": "编辑样例",
+                                "editDialogDescription": "提供典型输入及其对应的正确输出，帮助 AI 更准确理解工作流。",
+                                "editAlert": false,
+                                "confirmTitle": "删除样例",
+                                "confirmMessage": "确定删除该样例吗？"
+                            }
+                        ]
+                    },
+                    {
+                        "type": "accordion-section",
+                        "title": "约束与偏好",
+                        "icon": "IconListCheck",
+                        "children": [
+                            {
+                                "type": "field",
+                                "binding": {
+                                    "key": "constraints"
+                                },
+                                "label": "硬性约束",
+                                "editor": "dialog",
+                                "dialogTitle": "编辑约束",
+                                "dialogDescription": "例如：数据源只允许本地文件、必须包含审计日志、响应时间 < 2s。",
+                                "emptyHint": "点击添加硬性约束"
+                            },
+                            {
+                                "type": "field",
+                                "binding": {
+                                    "key": "preferences"
+                                },
+                                "label": "偏好与权衡",
+                                "editor": "dialog",
+                                "dialogTitle": "编辑偏好",
+                                "dialogDescription": "例如：优先可读性 vs 性能、倾向并行执行等。",
+                                "emptyHint": "点击添加偏好"
                             }
                         ]
                     }
@@ -50,30 +147,160 @@
         },
         {
             "id": "spec-setting",
-            "label": "生成规格",
-            "icon": "IconSparkles",
+            "label": "工坊配置",
+            "icon": "IconSettings",
             "panel": {
                 "type": "panel",
                 "children": [
                     {
                         "type": "accordion-section",
-                        "title": "生成规格",
-                        "icon": "IconSettings",
+                        "title": "迭代控制",
+                        "icon": "IconRepeat",
                         "defaultOpen": true,
                         "children": [
                             {
                                 "type": "select",
                                 "binding": {
+                                    "key": "config:evaluation_mode"
+                                },
+                                "label": "评价方式",
+                                "icon": "IconStar",
+                                "fallback": "auto",
+                                "options": [
+                                    {
+                                        "value": "manual",
+                                        "label": "人工评价",
+                                        "sub": "每次迭代后用户提供文本反馈",
+                                        "badge": {
+                                            "text": "👤",
+                                            "className": "bg-foreground/10 text-foreground"
+                                        }
+                                    },
+                                    {
+                                        "value": "auto",
+                                        "label": "自动评测",
+                                        "sub": "基于测试用例和指标自动打分",
+                                        "badge": {
+                                            "text": "🤖",
+                                            "className": "bg-foreground/10 text-foreground"
+                                        }
+                                    },
+                                    {
+                                        "value": "hybrid",
+                                        "label": "混合模式",
+                                        "sub": "先自动评分，用户可覆写",
+                                        "badge": {
+                                            "text": "⚡",
+                                            "className": "bg-foreground/10 text-foreground"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "field",
+                                "binding": {
+                                    "key": "config:max_iterations"
+                                },
+                                "label": "最大迭代次数",
+                                "editor": "inline",
+                                "placeholder": "10",
+                                "inputType": "number"
+                            },
+                            {
+                                "type": "field",
+                                "binding": {
+                                    "key": "config:stability_threshold"
+                                },
+                                "label": "稳定性阈值",
+                                "editor": "inline",
+                                "placeholder": "例如：连续3次评分≥95%",
+                                "emptyHint": "满足此条件时视为稳定，自动终止迭代"
+                            },
+                            {
+                                "type": "button-group",
+                                "binding": {
+                                    "key": "config:improvement_strategy"
+                                },
+                                "label": "改进策略",
+                                "icon": "IconWand",
+                                "fallback": "refine",
+                                "columns": 2,
+                                "options": [
+                                    {
+                                        "value": "refine",
+                                        "label": "细化",
+                                        "sub": "在现有结构上微调",
+                                        "dot": "bg-blue-500"
+                                    },
+                                    {
+                                        "value": "restructure",
+                                        "label": "重构",
+                                        "sub": "允许调整步骤拓扑",
+                                        "dot": "bg-purple-500"
+                                    },
+                                    {
+                                        "value": "parallel",
+                                        "label": "并行探索",
+                                        "sub": "同时尝试多个变体",
+                                        "dot": "bg-green-500"
+                                    },
+                                    {
+                                        "value": "fallback",
+                                        "label": "回退",
+                                        "sub": "保留稳定版本，回退无效改动",
+                                        "dot": "bg-amber-500"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "type": "accordion-section",
+                        "title": "输出规格",
+                        "icon": "IconFileExport",
+                        "children": [
+                            {
+                                "type": "select",
+                                "binding": {
+                                    "key": "config:output_format"
+                                },
+                                "label": "工作流定义格式",
+                                "icon": "IconJson",
+                                "fallback": "json",
+                                "options": [
+                                    {
+                                        "value": "json",
+                                        "label": "JSON",
+                                        "sub": "结构化工作流节点与边",
+                                        "badge": {
+                                            "text": "JSON",
+                                            "className": "bg-foreground/10 text-foreground"
+                                        }
+                                    },
+                                    {
+                                        "value": "yaml",
+                                        "label": "YAML",
+                                        "sub": "人类可读的声明式定义",
+                                        "badge": {
+                                            "text": "YAML",
+                                            "className": "bg-foreground/10 text-foreground"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "select",
+                                "binding": {
                                     "key": "language"
                                 },
-                                "label": "语言",
+                                "label": "界面与注释语言",
                                 "icon": "IconLanguage",
                                 "fallback": "zh",
                                 "options": [
                                     {
                                         "value": "zh",
                                         "label": "中文",
-                                        "sub": "普通话 / 简体",
+                                        "sub": "简体中文",
                                         "badge": {
                                             "text": "ZH",
                                             "className": "bg-linear-to-br from-rose-500 to-amber-500 text-white shadow-sm"
@@ -82,46 +309,10 @@
                                     {
                                         "value": "en",
                                         "label": "English",
-                                        "sub": "美式英语",
+                                        "sub": "English",
                                         "badge": {
                                             "text": "EN",
                                             "className": "bg-linear-to-br from-sky-500 to-indigo-500 text-white shadow-sm"
-                                        }
-                                    },
-                                    {
-                                        "value": "ja",
-                                        "label": "日本語",
-                                        "sub": "标准日语",
-                                        "badge": {
-                                            "text": "JA",
-                                            "className": "bg-linear-to-br from-pink-500 to-fuchsia-500 text-white shadow-sm"
-                                        }
-                                    },
-                                    {
-                                        "value": "ko",
-                                        "label": "한국어",
-                                        "sub": "标准韩语",
-                                        "badge": {
-                                            "text": "KO",
-                                            "className": "bg-linear-to-br from-emerald-500 to-teal-500 text-white shadow-sm"
-                                        }
-                                    },
-                                    {
-                                        "value": "es",
-                                        "label": "Español",
-                                        "sub": "西班牙语",
-                                        "badge": {
-                                            "text": "ES",
-                                            "className": "bg-linear-to-br from-orange-500 to-red-500 text-white shadow-sm"
-                                        }
-                                    },
-                                    {
-                                        "value": "fr",
-                                        "label": "Français",
-                                        "sub": "法语",
-                                        "badge": {
-                                            "text": "FR",
-                                            "className": "bg-linear-to-br from-blue-500 to-cyan-500 text-white shadow-sm"
                                         }
                                     }
                                 ]
@@ -131,5 +322,29 @@
                 ]
             }
         }
-    ]
+    ],
+    "blueprintFilters": {
+        "glossary": [
+            {
+                "value": "#workflow:current:root",
+                "desc": "当前工作流的根节点树"
+            },
+            {
+                "value": "#workflow:iterations",
+                "desc": "迭代历史记录（含评分、反馈、改动）"
+            },
+            {
+                "value": "#workflow:export:url",
+                "desc": "最终工作流文件的下载地址"
+            },
+            {
+                "value": "#workflow:export:report",
+                "desc": "构建报告文本"
+            },
+            {
+                "value": "#workflow:test:results",
+                "desc": "测试用例执行结果集"
+            }
+        ]
+    }
 }

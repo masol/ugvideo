@@ -95,7 +95,7 @@ jobs:
 
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: "dist/root*, dist/latest*.yml"
+          subject-path: "dist/*.AppImage, dist/*.blockmap, dist/latest*.yml"
 
       - name: Upload compiled app
         uses: actions/upload-artifact@v7

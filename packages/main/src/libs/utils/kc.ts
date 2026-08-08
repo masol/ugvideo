@@ -2,13 +2,14 @@ import { isCapability } from '$libs/blueprint/capability/is.js';
 import { isMetagJson, metagFromJson } from '$libs/blueprint/metag/is.js';
 import { PrjDB } from '$libs/project/controllers/drizzle/index.js';
 import { IProjectContext } from '$libs/project/type.js';
+import { configService } from '$libs/store/index.js';
 import { app } from 'electron';
 import Logger from 'electron-log/main.js';
 import fg from 'fast-glob';
 import { pathExists } from 'fs-extra';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import pMap from 'p-map';
-import { basename, dirname, extname, join } from 'path';
+import { basename, dirname, extname, join, posix } from 'path';
 import { getErrorMessage } from 'radashi';
 import { fileURLToPath } from 'url';
 import { throwUnprcessable } from './err.js';
@@ -37,9 +38,6 @@ class KnowledgeCenter {
     public readonly kcPath: string;
     /** 发行包自带的只读资源根目录，优先级低 */
     public readonly resourcePath: string;
-
-    /** 读文件并发上限 */
-    private readonly concurrency: number = 8;
 
     constructor() {
         this.kcPath = join(app.getPath('userData'), KnowlegeDirName);
@@ -233,7 +231,7 @@ class KnowledgeCenter {
                     upcertMetag(data);
                 }
             },
-            { concurrency: this.concurrency },
+            { concurrency: configService().get("concurrency") },
         );
     }
 
@@ -258,7 +256,7 @@ class KnowledgeCenter {
                     return;
                 }
                 // 检查同目录下 ${data.id}.code 文件，存在则加载为字符串写入 data.code
-                const codeRel = join(dirname(file.relativePath), `${data.id}.code`);
+                const codeRel = posix.join(posix.dirname(file.relativePath), `${data.id}.code`);
                 const codeFile = codeByRelPath.get(codeRel);
                 if (codeFile) {
                     data.code = await this.readText(codeFile);
@@ -267,7 +265,7 @@ class KnowledgeCenter {
                 }
                 prjDB.upcertCapa(data);
             },
-            { concurrency: this.concurrency },
+            { concurrency: configService().get("concurrency") },
         );
     }
 
@@ -297,7 +295,7 @@ class KnowledgeCenter {
                     this.tryWriteJSON(key, value, prjDB);
                 }
             },
-            { concurrency: this.concurrency },
+            { concurrency: configService().get("concurrency") },
         );
     }
 }

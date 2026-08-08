@@ -1,6 +1,6 @@
 <!-- featured/rightside/bar.header.svelte -->
 <script lang="ts">
-  import { rightPanelStore } from "./bar.store.svelte";
+  import { rightPanelStore } from "$lib/store/local/rightbar.store.svelte";
 
   let { isMaximized = false }: { isMaximized?: boolean } = $props();
 </script>
@@ -34,5 +34,4 @@
       </button>
     {/each}
   </div>
-
 </div>

@@ -2,6 +2,7 @@
 
 // src/lib/flow/store.svelte.ts
 
+import { rightPanelStore } from '$lib/store/local/rightbar.store.svelte';
 import { layoutStore } from '$lib/store/ui/layout.svelte';
 import { safeApi } from '$lib/utils/api';
 import { hooks } from '$lib/utils/hook';
@@ -39,7 +40,6 @@ import type { Edge as XYEdge, Node as XYNode } from '@xyflow/svelte';
 import DirectedGraph from 'graphology';
 import { toast } from 'svelte-sonner';
 import { push } from "svelte-spa-router";
-import { rightPanelStore } from '../../featured/rightside/bar.store.svelte';
 import { messageStore } from '../../featured/rightside/chat/msg.svelte';
 import { pureInput } from './storeHelper';
 

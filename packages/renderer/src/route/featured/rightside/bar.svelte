@@ -2,10 +2,10 @@
 <script lang="ts">
   import PanelHeader from "$lib/components/pannel-header.svelte";
   import { ScrollArea } from "$lib/components/ui/scroll-area";
+  import { rightPanelStore } from "$lib/store/local/rightbar.store.svelte";
   import { layoutStore } from "$lib/store/ui/layout.svelte";
   import autoAnimate from "@formkit/auto-animate";
   import BarHeader from "./bar.header.svelte";
-  import { rightPanelStore } from "./bar.store.svelte";
   import ChatComponet from "./chat/Main.svelte";
   import Glossary from "./glossary/table.svelte";
 

@@ -1,6 +1,7 @@
 import type { IconifyJSON } from '@iconify/svelte';
 import { addCollection } from '@iconify/svelte';
 import * as TablerIcons from '@tabler/icons-svelte';
+import Logger from 'electron-log/renderer.js';
 import type { Component } from 'svelte';
 
 export type IconKind = 'tabler' | 'iconify' | 'base64' | 'svg' | 'empty';
@@ -51,6 +52,9 @@ export function resolveIcon(name: string): ResolvedIcon {
     if (raw.includes(':')) return { kind: 'iconify', value: raw };
     const dict = TablerIcons as unknown as Record<string, Component>;
     const comp = dict[toTablerName(raw)] ?? dict[FALLBACK_TABLER];
+    if (!dict[toTablerName(raw)]) {
+        Logger.debug(`[runtime icon]: invalid tabler iconname: ${toTablerName(raw)}`)
+    }
     return { kind: 'tabler', value: comp };
 }
 function stripBase64Prefix(raw: string): string {

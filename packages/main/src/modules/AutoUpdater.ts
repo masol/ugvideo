@@ -1,5 +1,4 @@
-// import { getCountryCode } from '$libs/utils/sys/ip.js';
-// import eLogger from 'electron-log/main';
+import { configService } from '$libs/store/index.js';
 import log from 'electron-log/main.js';
 import electronUpdater, { type AppUpdater, type Logger } from 'electron-updater';
 import { AppModule } from '../AppModule.js';
@@ -7,55 +6,56 @@ import { AppModule } from '../AppModule.js';
 type DownloadNotification = Parameters<AppUpdater['checkForUpdatesAndNotify']>[0];
 
 export class AutoUpdater implements AppModule {
-
   readonly #logger: Logger | null;
   readonly #notification: DownloadNotification;
 
   constructor(
     {
-      logger = null,
       downloadNotification = undefined,
-    }:
-      {
-        logger?: Logger | null | undefined,
-        downloadNotification?: DownloadNotification
-      } = {},
+    }: {
+      downloadNotification?: DownloadNotification;
+    } = {},
   ) {
-    this.#logger = logger;
+    this.#logger = log;
     this.#notification = downloadNotification;
   }
 
   enable(): void {
-    // const code = await getCountryCode();
-    this.runAutoUpdater();
+    if (configService().get("autoupdate")) {
+      this.runAutoUpdater();
+    }
   }
 
   getAutoUpdater(): AppUpdater {
-    // Using destructuring to access autoUpdater due to the CommonJS module of 'electron-updater'.
-    // It is a workaround for ESM compatibility issues, see https://github.com/electron-userland/electron-builder/issues/7976.
     const { autoUpdater } = electronUpdater;
     return autoUpdater;
   }
 
   runAutoUpdater() {
     const updater = this.getAutoUpdater();
+
+    // 硬编码 GitHub 仓库信息
+    updater.setFeedURL({
+      provider: 'github',
+      owner: 'masol',
+      repo: 'unigen',
+      // token: process.env.GH_TOKEN,  // 可选
+    });
+
     updater.logger = this.#logger || null;
     updater.fullChangelog = true;
 
-    if (import.meta.env.VITE_DISTRIBUTION_CHANNEL) {
-      updater.channel = import.meta.env.VITE_DISTRIBUTION_CHANNEL;
-    }
+    // 如果需要多通道，可以取消注释并硬编码或设默认值
+    // updater.channel = 'latest';
 
     updater.checkForUpdatesAndNotify(this.#notification).catch((error) => {
       if (error instanceof Error && error.message.includes('No published versions')) {
         return null;
       }
-      // 后台任务失败只记日志，不要 throw（否则变成 unhandled rejection）
       log.error('[AutoUpdater] 后台更新检查失败:', error);
     });
   }
 }
-
 
 export function autoUpdater(...args: ConstructorParameters<typeof AutoUpdater>) {
   return new AutoUpdater(...args);

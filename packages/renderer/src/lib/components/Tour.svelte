@@ -20,7 +20,7 @@
         class="bg-white text-black px-4 py-1 rounded"
       >
         {#if ctx.isLastStep()}
-          完成
+          我知道了
         {:else}
           下一步 ->
         {/if}

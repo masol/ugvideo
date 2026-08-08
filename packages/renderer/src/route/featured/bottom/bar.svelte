@@ -1,5 +1,6 @@
 <script lang="ts">
   import PanelHeader from "$lib/components/pannel-header.svelte";
+  import { bottomPanelStore } from "$lib/store/local/bottombar.store.svelte";
   import { layoutStore } from "$lib/store/ui/layout.svelte";
   import {
     IconBook2,
@@ -12,7 +13,6 @@
   import FlowToolbar from "../../page/flow/FlowToolbar.svelte";
   import { flowStore } from "../../page/flow/store.svelte";
   import BottomPanelTabs from "./bar.header.svelte";
-  import { bottomPanelStore } from "./bar.store.svelte";
   import HookLogViewer from "./hooklog/HookLog.svelte";
   import ViewerPanel from "./media/ViewerPanel.svelte";
 

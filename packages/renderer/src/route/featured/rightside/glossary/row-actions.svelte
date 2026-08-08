@@ -3,6 +3,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { configStore } from "$lib/store/config.svelte.js";
+  import { bottomPanelStore } from "$lib/store/local/bottombar.store.svelte.js";
   import { confirmStore } from "$lib/store/ui/confirm.svelte.js";
   import { layoutStore } from "$lib/store/ui/layout.svelte.js";
   import {
@@ -14,7 +15,6 @@
   } from "@tabler/icons-svelte";
   import { push } from "svelte-spa-router";
   import { flowStore } from "../../../page/flow/store.svelte.js";
-  import { bottomPanelStore } from "../../bottom/bar.store.svelte.js";
   import { blueprintStore, type BlueprintTerm } from "./store.svelte.js";
 
   let { term }: { term: BlueprintTerm } = $props();

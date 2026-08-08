@@ -7,6 +7,7 @@ import type { ProjectActivityData, RunState } from "@app/main/types";
 import { COMMON_ORPC_ERROR_DEFS, ORPCError } from "@orpc/client";
 import Logger from "electron-log/renderer";
 import { toast } from "svelte-sonner";
+import { push } from "svelte-spa-router";
 import { pluginStore } from "./plugin.svelte";
 import { ProjectActivity } from "./ui/activity/activity";
 import { confirmStore } from "./ui/confirm.svelte";
@@ -166,6 +167,7 @@ class ProjectStore {
         await safeApi().project.close();
         // 首先关闭项目。
         this.#path = "";
+        push("/")
         if (this.#activity) {
             setTimeout(() => {
                 this.#activity?.clearTop();

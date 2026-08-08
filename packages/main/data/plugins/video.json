@@ -1,5 +1,5 @@
 {
-    "name": "剧本转视频",
+    "name": "剧本->视频",
     "id": "video",
     "icon": "IconVideoPlus",
     "description": "输入剧本 · 输出视频 · 全流程自动编排"

@@ -11,7 +11,7 @@ export default /** @type import('electron-builder').Configuration */
   },
   generateUpdatesFilesForAllChannels: true,
   linux: {
-    target: ["deb"],
+    target: ["AppImage"],
   },
   /**
    * It is recommended to avoid using non-standard characters such as spaces in artifact names,

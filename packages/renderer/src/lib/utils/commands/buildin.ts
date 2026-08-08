@@ -2,6 +2,7 @@ import { configStore } from "$lib/store/config.svelte";
 import { dashboardStore } from "$lib/store/dashboard.svelte";
 import { projectStore } from "$lib/store/project.svelte";
 import { safeApi } from "../api";
+import { AppearanceBuildin } from "./appearance";
 import type { CommandDescriptor } from "./type";
 
 import {
@@ -45,19 +46,7 @@ export const builtins: CommandDescriptor[] = [
             configStore.cycleTheme();
         },
     },
-    // {
-    //     id: 'appearance.toggleFullscreen',
-    //     label: '切换全屏',
-    //     category: 'Appearance',
-    //     handler: async () => {
-    //         if (!document.fullscreenElement) {
-    //             await document.documentElement.requestFullscreen();
-    //             return true;
-    //         }
-    //         await document.exitFullscreen();
-    //         return false;
-    //     },
-    // },
+    ...AppearanceBuildin,
     {
         id: 'appearance.scrollToTop',
         label: '滚动到顶部',
