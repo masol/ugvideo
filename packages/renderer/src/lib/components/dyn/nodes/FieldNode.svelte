@@ -26,8 +26,8 @@
     tempValue = value;
     isEditing = true;
     setTimeout(() => {
-      inputRef?.focus();
-      inputRef?.select();
+      inputRef?.focus?.();
+      inputRef?.select?.();
     }, 0);
   }
 

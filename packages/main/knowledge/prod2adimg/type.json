@@ -67,7 +67,7 @@
                             {
                                 "type": "text-list",
                                 "binding": {
-                                    "key": "product"
+                                    "key": "script"
                                 },
                                 "addLabel": "添加产品",
                                 "emptyTitle": "还没有产品",
@@ -362,52 +362,80 @@
     "blueprintFilters": {
         "glossary": [
             {
-                "value": "#product:parse:%",
-                "desc": "产品信息解析结果（名称/类目/属性/卖点结构化）"
+                "value": "#prod:output:render_overview",
+                "desc": "广告图生成总览（人类可读：产品认知/人群/文案/已生成图汇总）"
             },
             {
-                "value": "#product:copy:%",
-                "desc": "生成的文案（标题/副标题/卖点列表/行动号召）"
+                "value": "#prod:output:copywriting",
+                "desc": "广告文案（每个触发场景一套：主标题/副标题/卖点/CTA/促销/信任徽章）"
             },
             {
-                "value": "#product:layout:%",
-                "desc": "布局规划（各尺寸文案位置/字号/图片裁切）"
+                "value": "#prod:render:result_%",
+                "desc": "渲染结果（按 task_id 含文件路径/尺寸/风格/seed）"
             },
             {
-                "value": "#product:render:output_images",
-                "desc": "最终生成的广告图文件路径列表"
+                "value": "#prod:render:prompt_%",
+                "desc": "发给图像模型的最终 prompt（按 task_id）"
             },
             {
-                "value": "#product:render:bg_prompt_%",
-                "desc": "背景/装饰元素生成提示词"
+                "value": "#prod:idx:rendered",
+                "desc": "已渲染任务 ID 列表（索引）"
             },
             {
-                "value": "#product:render:bg_image_%",
-                "desc": "已渲染的背景素材路径"
+                "value": "#prod:state:visual_%",
+                "desc": "视觉设计（按尺寸×场景：场景背景 + 文字布局 + 图像 prompt）"
             },
             {
-                "value": "#product:config:size_preset",
-                "desc": "当前选择的尺寸预设"
+                "value": "#prod:idx:visuals",
+                "desc": "已生成视觉设计索引"
             },
             {
-                "value": "#product:config:custom_width",
-                "desc": "自定义宽度（px）"
+                "value": "#prod:state:audience_scenarios",
+                "desc": "人群与触发场景 NL 报告（含自检与溯源）"
             },
             {
-                "value": "#product:config:custom_height",
-                "desc": "自定义高度（px）"
+                "value": "#prod:state:audience_report",
+                "desc": "结构化人群与场景报告（audiences/scenarios，程序消费）"
             },
             {
-                "value": "#product:config:ad_style",
-                "desc": "广告图视觉风格"
+                "value": "#prod:state:product_profile",
+                "desc": "产品事实报告（剥离噪声后的名称/类目/规格/卖点/价格）"
             },
             {
-                "value": "#product:config:color_scheme",
-                "desc": "主辅色方案"
+                "value": "#prod:render:seed_%",
+                "desc": "渲染 seed（删除可重随机；调试一致性问题用）"
             },
             {
-                "value": "#product:config:font_style",
-                "desc": "字体风格"
+                "value": "config:size_preset",
+                "desc": "尺寸预设（可逗号分隔多选，如 1200x1200,1080x1920）"
+            },
+            {
+                "value": "config:custom_width",
+                "desc": "自定义宽度（像素，配合 size_preset=custom 使用）"
+            },
+            {
+                "value": "config:custom_height",
+                "desc": "自定义高度（像素，配合 size_preset=custom 使用）"
+            },
+            {
+                "value": "config:ad_style",
+                "desc": "广告图视觉风格（clean / lifestyle / festival / tech / natural / luxury）"
+            },
+            {
+                "value": "config:color_scheme",
+                "desc": "主辅色方案（brand / warm / cool / neutral / high_contrast）"
+            },
+            {
+                "value": "config:font_style",
+                "desc": "字体风格（modern_sans / bold_serif / handwritten / futuristic）"
+            },
+            {
+                "value": "product",
+                "desc": "产品输入（string[]：产品简介原文，可重新触发整条流水线）"
+            },
+            {
+                "value": "productImages",
+                "desc": "产品参考图路径列表（string[]，可选）"
             }
         ],
         "metag": [],

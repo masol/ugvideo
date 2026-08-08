@@ -121,6 +121,17 @@ const toggleDevtools = os
     });
 
 
+const newwin = os
+    .input(z.void())
+    .output(z.boolean())
+    .handler(async (): Promise<boolean> => {
+        const win = await WindowService.instance.createWindow();
+        if (win) {
+            WindowService.instance.showWindow(win);
+            return true;
+        }
+        return false;
+    })
 
 export default {
     max,
@@ -130,5 +141,6 @@ export default {
     focus,
     close,
     getState,
-    toggleDevtools
+    toggleDevtools,
+    newwin,
 }

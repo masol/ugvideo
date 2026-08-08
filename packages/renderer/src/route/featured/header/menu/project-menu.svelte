@@ -11,8 +11,10 @@
   import { recentProjectsStore } from "$lib/store/recent-projects.svelte";
   import { confirmStore } from "$lib/store/ui/confirm.svelte";
   import { windowStore } from "$lib/store/window.svelte";
+  import { safeApi } from "$lib/utils/api";
   import type { RecentProject } from "@app/main/types";
   import {
+    IconAppWindow,
     IconFilePlus,
     IconFolderOpen,
     IconFolderX,
@@ -48,8 +50,13 @@
     await projectStore.close();
   }
 
+  async function newWindow() {
+    if (isBusy) return;
+    await safeApi().window.newwin();
+  }
+
   async function clearRecent() {
-    await recentProjectsStore.clear();  
+    await recentProjectsStore.clear();
   }
   async function quit() {
     if (dashboardStore.runState === "running") {
@@ -71,6 +78,18 @@
     项目
   </Menubar.Trigger>
   <Menubar.Content align="start" class="select-none z-200 min-w-52">
+    <Menubar.Item disabled={isBusy} onSelect={newWindow}>
+      <IconAppWindow
+        size={20}
+        stroke={1.5}
+        class="mr-2 text-muted-foreground"
+      />
+      打开新窗口
+      <MenuShortcut command="project.create" />
+    </Menubar.Item>
+
+    <Menubar.Separator />
+
     <Menubar.Item disabled={isBusy} onSelect={newProject}>
       <IconFilePlus size={20} stroke={1.5} class="mr-2 text-muted-foreground" />
       新建项目

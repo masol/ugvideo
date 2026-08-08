@@ -12,54 +12,58 @@
 
 ## 1. 技术栈
 
-- LLM：Vercel AI SDK `generateText`；结构化提取用 `safefmt`（仅渲染任务列表才需要）
-- 模型：`getSmartModel(undefined, ctx)`（默认）；ctx.signal 自动透传，不手动传 abortSignal
+- LLM：Vercel AI SDK `generateText`；结构化提取用 `safefmt`
+- 模型：`getSmartModel(undefined, ctx)`（默认）；ctx.signal 自动透传
 - 图像：`getSmartImage(undefined, ctx)` + `generateImage`
 - 并发：`p-map`，并发数 `configService().get("concurrency")`
 - 门控：`checkExpiry(ctx, { inputKeys, outputKeys })`
-- 存取：一律走 `Storage` 语义方法，节点侧禁止裸 key（gate 入参除外）
+- 存取：一律走 `Storage` 语义方法
 
 ## 2. 铁律
 
-- 节点间默认传自然语言 markdown，禁止让 LLM 直出 JSON
-- 结构化提取统一走 safefmt（本工作流仅"渲染任务列表/结果"需要）
+- 节点间默认传自然语言 markdown
+- 结构化提取统一走 safefmt（本工作流仅"渲染结果/人群报告"需要）
 - 所有可落盘且被下游消费的产出，节点入口必须 checkExpiry 门控
-- Storage.write 幂等：内容深度相等则跳过、不刷时间戳（防止误使下游过期）
+- Storage.write 幂等：内容深度相等则跳过、不刷时间戳
 - 门控 key 除入口 "product" 字面量外，一律经 Storage 的 key 方法取得
+- **identify-audience-scenarios 走 ReAct 自检循环**（最多 3 轮）：每轮生成→LLM 评审挑刺→结构化抽取→程序化校验，有问题则打回重生成
+- **prompt 指令式优先**：所有设计类 prompt 强制要求"命令句法"，禁止"描述句法"
+- **场景设计消费结构化 AudienceReport**（含人群五要素 + 场景正交三元组），不再从 NL 文本里 regex 切块
 
 ## 3. KV 表（全部封在 Storage 内）
 
-| 语义        | key                      | 形态         |
-| ----------- | ------------------------ | ------------ |
-| 产品事实    | state:product_profile    | string       |
-| 人群场景    | state:audience_scenarios | string       |
-| 文案        | output:copywriting       | string       |
-| 场景设计    | state:scene*design*<idx> | string       |
-| 场景索引    | idx:scenes               | number[]     |
-| 布局        | state:layout\_<sizeKey>  | string       |
-| 布局索引    | idx:layouts              | string[]     |
-| 渲染 prompt | render:prompt\_<taskId>  | string       |
-| 渲染 seed   | render:seed\_<taskId>    | number       |
-| 渲染结果    | render:result\_<taskId>  | RenderResult |
-| 渲染索引    | idx:rendered             | string[]     |
-| 总览        | output:render_overview   | string       |
+| 语义              | key                         | 形态                  |
+| ----------------- | --------------------------- | --------------------- |
+| 产品事实          | state:product_profile       | string                |
+| 人群场景 NL       | state:audience_scenarios    | string                |
+| **结构化人群报告** | **state:audience_report**   | **AudienceReport**    |
+| 文案              | output:copywriting          | string                |
+| 场景设计          | state:scene_design_<idx>    | string                |
+| 场景索引          | idx:scenes                  | number[]              |
+| 布局              | state:layout_<sizeKey>      | string                |
+| 布局索引          | idx:layouts                 | string[]              |
+| 渲染 prompt       | render:prompt_<taskId>      | string                |
+| 渲染 seed         | render:seed_<taskId>        | number                |
+| 渲染结果          | render:result_<taskId>      | RenderResult          |
+| 渲染索引          | idx:rendered                | string[]              |
+| 总览              | output:render_overview      | string                |
 
 ## 4. 配置项（config: 命名空间，不带 #prod: 前缀）
 
 config:size_preset / config:custom_width / config:custom_height
 config:ad_style / config:color_scheme / config:font_style
-默认值由 ensureDefaultConfig 首次落盘。
 
 ## 5. 节点链
 
-extractProductProfile → identifyAudienceAndScenarios → generateCopywriting
-→ designSceneBackgrounds(×3并发) → designLayouts(×N并发)
-→ renderAdImages(×N×M全并发) → buildOverview
+extractProductProfile → identifyAudienceAndScenarios（ReAct 自检 3 轮）
+→ generateCopywriting → designSceneBackgrounds(×N 并发，消费结构化报告)
+→ designLayouts(×N 并发，指令式 prompt)
+→ renderAdImages(×N×M 全并发) → buildOverview
 
 ## 6. sizeKey 规则
 
-用尺寸预设值直接做 key（如 "1200x1200"）；custom 用 "custom\_<w>x<h>"。
+用尺寸预设值直接做 key（如 "1200x1200"）；custom 用 "custom_<w>x<h>"。
 
 ## 7. taskId 规则
 
-ad*<sizeKey>*<style>\_<copySetIdx>
+ad_<sizeKey>_<style>_<copySetIdx>
