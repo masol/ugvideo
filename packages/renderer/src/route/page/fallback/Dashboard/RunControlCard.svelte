@@ -119,7 +119,8 @@
                   <span
                     class="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
                   >
-                    STEP {currentTarget.step}/8
+                    STEP {currentTarget.step}/{projectStore.activity?.targets
+                      .length ?? 8}
                   </span>
                 </div>
                 <span class="truncate text-xs text-muted-foreground">

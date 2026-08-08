@@ -300,5 +300,6 @@ class KnowledgeCenter {
     }
 }
 
-// 直接实例化并导出
-export const knowledgeCenter = new KnowledgeCenter();
+const KEY = Symbol.for('unigen.singleton.knowledgeCenter');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const knowledgeCenter: KnowledgeCenter = ((globalThis as any)[KEY] ??= new KnowledgeCenter());

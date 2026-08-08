@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { IconAlertTriangle, IconInfoCircle } from "@tabler/icons-svelte";
   import { Button } from "$lib/components/ui/button";
-  import { configStore } from "$lib/store/config.svelte";
   import type { Step } from "$lib/components/ui/walkthrough/ctx";
+  import { configStore } from "$lib/store/config.svelte";
+  import { IconAlertTriangle, IconInfoCircle } from "@tabler/icons-svelte";
 
   import { layoutStore } from "$lib/store/ui/layout.svelte";
+  import { tourStore } from "$lib/store/ui/tour.svelte";
   import { delay } from "$lib/utils/promise";
   import { push } from "svelte-spa-router";
-  import { tourStore } from "$lib/store/ui/tour.svelte";
 
   const SettingId = "settings";
   const steps: Step[] = [
@@ -91,6 +91,6 @@
 {#if !configStore.localModel}
   <div class="flex items-center gap-1.5 px-1 text-xs text-muted-foreground/60">
     <IconInfoCircle class="size-3.5" />
-    <span>未设置重排模型，这会降低任务正确度</span>
+    <span>未设置重排模型，这可能会降低任务正确度</span>
   </div>
 {/if}

@@ -3,9 +3,12 @@ import { configService } from '$libs/store/index.js';
 import { initGlobalToolDB } from '$libs/tooldb/bootstrap.js';
 import { broadcast } from '$libs/utils/rpcevt.js';
 import { themeFile } from '$libs/utils/sys/dir.js';
+import { ipInfo } from '$libs/utils/sys/ip.js';
 import { telemetryService } from '$libs/utils/telemetry/telemetry.service.js';
 import { nativeTheme } from 'electron';
+import Logger from 'electron-log/main.js';
 import { ensureDir } from 'fs-extra';
+import { getErrorMessage } from 'radashi';
 import type { AppModule } from '../AppModule.js';
 import { ModuleContext } from '../types/ModuleContext.js';
 
@@ -23,6 +26,8 @@ class UnigenModule implements AppModule {
                 payload: nativeTheme.shouldUseDarkColorsForSystemIntegratedUI
             })
         })
+
+        ipInfo.init().catch(e => Logger.error(`[IPINFO] 获取国家代码出错：${getErrorMessage(e)}`))
 
         await Promise.all([
             ensureDir(themeFile()),

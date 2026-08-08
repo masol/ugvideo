@@ -65,11 +65,13 @@ const set = os
  * schema 校验失败时异常直接上抛，由调用者处理
  */
 const recents = os
-    .input(z.boolean().optional()) // 传入true,指示清空。
+    .input(z.union([z.boolean(), z.string()]).optional())
     .output(z.array(recentProjectSchema))
     .handler(async ({ input }) => {
-        if (input) {
+        if (typeof input === 'boolean' && input === true) {
             secondConfig().clearRecents();
+        } else if (typeof input === 'string' && input.length > 0) {
+            secondConfig().removeProject(input);
         }
         return secondConfig().recents;
     })

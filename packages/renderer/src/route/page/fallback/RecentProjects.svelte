@@ -1,3 +1,4 @@
+<!-- packages/renderer/src/route/page/fallback/RecentProjects.svelte -->
 <script lang="ts">
   import { RuntimeIcon } from "$lib/components/runtimeicon";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -5,7 +6,10 @@
   import { projectStore } from "$lib/store/project.svelte";
   import { recentProjectsStore } from "$lib/store/recent-projects.svelte";
   import type { RecentProject } from "@app/main/types";
-  import { IconClock } from "@tabler/icons-svelte";
+  import autoAnimate from "@formkit/auto-animate";
+  import { IconClock, IconLoader2, IconTrash } from "@tabler/icons-svelte";
+
+  let deletingPath = $state<string | null>(null);
 
   function formatDate(ts: number) {
     return i18nStore.dayjs(ts).fromNow();
@@ -13,6 +17,20 @@
 
   function handleOpen(project: RecentProject) {
     void projectStore.open(project.path);
+  }
+
+  async function removeProject(project: RecentProject): Promise<void> {
+    await recentProjectsStore.rmProject(project.path);
+  }
+
+  async function handleDelete(project: RecentProject) {
+    if (deletingPath) return;
+    deletingPath = project.path;
+    try {
+      await removeProject(project);
+    } finally {
+      deletingPath = null;
+    }
   }
 
   // 从路径里推断显示名（type 中无 name 字段，取最后一段）
@@ -50,13 +68,13 @@
   {:else if recentProjectsStore.isEmpty}
     <p class="text-sm text-muted-foreground">暂无最近项目</p>
   {:else}
-    <ul class="space-y-1">
+    <ul use:autoAnimate class="space-y-1">
       {#each recentProjectsStore.projects as project (project.path)}
-        <li>
+        <li class="group flex items-center gap-1">
           <button
             type="button"
             onclick={() => handleOpen(project)}
-            class="group flex w-full items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-accent"
+            class="flex flex-1 items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-accent"
           >
             <RuntimeIcon
               name={project.icon}
@@ -73,6 +91,19 @@
             <span class="shrink-0 text-xs text-muted-foreground">
               {formatDate(project.time)}
             </span>
+          </button>
+          <button
+            type="button"
+            class="shrink-0 rounded p-1 text-red-500 opacity-0 transition-all hover:bg-red-100 group-hover:opacity-100 disabled:pointer-events-none"
+            onclick={() => handleDelete(project)}
+            disabled={deletingPath !== null}
+            aria-label="删除项目"
+          >
+            {#if deletingPath === project.path}
+              <IconLoader2 size={16} class="animate-spin" />
+            {:else}
+              <IconTrash size={16} />
+            {/if}
           </button>
         </li>
       {/each}

@@ -1,0 +1,16 @@
+{
+  "id": "30e832db-9735-4de0-91b1-df17311aa27d",
+  "name": "#code",
+  "role": "",
+  "goal": "",
+  "input": [
+    "script"
+  ],
+  "output": [
+    "paragraph"
+  ],
+  "process": "",
+  "negative": "",
+  "criteria": "",
+  "fewshot": []
+}

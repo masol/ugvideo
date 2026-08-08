@@ -57,6 +57,28 @@ class RecentProjectsStore {
             log.error('[RecentProjectsStore] open() failed', err)
         }
     }
+
+    async rmProject(prjpath: string): Promise<void> {
+        // 1. 检查本地是否存在该路径
+        const exists = this.#projects.some(p => p.path === prjpath);
+        if (!exists) {
+            log.warn(`[RecentProjectsStore] rmProject() called for non-existent path: ${prjpath}`);
+            return; // 不存在则直接返回，不调用后端
+        }
+
+        try {
+            // 2. 调用后端删除（假设 API 成功即表示删除完成）
+            await safeApi().config.recents(prjpath);
+
+            // 3. 删除成功后，从本地数组中移除该条目（重新赋值触发响应更新）
+            this.#projects = this.#projects.filter(p => p.path !== prjpath);
+            log.debug(`[RecentProjectsStore] removed project: ${prjpath}`);
+        } catch (err) {
+            this.#error = err instanceof Error ? err.message : String(err);
+            log.error('[RecentProjectsStore] rmProject() failed', err);
+            throw err; // 保持错误向上传播
+        }
+    }
 }
 
 const KEY = Symbol.for('unigen.renderer.recentProjectsStore');
