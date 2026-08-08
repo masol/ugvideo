@@ -11,7 +11,7 @@ export async function extractProductProfile(ctx: IRunnerContext): Promise<void> 
     const store = new Storage(ctx);
 
     if (!checkExpiry(ctx, {
-        inputKeys: ["product", "productImages"],
+        inputKeys: ["product", "productImages", "product_img", ...store.userConfigKeys()],
         outputKeys: store.productProfileKey(),
     })) {
         ctx.info("[extractProductProfile] 产品事实仍新鲜，跳过");
@@ -23,14 +23,15 @@ export async function extractProductProfile(ctx: IRunnerContext): Promise<void> 
         throwPrecondition("[extractProductProfile] 缺少产品输入");
     }
     const productRaw = productArr.join("\n");
-    const hasImages = store.getProductImages().length > 0;
+    const hasImages = (await store.getProductImages()).length > 0;
+    const userCtx = store.getUserProductContext();
 
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx),
         instructions: PROFILE_EXTRACTOR_PROMPT.system,
-        prompt: PROFILE_EXTRACTOR_PROMPT.user(productRaw, hasImages),
+        prompt: PROFILE_EXTRACTOR_PROMPT.user(productRaw, hasImages, userCtx),
     });
 
     store.saveProductProfile(text);
-    ctx.info(`[extractProductProfile] 完成，产品事实 ${text.length} 字`);
+    ctx.info(`[extractProductProfile] 完成，产品事实 ${text.length} 字${hasImages ? "（有产品图）" : ""}${userCtx ? "（含用户确认信息）" : ""}`);
 }

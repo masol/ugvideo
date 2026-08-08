@@ -17,9 +17,8 @@ export async function renderAdImages(ctx: IRunnerContext): Promise<void> {
         return;
     }
 
-    const productImages = store.getProductImages();
+    const productImages = await store.getProductImages();
 
-    // 任务 = 每尺寸 × 每场景（视觉设计与渲染一对一绑定）
     const tasks = cfg.sizes.flatMap(size =>
         report.scenarios.map(sc => {
             const compositeKey = visualCompositeKey(size.key, sc.idx);
@@ -41,7 +40,9 @@ export async function renderAdImages(ctx: IRunnerContext): Promise<void> {
                 inputKeys: [
                     store.visualKey(task.compositeKey),
                     "productImages",
+                    "product_img",
                     ...store.configKeys(),
+                    "product_name",
                 ],
                 outputKeys: store.renderResultKey(task.taskId),
             })) {
@@ -63,6 +64,7 @@ export async function renderAdImages(ctx: IRunnerContext): Promise<void> {
                 style: cfg.ad_style,
                 sceneIdx: task.sceneIdx,
                 productImages,
+                productName: cfg.product_name,
             });
 
             if (!result) {
@@ -75,5 +77,5 @@ export async function renderAdImages(ctx: IRunnerContext): Promise<void> {
         { concurrency: configService().get("concurrency") },
     );
 
-    ctx.info(`[renderAdImages] 完成，成功 ${succeeded}，失败 ${failed}，跳过 ${skipped}`);
+    ctx.info(`[renderAdImages] 完成，成功 ${succeeded}，失败 ${failed}，跳过 ${skipped}（产品参考图 ${productImages.length} 张${cfg.product_name ? `，含品牌名 ${cfg.product_name}` : ""}）`);
 }

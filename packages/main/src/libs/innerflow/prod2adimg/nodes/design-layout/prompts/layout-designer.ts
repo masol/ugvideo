@@ -16,6 +16,11 @@ B. **文字布局**：主标题/副标题/卖点/CTA/促销/徽章的画面位�
 5. **卖点列表（视觉权重 5%）**：3 条，每条 ≤14 字，字号为主标题 1/3，统一对齐。
 6. **CTA + 促销 + 徽章（视觉权重合计 ≤5%）**：单行/单列，字号最小，位于画面边缘。
 
+【产品名/品牌名强制呈现（仅当用户提供产品名时）】
+- 若上游提供「产品名称（含品牌）」，则**主标题或副标题中必须显式出现该产品名/品牌名**（允许拆行、允许缩写，但字面必须出现）
+- 产品名/品牌名出现的位置必须落在「标题区」或「标题不可侵犯区」内，**不得落在卖点区或 CTA 区**
+- 若画布为横幅（宽>高），产品名/品牌名优先落在主标题左侧或上方
+
 【文字密度红线】
 - 画面内文字总字数 ≤ 80 字
 - 卖点必须排成 3 行紧凑结构，绝不允许超过 3 行
@@ -65,6 +70,7 @@ B. **文字布局**：主标题/副标题/卖点/CTA/促销/徽章的画面位�
 ### B. 文字布局（指令式）
 #### 标题区
 - 主标题：位置 [精确坐标] + 字号 [Xpt] + 颜色 [X] + 字重 [粗/中/细]
+ - （若上游提供产品名/品牌名，必须显式写明该名出现在标题的哪一行/哪个字位）
 - 副标题：位置 [精确坐标] + 字号 [主标题 1/2] + 颜色 [X]
 
 #### 卖点区
@@ -85,9 +91,10 @@ B. **文字布局**：主标题/副标题/卖点/CTA/促销/徽章的画面位�
 [一段完整、连贯、命令式句法的图像生成提示词。必须：
 ① 用命令句："前景呈现 X""产品占据画面 Y 位置""光线从 Z 方向"
 ② 明确写出主标题/副标题/卖点/CTA 的**文字内容原文**和**精确画面位置**与**字号颜色**
-③ 文字必须清晰可读，不遮挡产品
-④ 由 AI 图像引擎直接在画面中生成文字（写明字体风格倾向）
-⑤ 中文即可]`,
+③ 若上游提供产品名/品牌名，必须将字面写入主标题或副标题原文
+④ 文字必须清晰可读，不遮挡产品
+⑤ 由 AI 图像引擎直接在画面中生成文字（写明字体风格倾向）
+⑥ 中文即可]`,
 
     user: (params: {
         width: number;
@@ -105,6 +112,12 @@ B. **文字布局**：主标题/副标题/卖点/CTA/促销/徽章的画面位�
         colorScheme: string;
         fontStyle: string;
         hasProductImage: boolean;
-    }) =>
-        `【目标画布】${params.width}×${params.height}（${params.ratioLabel}）\n\n【绑定场景（已校验）】\n- 标题：${params.scenarioTitle}\n- 描述：${params.scenarioDescription}\n- 视觉锚点：${params.scenarioVisualAnchors}\n- 情感诉求：${params.scenarioEmotionalHook}\n\n【目标人群（已校验）】\n${params.audienceLabel}\n${params.audienceProfile}\n\n【产品事实】\n${params.productProfile}\n\n【本图使用的文案】\n${params.copySet}\n\n【全局风格】风格：${params.adStyle}｜色调：${params.colorScheme}｜字体：${params.fontStyle}\n【产品参考图】${params.hasProductImage ? "有（产品以参考图为准）" : "无（产品作为画面主体示意）"}\n\n请按指令式句法，一次性产出"场景视觉设计 + 文字布局"。视觉权重 40% 给产品、15% 给主标题，其余分散。文字总字数 ≤ 80。人物着装/动作必须与人群身份匹配。`,
+        productName: string | null;
+    }) => {
+        const productNameLine = params.productName
+            ? `\n【产品名称/品牌名（**必须在主标题或副标题中显式出现**）】\n${params.productName}\n`
+            : "";
+
+        return `【目标画布】${params.width}×${params.height}（${params.ratioLabel}）\n\n【绑定场景（已校验）】\n- 标题：${params.scenarioTitle}\n- 描述：${params.scenarioDescription}\n- 视觉锚点：${params.scenarioVisualAnchors}\n- 情感诉求：${params.scenarioEmotionalHook}\n\n【目标人群（已校验）】\n${params.audienceLabel}\n${params.audienceProfile}\n\n【产品事实】\n${params.productProfile}\n${productNameLine}\n【本图使用的文案】\n${params.copySet}\n\n【全局风格】风格：${params.adStyle}｜色调：${params.colorScheme}｜字体：${params.fontStyle}\n【产品参考图】${params.hasProductImage ? "有（产品以参考图为准，使用图生图确保外观一致）" : "无（产品作为画面主体示意）"}\n\n请按指令式句法，一次性产出"场景视觉设计 + 文字布局"。视觉权重 40% 给产品、15% 给主标题，其余分散。文字总字数 ≤ 80。人物着装/动作必须与人群身份匹配。${params.productName ? `主标题或副标题必须显式包含产品名「${params.productName}」。` : ""}`;
+    },
 };

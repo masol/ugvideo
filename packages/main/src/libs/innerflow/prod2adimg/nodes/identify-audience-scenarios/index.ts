@@ -52,7 +52,7 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
     const store = new Storage(ctx);
 
     if (!checkExpiry(ctx, {
-        inputKeys: store.productProfileKey(),
+        inputKeys: [store.productProfileKey(), ...store.userConfigKeys()],
         outputKeys: [store.audienceScenariosKey(), store.audienceReportKey()],
     })) {
         ctx.info("[identifyAudienceAndScenarios] 人群场景仍新鲜，跳过");
@@ -62,8 +62,13 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
     const profile = store.getProductProfile();
     if (!profile) throwPrecondition("[identifyAudienceAndScenarios] 缺少产品事实");
 
+    const usageScene = store.getUsageScene();
+    const usageBlock = usageScene
+        ? `\n\n【用户已确认的使用场合（最高优先级，至少 1 个场景必须直接对应；其余两场围绕此核心衍生正交变体）】\n${usageScene}`
+        : "";
+
     const messages: Array<{ role: "user" | "assistant"; content: string }> = [
-        { role: "user", content: AUDIENCE_GENERATOR_PROMPT.user(profile) },
+        { role: "user", content: AUDIENCE_GENERATOR_PROMPT.user(profile) + usageBlock },
     ];
 
     const attempts: Attempt[] = [];
@@ -71,7 +76,6 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
     let finalReport: Report | null = null;
 
     for (let round = 1; round <= MAX_ROUNDS; round++) {
-        // 1) 生成（或重生成）
         const { text } = await generateText({
             model: getSmartModel(undefined, ctx),
             instructions: AUDIENCE_GENERATOR_PROMPT.system,
@@ -79,7 +83,6 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
         });
         messages.push({ role: "assistant", content: text });
 
-        // 2) 并行：LLM 评审 + 结构化抽取（零依赖）
         const [critiqueResult, fmtResult] = await Promise.all([
             generateText({
                 model: getSmartModel(undefined, ctx),
@@ -89,7 +92,6 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
             safefmt(text, Output.object({ schema: AudienceReportSchema }), ctx),
         ]);
 
-        // 仅 ISSUE: 视为硬伤（阻断）；SUGGEST: 是优化建议，不阻断
         const issues = critiqueResult.text.split("\n")
             .map(l => l.trim())
             .filter(l => /^ISSUE:/i.test(l));
@@ -97,7 +99,7 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
         const structuralIssues: string[] = [];
         let report: Report | null = null;
         if (fmtResult.success && fmtResult.value) {
-            const r = fmtResult.value.output;          // 局部收窄为非空
+            const r = fmtResult.value.output;
             report = r;
             structuralIssues.push(...programmaticChecks(r));
         } else {
@@ -122,18 +124,16 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
                     + `修正原则：\n`
                     + `1. 若某场景的产品使用动作/装备被判不可行，且无法满足其"可行条件"，则**整体替换**为该产品最主流、最无争议的使用场景，不要给不成立的场景打补丁。\n`
                     + `2. 宁可三场都平实正确，也不要为了差异化而虚构产品不具备的功能或违背材料物理常识。\n`
-                    + `3. 保持已判定正确的部分不变。\n\n请重新输出完整方案。`,
+                    + `3. 保持已判定正确的部分不变。\n`
+                    + (usageScene ? `4. 至少 1 个场景必须直接对应用户已确认的使用场合：「${usageScene}」。\n` : "")
+                    + `\n请重新输出完整方案。`,
             });
         }
     }
 
-    // ==========================================================
-    // 兜底：3 轮未完全通过时，保证仍产出一份结构化报告（绝不卡死下游）
-    // ==========================================================
     if (!finalReport) {
         const candidates = attempts.filter(a => a.report);
 
-        // 三选一 + 融合：交给融合器把候选合成一版最优
         if (candidates.length > 0) {
             const fused = await fuseCandidates(ctx, profile, candidates);
             if (fused) {
@@ -143,7 +143,6 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
             }
         }
 
-        // 融合失败：退化为"问题最少"的那一版
         if (!finalReport && candidates.length > 0) {
             const best = [...candidates].sort((a, b) => a.issues.length - b.issues.length)[0];
             finalText = best.text;
@@ -152,7 +151,6 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
         }
     }
 
-    // 极端兜底：全程未能抽出任何结构化报告（safefmt 全挂）——才真正需要人工介入
     if (!finalReport) {
         finalText = attempts[attempts.length - 1]?.text ?? "";
         if (finalText) store.saveAudienceScenarios(finalText);
@@ -161,13 +159,9 @@ export async function identifyAudienceAndScenarios(ctx: IRunnerContext): Promise
 
     store.saveAudienceScenarios(finalText);
     store.saveAudienceReport(finalReport);
-    ctx.info(`[identifyAudienceAndScenarios] 完成，人群场景 ${finalText.length} 字，结构化报告已落盘`);
+    ctx.info(`[identifyAudienceAndScenarios] 完成，人群场景 ${finalText.length} 字，结构化报告已落盘${usageScene ? "（已锚定用户使用场合）" : ""}`);
 }
 
-/**
- * 融合器：把多个候选方案合成一版最优（保留正确部分，替换不可行场景）。
- * 抽取失败返回 null，由上层退化到 best-pick。
- */
 async function fuseCandidates(
     ctx: IRunnerContext,
     profile: string,

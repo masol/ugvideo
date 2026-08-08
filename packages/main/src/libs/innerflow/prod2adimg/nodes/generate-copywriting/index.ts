@@ -12,7 +12,14 @@ export async function generateCopywriting(ctx: IRunnerContext): Promise<void> {
     const store = new Storage(ctx);
 
     if (!checkExpiry(ctx, {
-        inputKeys: [store.productProfileKey(), store.audienceScenariosKey(), store.audienceReportKey()],
+        inputKeys: [
+            store.productProfileKey(),
+            store.audienceScenariosKey(),
+            store.audienceReportKey(),
+            "product_name",
+            "selling_points",
+            "promo_text",
+        ],
         outputKeys: store.copywritingKey(),
     })) {
         ctx.info("[generateCopywriting] 文案仍新鲜，跳过");
@@ -27,15 +34,24 @@ export async function generateCopywriting(ctx: IRunnerContext): Promise<void> {
     }
 
     const reportBlock = renderReport(report!);
+    const productName = store.getProductName();
+    const sellingPoints = store.getSellingPoints();
+    const promoText = store.getPromoText();
+
+    const userBlock: string[] = [];
+    if (productName) userBlock.push(`**产品名称（必须出现在主标题或副标题中）**：${productName}`);
+    if (sellingPoints.length) userBlock.push(`**用户确认的核心卖点（必须按优先级出现在文案套中）**：${sellingPoints.join(" / ")}`);
+    if (promoText) userBlock.push(`**用户确认的促销信息（必须出现在促销信息栏）**：${promoText}`);
+    const userContext = userBlock.length ? `\n\n## 用户已确认的信息（最高优先级）\n${userBlock.join("\n")}` : "";
 
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx),
         instructions: COPYWRITER_PROMPT.system,
-        prompt: COPYWRITER_PROMPT.user(profile!, reportBlock),
+        prompt: COPYWRITER_PROMPT.user(profile!, reportBlock) + userContext,
     });
 
     store.saveCopywriting(text);
-    ctx.info(`[generateCopywriting] 完成，文案 ${text.length} 字`);
+    ctx.info(`[generateCopywriting] 完成，文案 ${text.length} 字${userContext ? "（含用户确认信息）" : ""}`);
 }
 
 function renderReport(report: AudienceScenarioReport): string {

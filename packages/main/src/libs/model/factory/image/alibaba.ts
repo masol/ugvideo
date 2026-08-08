@@ -3,6 +3,7 @@ import type { Provider } from '$types/index.js';
 import type {
     ImageModelV4,
     ImageModelV4CallOptions,
+    ImageModelV4File,
     ImageModelV4Result,
     SharedV4Warning,
 } from '@ai-sdk/provider';
@@ -60,7 +61,7 @@ function makeHttpError(message: string, statusCode: number): HttpError {
 }
 
 /** "端点不可用"信号:据此切到另一条端点再试,不上抛。 */
-class EndpointMismatchError extends Error {}
+class EndpointMismatchError extends Error { }
 
 function abortError(): DOMException {
     return new DOMException('Aborted', 'AbortError');
@@ -129,15 +130,77 @@ const ASYNC: EndpointKind = {
     },
 };
 
+/**
+ * 将 ImageModelV4File 转换为可直接发送给 DashScope 的 image 内容。
+ * - type:'url' → 直接使用 url
+ * - type:'file' 且 data 是 data URL → 直接使用
+ * - type:'file' 且 data 是 base64 字符串 → 包装成 data URL
+ * - type:'file' 且 data 是 Uint8Array → 转 base64 后包装成 data URL
+ */
+function fileToImagePart(file: ImageModelV4File): { image: string } | null {
+    if (file.type === 'url') {
+        return { image: file.url };
+    }
+
+    // type === 'file'
+    const mediaType = file.mediaType || 'image/png';
+    const data = file.data;
+
+    // 已经是 data URL
+    if (typeof data === 'string' && data.startsWith('data:')) {
+        return { image: data };
+    }
+
+    // base64 字符串 → 包装成 data URL
+    if (typeof data === 'string') {
+        return { image: `data:${mediaType};base64,${data}` };
+    }
+
+    // Uint8Array → 转为 base64
+    let binary = '';
+    for (let i = 0; i < data.byteLength; i++) {
+        binary += String.fromCharCode(data[i]);
+    }
+    const base64 = btoa(binary);
+    return { image: `data:${mediaType};base64,${base64}` };
+}
+
+/** 构建包含文本和图片的 message content */
+function buildMessageContent(
+    prompt: string,
+    referenceFiles?: ImageModelV4File[],
+): Array<Record<string, string>> {
+    const content: Array<Record<string, string>> = [];
+
+    // 先添加参考图
+    if (referenceFiles && referenceFiles.length > 0) {
+        for (const file of referenceFiles) {
+            const part = fileToImagePart(file);
+            if (part) content.push(part);
+        }
+    }
+
+    // 后添加文本提示词
+    content.push({ text: prompt });
+
+    return content;
+}
+
 function buildSubmitBody(
     modelId: string,
     prompt: string,
     parameters: Record<string, unknown>,
+    referenceFiles?: ImageModelV4File[],
 ): Record<string, unknown> {
     return {
         model: modelId,
         input: {
-            messages: [{ role: 'user', content: [{ text: prompt }] }],
+            messages: [
+                {
+                    role: 'user',
+                    content: buildMessageContent(prompt, referenceFiles),
+                },
+            ],
         },
         parameters,
     };
@@ -150,10 +213,12 @@ async function submitOnce(args: {
     modelId: string;
     prompt: string;
     parameters: Record<string, unknown>;
+    referenceFiles?: ImageModelV4File[];
     signal?: AbortSignal;
 }): Promise<{ urls: string[] } | { taskId: string }> {
-    const { origin, apiKey, endpoint, modelId, prompt, parameters, signal } = args;
-    const body = buildSubmitBody(modelId, prompt, parameters);
+    const { origin, apiKey, endpoint, modelId, prompt, parameters, referenceFiles, signal } =
+        args;
+    const body = buildSubmitBody(modelId, prompt, parameters, referenceFiles);
     const res = await fetch(`${origin}${endpoint.submitPath}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${apiKey}`, ...endpoint.headers },
@@ -170,8 +235,7 @@ async function submitOnce(args: {
             );
         }
         throw makeHttpError(
-            `[alibaba-image] 提交生图失败 (${endpoint.name}): ${res.status} ${
-                data?.message ?? res.statusText
+            `[alibaba-image] 提交生图失败 (${endpoint.name}): ${res.status} ${data?.message ?? res.statusText
             }`,
             res.status,
         );
@@ -194,6 +258,7 @@ async function submit(args: {
     modelId: string;
     prompt: string;
     parameters: Record<string, unknown>;
+    referenceFiles?: ImageModelV4File[];
     signal?: AbortSignal;
 }): Promise<{ urls: string[] } | { taskId: string }> {
     const endpoints = [SYNC, ASYNC];
@@ -224,7 +289,7 @@ async function pollTask(args: {
     const { origin, apiKey, taskId, signal } = args;
     const deadline = Date.now() + MAX_POLL_MS;
 
-    for (;;) {
+    for (; ;) {
         if (signal?.aborted) throw abortError();
 
         const res = await fetch(`${origin}${TASK_PATH}/${taskId}`, {
@@ -234,8 +299,7 @@ async function pollTask(args: {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
             throw makeHttpError(
-                `[alibaba-image] 查询生图任务失败: ${res.status} ${
-                    data?.message ?? res.statusText
+                `[alibaba-image] 查询生图任务失败: ${res.status} ${data?.message ?? res.statusText
                 }`,
                 res.status,
             );
@@ -258,8 +322,7 @@ async function pollTask(args: {
             const code = data?.output?.code ?? '';
             const msg = data?.output?.message ?? data?.message ?? '';
             throw new Error(
-                `[alibaba-image] 生图任务未成功 (${status})${
-                    code ? ` code=${code}` : ''
+                `[alibaba-image] 生图任务未成功 (${status})${code ? ` code=${code}` : ''
                 }: ${msg}`,
             );
         }
@@ -449,20 +512,30 @@ function createAlibabaImageModel(
             if (options.seed != null && parameters.seed == null) {
                 parameters.seed = options.seed;
             }
-            if (options.files || options.mask) {
+
+            // ── 处理参考图 ──
+            // ImageModelV4File: { type:'file', mediaType, data } | { type:'url', url }
+            const referenceFiles = options.files;
+            if (referenceFiles && referenceFiles.length > 0) {
+                Logger.debug(
+                    `[alibaba-image] 使用 ${referenceFiles.length} 张参考图`,
+                );
+            }
+
+            if (options.mask) {
                 warnings.push({
                     type: 'unsupported',
-                    feature: 'files/mask',
-                    details: '当前百炼文生图适配器仅支持纯文本生图,已忽略 files/mask',
+                    feature: 'mask',
+                    details: '当前百炼文生图适配器不支持 mask,已忽略',
                 });
             }
 
             Logger.debug(
                 `[alibaba-image] 绕过 SDK,原生调用 ${provider.id}::${modelId} ` +
                 `(端点候选:sync→async) 入参 size=${options.size ?? '-'} ` +
-                `aspectRatio=${options.aspectRatio ?? '-'} → 实发 parameters=${JSON.stringify(
-                    parameters,
-                )}`,
+                `aspectRatio=${options.aspectRatio ?? '-'} ` +
+                `referenceImages=${referenceFiles?.length ?? 0} ` +
+                `→ 实发 parameters=${JSON.stringify(parameters)}`,
             );
 
             const submitted = await submit({
@@ -471,6 +544,7 @@ function createAlibabaImageModel(
                 modelId,
                 prompt: options.prompt!,
                 parameters,
+                referenceFiles,
                 signal: options.abortSignal,
             });
 
@@ -478,11 +552,11 @@ function createAlibabaImageModel(
                 'urls' in submitted
                     ? submitted.urls
                     : await pollTask({
-                          origin,
-                          apiKey,
-                          taskId: submitted.taskId,
-                          signal: options.abortSignal,
-                      });
+                        origin,
+                        apiKey,
+                        taskId: submitted.taskId,
+                        signal: options.abortSignal,
+                    });
 
             const images = await Promise.all(
                 urls.map((u) => downloadImage(u, options.abortSignal)),

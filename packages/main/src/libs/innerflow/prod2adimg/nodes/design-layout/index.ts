@@ -10,7 +10,6 @@ import { Storage } from "../../storage.js";
 import { parseCopySets } from "../_shared/parse-copysets.js";
 import { VISUAL_DESIGNER_PROMPT } from "./prompts/layout-designer.js";
 
-/** 视觉设计复合 key：尺寸键 + 场景序号 */
 export function visualCompositeKey(sizeKey: string, sceneIdx: number): string {
     return `${sizeKey}__s${sceneIdx}`;
 }
@@ -27,9 +26,9 @@ export async function designAdVisuals(ctx: IRunnerContext): Promise<void> {
 
     const cfg = store.getAdConfig();
     const copySets = parseCopySets(copywriting);
-    const hasProductImage = store.getProductImages().length > 0;
+    const hasProductImage = (await store.getProductImages()).length > 0;
+    const productName = cfg.product_name;
 
-    // 全部 (尺寸 × 场景) 组合完全并行——彼此独立
     const tasks = cfg.sizes.flatMap(size =>
         report!.scenarios.map((sc) => {
             const compositeKey = visualCompositeKey(size.key, sc.idx);
@@ -45,6 +44,8 @@ export async function designAdVisuals(ctx: IRunnerContext): Promise<void> {
                     store.copywritingKey(),
                     store.audienceReportKey(),
                     ...store.configKeys(),
+                    "product_name",
+                    "product_img",
                 ],
                 outputKeys: store.visualKey(compositeKey),
             })) {
@@ -87,6 +88,7 @@ export async function designAdVisuals(ctx: IRunnerContext): Promise<void> {
                     colorScheme: cfg.color_scheme,
                     fontStyle: cfg.font_style,
                     hasProductImage,
+                    productName,
                 }),
             });
 
@@ -96,5 +98,5 @@ export async function designAdVisuals(ctx: IRunnerContext): Promise<void> {
         { concurrency: configService().get("concurrency") },
     );
 
-    ctx.info(`[designAdVisuals] 完成，共 ${tasks.length} 个 (尺寸×场景) 视觉设计`);
+    ctx.info(`[designAdVisuals] 完成，共 ${tasks.length} 个 (尺寸×场景) 视觉设计（产品图 ${hasProductImage ? "有" : "无"}）`);
 }

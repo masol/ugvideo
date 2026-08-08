@@ -2,6 +2,8 @@
 import { getInput } from "$libs/blueprint/glossary/input.js";
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type {
     AdSize,
@@ -69,12 +71,70 @@ export class Storage {
         return getInput(this.ctx) ?? [];
     }
 
-    getProductImages(): string[] {
+    /**
+     * 产品参考图读取 —— 优先项目托管目录 `product_img/`；不存在或为空时回退 input KV。
+     *
+     * 关键：路径必须走 ctx.project.getPath("product_img") 解析托管目录，
+     * 不能用 ctx.prj.path 手工拼接（那是另一个位置，会读不到图）。
+     */
+    async getProductImages(): Promise<string[]> {
+        const dir = this.ctx.prj.getPath("product_img");
+        try {
+            const items = await readdir(dir);
+            const files = items
+                .filter(n => !n.startsWith("."))
+                .map(n => path.join(dir, n));
+            if (files.length > 0) return files;
+        } catch {
+            // 目录不存在或不可读 → fallback 到 KV
+        }
         return this.read<string[]>("productImages") ?? [];
     }
 
     // ==========================================================
-    // 配置读取
+    // 用户配置字段（产品类目/名称/卖点/促销/使用场合）
+    // ==========================================================
+
+    private optionalString(key: string): string | null {
+        const v = this.prjdb.get<string>(key);
+        return v && v.trim().length > 0 ? v.trim() : null;
+    }
+
+    getProductCategory(): string | null { return this.optionalString("product_category"); }
+    getProductName(): string | null { return this.optionalString("product_name"); }
+    getSellingPoints(): string[] {
+        const raw = this.prjdb.get<string>("selling_points");
+        if (!raw) return [];
+        return raw.split(/[\n;,，；]/).map(s => s.trim()).filter(Boolean);
+    }
+    getPromoText(): string | null { return this.optionalString("promo_text"); }
+    getUsageScene(): string | null { return this.optionalString("usage_scene"); }
+
+    /** 把用户配置折叠成一段 NL（优先级的体现），供下游 LLM 消费 */
+    getUserProductContext(): string {
+        const lines: string[] = [];
+        const cat = this.getProductCategory();
+        const name = this.getProductName();
+        const sps = this.getSellingPoints();
+        const promo = this.getPromoText();
+        const usage = this.getUsageScene();
+        if (cat) lines.push(`- 类目：${cat}`);
+        if (name) lines.push(`- 产品名称（含品牌）：${name}`);
+        if (sps.length) lines.push(`- 核心卖点（已确认）：${sps.join(" / ")}`);
+        if (usage) lines.push(`- 使用场合（已确认，**最高优先级**）：${usage}`);
+        if (promo) lines.push(`- 促销信息（已确认）：${promo}`);
+        return lines.length > 0
+            ? `## 用户已确认的产品信息（**优先级最高**，必须覆盖原文推断）\n${lines.join("\n")}`
+            : "";
+    }
+
+    /** 配置类 key 列表，供 gate inputKeys 感知 */
+    userConfigKeys(): string[] {
+        return ["product_category", "product_name", "selling_points", "promo_text", "usage_scene"];
+    }
+
+    // ==========================================================
+    // 配置读取（ad style / size 等）
     // ==========================================================
     getAdConfig(): GlobalAdConfig {
         return {
@@ -82,6 +142,7 @@ export class Storage {
             ad_style: (this.read<string>("config:ad_style") ?? "lifestyle") as AdStyle,
             color_scheme: (this.read<string>("config:color_scheme") ?? "warm") as ColorScheme,
             font_style: (this.read<string>("config:font_style") ?? "modern_sans") as FontStyle,
+            product_name: this.getProductName(),
         };
     }
 

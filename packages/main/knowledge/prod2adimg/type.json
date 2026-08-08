@@ -129,6 +129,18 @@
                                 "dialogDescription": "折扣、满减、限时活动等。可为空。",
                                 "placeholder": "例如：限时8折，满300减50",
                                 "emptyHint": "点击添加促销信息"
+                            },
+                            {
+                                "type": "field",
+                                "binding": {
+                                    "key": "usage_scene"
+                                },
+                                "label": "使用场合",
+                                "editor": "dialog",
+                                "dialogTitle": "产品使用场合",
+                                "dialogDescription": "描述几个主要的使用场合，广告图将优先使用这里描述的场合",
+                                "placeholder": "例如：为户外直播提供电源。",
+                                "emptyHint": "点击添加使用场合"
                             }
                         ]
                     },
