@@ -1,175 +1,260 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { appLife } from '$libs/utils/tapable/applife.js';
-import { BrowserWindow, session, shell, type WebContents } from 'electron';
+import { BrowserWindow, session, shell } from 'electron';
 import log from 'electron-log/main.js';
-import { EventEmitter } from 'events';
-import type { AgentWindowOptions } from './types.js';
+import { AgentPage, type PageHost } from './AgentPage.js';
+import type { AgentPageOptions, GotoOptions } from './types.js';
 
-// 存储所有 agent 窗口 ID，用于外部判断
-const agentWindowIds = new Set<number>();
-
-export function isAgentWindow(win: BrowserWindow): boolean {
-    return agentWindowIds.has(win.id);
+interface ManagedWindow extends PageHost {
+    win: BrowserWindow;
+    reuseKey: string | null;
+    refCount: number;
+    inflight: Set<string>;
+    onMessage: (e: unknown, method: string, params: any) => void;
+    torndown: boolean;
 }
 
-export class PuppeteerAgent extends EventEmitter {
-    private win: BrowserWindow | null = null;
-    private wc: WebContents | null = null;
-    private isVisible = false;
+/**
+ * 浏览器工厂（Symbol 保护的进程内单例）。
+ *
+ * 所有共享状态都是实例成员，随单例唯一存在 —— 即使模块被重复求值，
+ * 只要 index.ts 的 Symbol 保证 puppeteerInst 唯一，状态就唯一。
+ *
+ * 窗口回收采用引用计数：一个窗口可被多个 AgentPage 复用（同 reuseKey），
+ * 只有最后一个 page 关闭时才销毁物理窗口。
+ */
+export class PuppeteerAgent {
+    private readonly agentWindowIds = new Set<number>();
+    private readonly reuseWindows = new Map<string, ManagedWindow>();
+    private readonly pages = new Set<AgentPage>();
+    private defaults: AgentPageOptions = {};
+    private registered = false;
 
-    constructor() {
-        super();
+    init(defaults: AgentPageOptions = {}): void {
+        this.defaults = defaults;
+        if (!this.registered) {
+            appLife.beforeQuit.tapPromise('PuppeteerAgent', async () => {
+                await this.closeAll();
+            });
+            this.registered = true;
+        }
+        log.info('[PuppeteerAgent] 就绪（原生 CDP + 引用计数窗口复用）');
     }
 
-    async init(options: AgentWindowOptions = {}): Promise<void> {
-        if (this.win) return;
+    /** 退出模块通过它判断某窗口是否为 agent 工具窗口。状态在本单例内，唯一可靠。 */
+    isAgentWindow(win: BrowserWindow): boolean {
+        return this.agentWindowIds.has(win.id);
+    }
 
-        const width = options.width ?? 1280;
-        const height = options.height ?? 800;
-        const partition = options.partition ?? 'persist:agent';
-        const preloadScript = options.preloadScript ?? '';
+    async newPage(options: AgentPageOptions = {}): Promise<AgentPage> {
+        const opts = { ...this.defaults, ...options };
+        const reuseKey = opts.reuseKey ?? '__default__';
+        const reuseMode = opts.reuse ?? 'auto';
+
+        let managed = reuseMode === 'force' ? undefined : this.getReusable(reuseKey);
+        if (!managed) {
+            managed = await this.createManagedWindow(opts, reuseMode === 'force' ? null : reuseKey);
+        }
+        managed.refCount++;
+
+        const page = new AgentPage(managed);
+        this.pages.add(page);
+        page.once('closed', () => {
+            this.pages.delete(page);
+            this.releaseWindow(managed!);
+        });
+        return page;
+    }
+
+    private getReusable(key: string): ManagedWindow | undefined {
+        const m = this.reuseWindows.get(key);
+        if (!m) return undefined;
+        if (m.win.isDestroyed() || m.torndown) {
+            this.reuseWindows.delete(key);
+            return undefined;
+        }
+        return m;
+    }
+
+    private async createManagedWindow(
+        opts: AgentPageOptions,
+        reuseKey: string | null
+    ): Promise<ManagedWindow> {
+        const partition =
+            opts.partition ??
+            `unpersist:agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
         const ses = session.fromPartition(partition);
-        ses.setPermissionRequestHandler((webContents, permission, callback) => {
-            log.info(`[Agent] 权限请求: ${permission} => 允许`);
-            callback(true);
+        ses.setPermissionRequestHandler((_wc, permission, callback) => {
+            log.info(`[PuppeteerAgent] 权限请求: ${permission} => 拒绝`);
+            callback(false);
         });
 
-        this.win = new BrowserWindow({
-            width,
-            height,
-            show: false,
+        const win = new BrowserWindow({
+            width: opts.width ?? 1280,
+            height: opts.height ?? 800,
+            show: opts.show ?? false,
             webPreferences: {
                 session: ses,
-                preload: preloadScript || undefined,
+                preload: opts.preloadScript || undefined,
                 nodeIntegration: false,
                 contextIsolation: true,
+                images: opts.loadImages ?? false,
+                backgroundThrottling: false,
             },
         });
 
-        // 标记为 agent 窗口（创建后立即标记）
-        agentWindowIds.add(this.win.id);
+        this.agentWindowIds.add(win.id);
+        if (opts.userAgent) win.webContents.setUserAgent(opts.userAgent);
 
-        this.wc = this.win.webContents;
-        this.wc.on('destroyed', () => {
-            agentWindowIds.delete(this.win?.id ?? -1);
-        });
-
-        // 附加调试器，后续通过 sendCommand 操控
-        if (!this.wc.debugger.isAttached()) {
-            this.wc.debugger.attach();
-        }
-
-        // 清除安全限制
-        this.relaxSecurity(this.wc);
-
-        // 初始加载空白页
-        await this.goto('about:blank');
-
-        // 注册退出清理
-        appLife.beforeQuit.tapPromise('PuppeteerAgent', async () => {
-            await this.destroy();
-        });
-
-        log.info('[PuppeteerAgent] 初始化完成（原生 CDP 模式）');
-    }
-
-    private relaxSecurity(wc: WebContents): void {
-        wc.removeAllListeners('will-navigate');
-        wc.setWindowOpenHandler(({ url }) => {
+        // 禁止页面打开新窗口
+        win.webContents.setWindowOpenHandler(({ url }) => {
+            log.info(`[PuppeteerAgent] 拦截 window.open: ${url}`);
             shell.openExternal(url).catch(log.error);
             return { action: 'deny' };
         });
+
+        const dbg = win.webContents.debugger;
+        if (!dbg.isAttached()) {
+            try {
+                dbg.attach('1.3');
+            } catch (err) {
+                this.agentWindowIds.delete(win.id);
+                if (!win.isDestroyed()) win.destroy();
+                log.error('[PuppeteerAgent] CDP attach 失败:', err);
+                throw err;
+            }
+        }
+
+        // 窗口级网络在途跟踪（复用窗口的多个 page 共享，避免重复监听）
+        const inflight = new Set<string>();
+        const onMessage = (_e: unknown, method: string, params: any) => {
+            if (method === 'Network.requestWillBeSent') inflight.add(params.requestId);
+            else if (method === 'Network.loadingFinished' || method === 'Network.loadingFailed')
+                inflight.delete(params.requestId);
+        };
+        dbg.on('message', onMessage);
+        dbg.sendCommand('Network.enable').catch((e) =>
+            log.warn('[PuppeteerAgent] Network.enable 失败:', e)
+        );
+
+        const managed: ManagedWindow = {
+            win,
+            reuseKey,
+            refCount: 0,
+            inflight,
+            onMessage,
+            torndown: false,
+        };
+        if (reuseKey) this.reuseWindows.set(reuseKey, managed);
+
+        // 外部销毁兜底：清理映射，防止陈旧引用被复用
+        win.once('closed', () => this.cleanupMaps(managed));
+
+        return managed;
     }
 
-    show(): void {
-        if (!this.win) throw new Error('Agent 未初始化');
-        this.win.show();
-        this.isVisible = true;
-        this.emit('visibility-changed', true);
+    private releaseWindow(managed: ManagedWindow): void {
+        managed.refCount = Math.max(0, managed.refCount - 1);
+        if (managed.refCount === 0) this.teardown(managed);
     }
 
-    hide(): void {
-        if (!this.win) throw new Error('Agent 未初始化');
-        this.win.hide();
-        this.isVisible = false;
-        this.emit('visibility-changed', false);
+    private teardown(managed: ManagedWindow): void {
+        if (managed.torndown) return;
+        managed.torndown = true;
+        try {
+            const dbg = managed.win.webContents?.debugger;
+            if (dbg?.isAttached()) dbg.detach();
+        } catch {
+            /* detach 在销毁过程中可能抛错，忽略 */
+        }
+        this.cleanupMaps(managed);
+        if (!managed.win.isDestroyed()) managed.win.destroy();
     }
 
-    async goto(
+    private cleanupMaps(managed: ManagedWindow): void {
+        this.agentWindowIds.delete(managed.win.id);
+        if (managed.reuseKey && this.reuseWindows.get(managed.reuseKey) === managed) {
+            this.reuseWindows.delete(managed.reuseKey);
+        }
+        try {
+            managed.win.webContents?.debugger?.off('message', managed.onMessage);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    // ---------------- 便捷方法 ----------------
+
+    async inSequence<T>(
+        urls: string[],
+        processor: (page: AgentPage, url: string, index: number) => Promise<T>,
+        options: AgentPageOptions = {}
+    ): Promise<T[]> {
+        const results: T[] = [];
+        let page: AgentPage | null = null;
+        try {
+            page = await this.newPage({ ...options, reuse: 'reuse' });
+            for (let i = 0; i < urls.length; i++) {
+                await page.goto(urls[i]);
+                results.push(await processor(page, urls[i], i));
+            }
+        } finally {
+            page?.close();
+        }
+        return results;
+    }
+
+    async scrape<T>(
         url: string,
-        options?: { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle0' | 'networkidle2' }
-    ): Promise<void> {
-        if (!this.wc) throw new Error('WebContents 未初始化');
-        // 使用 CDP Page.navigate 替代 puppeteer 的 goto
-        const result = await this.wc.debugger.sendCommand('Page.navigate', { url });
-        if (result.errorText) throw new Error(result.errorText);
-        // 等待指定加载状态
-        await this.waitForLoad(options?.waitUntil ?? 'load');
-    }
-
-    private async waitForLoad(state: string): Promise<void> {
-        if (!this.wc) return;
-        if (state === 'load') {
-            await new Promise<void>((resolve) => {
-                if (!this.wc?.isLoading()) resolve();
-                else this.wc?.once('did-finish-load', resolve);
-            });
-        } else if (state === 'domcontentloaded') {
-            await new Promise<void>((resolve) => {
-                if (!this.wc?.isLoadingMainFrame()) resolve();
-                else this.wc?.once('dom-ready', resolve);
-            });
-        } else if (state === 'networkidle0' || state === 'networkidle2') {
-            // 简化实现：等待至少 500ms 无新请求
-            await new Promise((r) => setTimeout(r, 500));
-            // 严格实现需要监听网络请求，这里省略，可后续扩展
+        extractor: () => T | Promise<T>,
+        options: {
+            page?: AgentPageOptions;
+            goto?: GotoOptions;
+            waitForSelector?: string;
+            waitForNetworkIdle?: boolean;
+        } = {}
+    ): Promise<T> {
+        const page = await this.newPage(options.page);
+        try {
+            await page.goto(url, options.goto);
+            if (options.waitForNetworkIdle) await page.waitForNetworkIdle();
+            if (options.waitForSelector) await page.waitForSelector(options.waitForSelector);
+            return await page.evaluate(extractor);
+        } finally {
+            page.close();
         }
     }
 
-    async evaluate<T>(fn: (...args: any[]) => T, ...args: any[]): Promise<T> {
-        if (!this.wc) throw new Error('WebContents 未初始化');
-        const expression = `(${fn.toString()})(${args.map(a => JSON.stringify(a)).join(',')})`;
-        const result = await this.wc.debugger.sendCommand('Runtime.evaluate', {
-            expression,
-            returnByValue: true,
-            awaitPromise: true,
-        });
-        if (result.exceptionDetails) {
-            throw new Error(result.exceptionDetails.text);
+    async getHtml(
+        url: string,
+        options: {
+            page?: AgentPageOptions;
+            goto?: GotoOptions;
+            waitForSelector?: string;
+            waitForNetworkIdle?: boolean;
+        } = {}
+    ): Promise<string> {
+        const page = await this.newPage(options.page);
+        try {
+            await page.goto(url, options.goto);
+            if (options.waitForNetworkIdle) await page.waitForNetworkIdle();
+            if (options.waitForSelector) await page.waitForSelector(options.waitForSelector);
+            return await page.content();
+        } finally {
+            page.close();
         }
-        return result.result.value as T;
     }
 
-    async screenshot(): Promise<string> {
-        if (!this.wc) throw new Error('WebContents 未初始化');
-        const data = await this.wc.debugger.sendCommand('Page.captureScreenshot', {
-            format: 'png',
-        });
-        return `data:image/png;base64,${data.data}`;
+    async closeAll(): Promise<void> {
+        for (const page of [...this.pages]) page.close();
+        this.pages.clear();
+        // 兜底销毁任何仍存活的托管窗口
+        for (const managed of [...this.reuseWindows.values()]) this.teardown(managed);
+        this.reuseWindows.clear();
     }
 
-    async closePage(): Promise<void> {
-        if (!this.wc) return;
-        await this.goto('about:blank');
-    }
-
-    async destroy(): Promise<void> {
-        if (this.wc?.debugger.isAttached()) {
-            this.wc.debugger.detach();
-        }
-        if (this.win && !this.win.isDestroyed()) {
-            this.win.destroy();
-            this.win = null;
-        }
-        this.wc = null;
-    }
-
-    getPage(): WebContents | null {
-        return this.wc;
-    }
-
-    getWindow(): BrowserWindow | null {
-        return this.win;
+    get openPageCount(): number {
+        return this.pages.size;
     }
 }

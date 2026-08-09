@@ -30,17 +30,26 @@ class OrpcModule implements AppModule {
             // 缓存当前新端口
             this.windowPortsMap.set(win.id, serverPort);
 
-
-            // 当窗口销毁时，直接关闭这个专属的 serverPort
-            win.once('closed', () => {
+            const cleanup = () => {
                 const port = this.windowPortsMap.get(win.id);
                 if (port) {
-                    port.close();
+                    try {
+                        port.close();
+                    } catch (err) {
+                        Logger.warn(`关闭 oRPC 端口时出错 (窗口 ${win.id}):`, err);
+                    }
                     this.windowPortsMap.delete(win.id);
                     Logger.info(`窗口 ${win.id} 已关闭，成功释放 oRPC 通道`);
                 }
-            });
+            };
+            // 当窗口销毁时，直接关闭这个专属的 serverPort
+            win.once('closed', cleanup);
 
+            // 防御：如果窗口已经被销毁
+            if (win.isDestroyed()) {
+                cleanup();
+                return;
+            }
             // handler.upgrade 的行为是针对这个窗口（准确地说是针对传入的该窗口的 serverPort 通道）的，它不是全局覆盖。see https://orpc.dev/docs/adapters/electron
             handler.upgrade(serverPort, {
                 context: {
