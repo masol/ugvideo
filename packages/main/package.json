@@ -35,6 +35,7 @@
     "@opentelemetry/sdk-node": "^0.220.0",
     "@orpc/client": "^1.14.6",
     "@orpc/server": "^1.14.6",
+    "@probeo/anyserp": "^0.5.2",
     "@xyflow/svelte": "^1.6.2",
     "ai": "^7.0.48",
     "apache-arrow": "^18.1.0",
