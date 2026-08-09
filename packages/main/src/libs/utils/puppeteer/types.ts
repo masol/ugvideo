@@ -8,20 +8,7 @@ export interface AgentPageOptions {
     show?: boolean;
     loadImages?: boolean;
     userAgent?: string;
-    /**
-     *复用窗口模式：
-     * - 'auto'（默认）：如果同 reuseKey 已存在窗口则复用
-     * - 'force'：强制新建独立窗口
-     * - 'reuse'：复用现有窗口（同 reuseKey），若不存在则新建
-     *
-     * 复用窗口的 page共享 session/cookie/UA，适合登录态保持 + 串行流程抓取。
-     * 不复用则每个 page 完全独立，适合并发抓取不同站点。
-     */
     reuse?: 'auto' | 'force' | 'reuse';
-    /**
-     * 复用窗口的分组 key。同 key 的 page 共享同一个 BrowserWindow。
-     * 默认 '__default__'。只有 reuse !== 'force' 时生效。
-     */
     reuseKey?: string;
 }
 
@@ -51,6 +38,31 @@ export interface ScreenshotOptions {
     type?: 'png' | 'jpeg';
     quality?: number;
     fullPage?: boolean;
+}
+
+/**
+ * Readability 提取结果（对应 Mozilla Readability 的 parse() 输出）。
+ * 包含清洗后的 HTML、纯文本、以及元数据。
+ */
+export interface ReadabilityResult {
+    /** 文章标题 */
+    title: string;
+    /** 作者署名（如果能提取到） */
+    byline: string;
+    /** 文本方向（ltr/rtl） */
+    dir: string;
+    /** 语言代码 */
+    lang: string;
+    /** 清洗后的正文 HTML（剔除导航栏/广告/页脚等噪音） */
+    content: string;
+    /** 纯文本内容（所有标签已去除） */
+    textContent: string;
+    /** 正文长度（字符数） */
+    length: number;
+    /** 文章摘要（若能提取） */
+    excerpt: string;
+    /** 站点名称 */
+    siteName: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

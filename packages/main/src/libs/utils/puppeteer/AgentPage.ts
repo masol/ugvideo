@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { BrowserWindow, type WebContents } from 'electron';
 import { EventEmitter } from 'events';
+import { throwUnprcessable } from '../err.js';
 import type {
     EvaluateFn,
     GotoOptions,
+    ReadabilityResult,
     ScreenshotOptions,
     ScrollOptions,
     WaitForNetworkIdleOptions,
@@ -28,16 +30,16 @@ export class AgentPage extends EventEmitter {
     private readonly win: BrowserWindow;
     private readonly wc: WebContents;
     private readonly inflight: ReadonlySet<string>;
+    private readonly agent: any; // PuppeteerAgent 实例，用于获取脚本缓存
     private closed = false;
 
-    constructor(host: PageHost) {
+    constructor(host: PageHost, agent: any) {
         super();
         this.win = host.win;
         this.wc = host.win.webContents;
         this.inflight = host.inflight;
+        this.agent = agent;
 
-        // 窗口被外部销毁（崩溃/用户/agent 退出）时，自我标记关闭并广播，
-        // 由 PuppeteerAgent 监听 'closed' 完成引用计数与窗口回收。
         this.wc.once('destroyed', () => this.markClosed());
     }
 
@@ -75,7 +77,6 @@ export class AgentPage extends EventEmitter {
                 _validatedURL: string,
                 isMainFrame: boolean
             ) => {
-                // 只关心主框架失败；忽略子资源失败与 ERR_ABORTED(-3)（重定向/被替换导航属良性）
                 if (!isMainFrame) return;
                 if (errorCode === -3) return;
                 cleanup();
@@ -268,6 +269,71 @@ export class AgentPage extends EventEmitter {
         return this.wc.getURL();
     }
 
+    /**
+     * 使用 Mozilla Readability 提取页面核心内容（自动降噪：剔除导航栏/广告/页脚等）。
+     * 返回 Readability 输出的结构化数据（包含 title、content HTML、textContent 等元数据）。
+     *
+     * 建议调用方按需将 result.content 通过 turndown（主进程 npm 包）转为 Markdown，
+     * 而非在页面内直接转换 —— 这样职责更清晰、定制化更灵活（如过滤规则、GFM 插件等）。
+     *
+     * @returns Readability 提取的结果对象，失败时抛错
+     */
+    async extractContent(): Promise<ReadabilityResult> {
+        this.ensureAlive();
+
+        // 首次使用时从 dataCenter 读取 readability.js IIFE（之后走缓存）
+        const readabilityCode = await this.agent.getScript('readability.js');
+
+        // 注入 Readability 库 + 执行提取逻辑，一次 CDP 往返完成
+        const result = await this.rawEvaluate<ReadabilityResult | null>(
+            `
+            (() => {
+                ${readabilityCode}
+                
+                // Readability IIFE 暴露全局 Readability 构造函数
+                if (typeof Readability === 'undefined') {
+                    throw new Error('Readability 库加载失败（未找到全局 Readability）');
+                }
+                
+                const documentClone = document.cloneNode(true);
+                const reader = new Readability(documentClone, {
+                    // 可选配置：设置基础 URL（修复相对链接）
+                    url: document.location.href
+                });
+                
+                const article = reader.parse();
+                
+                // parse() 失败（如页面太短/无主体内容）时返回 null
+                if (!article) {
+                    return null;
+                }
+                
+                return {
+                    title: article.title || '',
+                    byline: article.byline || '',
+                    dir: article.dir || '',
+                    lang: article.lang || '',
+                    content: article.content || '',
+                    textContent: article.textContent || '',
+                    length: article.length || 0,
+                    excerpt: article.excerpt || '',
+                    siteName: article.siteName || ''
+                };
+            })();
+            `,
+            false
+        );
+
+        if (!result) {
+            throwUnprcessable(
+                'Readability 提取失败（页面内容不足或结构不符合文章特征）。' +
+                '可降级使用 content() 获取完整 HTML。'
+            );
+        }
+
+        return result;
+    }
+
     async screenshot(opts: ScreenshotOptions = {}): Promise<string> {
         const format = opts.type ?? 'png';
         const params: any = { format, captureBeyondViewport: opts.fullPage ?? false };
@@ -320,10 +386,6 @@ export class AgentPage extends EventEmitter {
         this.emit('closed');
     }
 
-    /**
-     * 关闭页面。不直接销毁窗口 —— 只广播 'closed'，
-     * 由 PuppeteerAgent 按引用计数决定是否回收物理窗口（修复共享窗口被提前销毁的 bug）。
-     */
     close(): void {
         this.markClosed();
     }

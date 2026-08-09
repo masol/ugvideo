@@ -1,7 +1,9 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { dataCenter } from '$libs/utils/sys/data.js';
 import { appLife } from '$libs/utils/tapable/applife.js';
 import { BrowserWindow, session, shell } from 'electron';
 import log from 'electron-log/main.js';
+import { throwNotfound } from '../err.js';
 import { AgentPage, type PageHost } from './AgentPage.js';
 import type { AgentPageOptions, GotoOptions } from './types.js';
 
@@ -27,6 +29,7 @@ export class PuppeteerAgent {
     private readonly agentWindowIds = new Set<number>();
     private readonly reuseWindows = new Map<string, ManagedWindow>();
     private readonly pages = new Set<AgentPage>();
+    private readonly scriptCache = new Map<string, string>();
     private defaults: AgentPageOptions = {};
     private registered = false;
 
@@ -46,6 +49,27 @@ export class PuppeteerAgent {
         return this.agentWindowIds.has(win.id);
     }
 
+    /**
+     * 获取 IIFE 格式的第三方库脚本（如 readability.js），首次读取后缓存。
+     * 供 AgentPage 注入页面执行。
+     */
+    async getScript(name: string): Promise<string> {
+        if (this.scriptCache.has(name)) {
+            return this.scriptCache.get(name)!;
+        }
+        try {
+            const code = await dataCenter.readFile('lib', name);
+            if (!code) {
+                throwNotfound(`加载脚本${name}失败。未发现此脚本。`)
+            }
+            this.scriptCache.set(name, code);
+            return code;
+        } catch (err) {
+            log.error(`[PuppeteerAgent] 读取脚本失败: lib/${name}`, err);
+            throw err;
+        }
+    }
+
     async newPage(options: AgentPageOptions = {}): Promise<AgentPage> {
         const opts = { ...this.defaults, ...options };
         const reuseKey = opts.reuseKey ?? '__default__';
@@ -57,7 +81,7 @@ export class PuppeteerAgent {
         }
         managed.refCount++;
 
-        const page = new AgentPage(managed);
+        const page = new AgentPage(managed, this);
         this.pages.add(page);
         page.once('closed', () => {
             this.pages.delete(page);
@@ -107,7 +131,6 @@ export class PuppeteerAgent {
         this.agentWindowIds.add(win.id);
         if (opts.userAgent) win.webContents.setUserAgent(opts.userAgent);
 
-        // 禁止页面打开新窗口
         win.webContents.setWindowOpenHandler(({ url }) => {
             log.info(`[PuppeteerAgent] 拦截 window.open: ${url}`);
             shell.openExternal(url).catch(log.error);
@@ -126,7 +149,6 @@ export class PuppeteerAgent {
             }
         }
 
-        // 窗口级网络在途跟踪（复用窗口的多个 page 共享，避免重复监听）
         const inflight = new Set<string>();
         const onMessage = (_e: unknown, method: string, params: any) => {
             if (method === 'Network.requestWillBeSent') inflight.add(params.requestId);
@@ -148,7 +170,6 @@ export class PuppeteerAgent {
         };
         if (reuseKey) this.reuseWindows.set(reuseKey, managed);
 
-        // 外部销毁兜底：清理映射，防止陈旧引用被复用
         win.once('closed', () => this.cleanupMaps(managed));
 
         return managed;
@@ -166,7 +187,7 @@ export class PuppeteerAgent {
             const dbg = managed.win.webContents?.debugger;
             if (dbg?.isAttached()) dbg.detach();
         } catch {
-            /* detach 在销毁过程中可能抛错，忽略 */
+            /* ignore */
         }
         this.cleanupMaps(managed);
         if (!managed.win.isDestroyed()) managed.win.destroy();
@@ -249,7 +270,6 @@ export class PuppeteerAgent {
     async closeAll(): Promise<void> {
         for (const page of [...this.pages]) page.close();
         this.pages.clear();
-        // 兜底销毁任何仍存活的托管窗口
         for (const managed of [...this.reuseWindows.values()]) this.teardown(managed);
         this.reuseWindows.clear();
     }
