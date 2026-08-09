@@ -25,7 +25,8 @@ export function fillCapa(capa: NewCapability): Capability {
         createdAt: '',
         updatedAt: '',
         ...capa,
-        name: realName
+        name: realName,
+        ...capa
     }
 }
 

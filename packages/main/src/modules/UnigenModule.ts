@@ -1,6 +1,7 @@
 import { intereg } from '$libs/blueprint/index.js';
 import { configService } from '$libs/store/index.js';
 import { initGlobalToolDB } from '$libs/tooldb/bootstrap.js';
+import { puppeteerInst } from '$libs/utils/puppeteer/index.js';
 import { broadcast } from '$libs/utils/rpcevt.js';
 import { themeFile } from '$libs/utils/sys/dir.js';
 import { ipInfo } from '$libs/utils/sys/ip.js';
@@ -32,6 +33,7 @@ class UnigenModule implements AppModule {
         await Promise.all([
             ensureDir(themeFile()),
             telemetryService.initialize(configService().get("telemetry")),
+            puppeteerInst.init(),
             tooldbPromise
         ]);
         configService().oTel = telemetryService;

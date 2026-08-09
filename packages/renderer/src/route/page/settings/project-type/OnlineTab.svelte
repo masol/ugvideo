@@ -1,4 +1,5 @@
 <script lang="ts">
+  import autoAnimate from "@formkit/auto-animate";
   import EmptyState from "./EmptyState.svelte";
 
   // 关键词已由父级透传;后续接入 searchRemoteProjectTypes(query) 即可。
@@ -9,6 +10,7 @@
 </script>
 
 <div
+  use:autoAnimate
   class="flex h-full min-h-0 items-center justify-center overflow-y-auto rounded-2xl
            border border-dashed border-border/60"
 >

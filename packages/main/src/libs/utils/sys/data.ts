@@ -145,5 +145,7 @@ class DataCenter {
     }
 }
 
-// 直接实例化并导出
-export const dataCenter = new DataCenter();
+
+const KEY = Symbol.for('unigen.singleton.dataCenter');
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const dataCenter: DataCenter = ((globalThis as any)[KEY] ??= new DataCenter());

@@ -2,6 +2,7 @@
   import * as AlertDialog from "$lib/components/ui/alert-dialog";
   import { Button } from "$lib/components/ui/button";
   import { PinyinFuseSearch } from "$lib/utils/fuse";
+  import autoAnimate from "@formkit/auto-animate";
   import { IconFolderOpen, IconRefresh } from "@tabler/icons-svelte";
   import { onMount } from "svelte";
   import ProjectTypeGrid from "./ProjectTypeGrid.svelte";
@@ -104,7 +105,7 @@
   </div>
 
   <!-- 可滚动网格 -->
-  <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+  <div use:autoAnimate class="min-h-0 flex-1 overflow-y-auto pr-1">
     <ProjectTypeGrid
       {isLoading}
       items={filtered}

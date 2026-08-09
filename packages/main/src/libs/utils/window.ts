@@ -210,17 +210,21 @@ export class WindowService {
   }
 
   async restoreOrCreateWindow(show = false): Promise<BrowserWindow> {
-    let window = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+    // 过滤掉 agent 窗口，只查找普通用户窗口
+    let userWindow = BrowserWindow.getAllWindows().find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      w => !w.isDestroyed() && !(w as any).__isAgentWindow
+    );
 
-    if (window === undefined) {
-      window = await this.createWindow();
+    if (userWindow === undefined) {
+      userWindow = await this.createWindow();
     }
 
     if (show) {
-      this.showWindow(window);
+      this.showWindow(userWindow);
     }
 
-    return window;
+    return userWindow;
   }
 
   // ── 查询当前窗口状态 ─────────────────────────────────────────

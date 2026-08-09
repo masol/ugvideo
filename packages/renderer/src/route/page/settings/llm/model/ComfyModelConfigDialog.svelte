@@ -179,8 +179,8 @@
     <IconAlertTriangle class="size-4" stroke={1.5} />
     <Alert.Title>Comfy 协议尚未支持</Alert.Title>
     <Alert.Description>
-      当前实现版本仅提供 Comfy
-      虚拟模型的可视化配置预览。保存功能已被禁用，实际持久化将在 Comfy SDK
+      当前版本仅提供 Comfy
+      虚拟模型的可视化配置预览。保存功能已被禁用，将在 Comfy SDK
       集成完成后开放。
     </Alert.Description>
   </Alert.Root>
@@ -250,19 +250,6 @@
         加载后将展示工作流中可被寻址的节点 ID 列表，供下方参数映射使用。
       </p>
     {/if}
-  </div>
-
-  <!-- ╭─────────────────────────────────────────────────────� -->
-  <!-- │ 复用 AbilitySelector（白名单已在子组件内通过 normalize │ -->
-  <!-- │  与 currentAllowed 控制，这里仅做受控透传）           │ -->
-  <!-- ╰─────────────────────────────────────────────────────╯ -->
-  <div class="space-y-3 rounded-2xl border border-border/50 p-6">
-    <h3 class="flex items-center gap-2 text-base font-medium">能力筛选</h3>
-    <AbilitySelector bind:abilities />
-    <p class="text-xs text-muted-foreground">
-      Comfy 仅支持绘图 / 视频生成 / 语音合成 / 语音识别 /
-      音乐音效，其他类别将被自动屏蔽。
-    </p>
   </div>
 
   <!-- ╭─────────────────────────────────────────────────────╮ -->
@@ -339,6 +326,19 @@
       {/if}
     </div>
   </div>
+</div>
+
+<!-- ╭─────────────────────────────────────────────────────� -->
+<!-- │ 复用 AbilitySelector（白名单已在子组件内通过 normalize │ -->
+<!-- │  与 currentAllowed 控制，这里仅做受控透传）           │ -->
+<!-- ╰─────────────────────────────────────────────────────╯ -->
+<div class="space-y-3 rounded-2xl border border-border/50 p-6">
+  <h3 class="flex items-center gap-2 text-base font-medium">能力筛选</h3>
+  <AbilitySelector bind:abilities />
+  <p class="text-xs text-muted-foreground">
+    Comfy 仅支持绘图 / 视频生成 / 语音合成 / 语音识别 /
+    音乐音效，其他类别将被自动屏蔽。
+  </p>
 </div>
 
 <DialogFooter class="mt-4">
