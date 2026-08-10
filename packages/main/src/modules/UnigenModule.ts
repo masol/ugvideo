@@ -4,12 +4,9 @@ import { initGlobalToolDB } from '$libs/tooldb/bootstrap.js';
 import { puppeteerInst } from '$libs/utils/puppeteer/index.js';
 import { broadcast } from '$libs/utils/rpcevt.js';
 import { themeFile } from '$libs/utils/sys/dir.js';
-import { ipInfo } from '$libs/utils/sys/ip.js';
 import { telemetryService } from '$libs/utils/telemetry/telemetry.service.js';
 import { nativeTheme } from 'electron';
-import Logger from 'electron-log/main.js';
 import { ensureDir } from 'fs-extra';
-import { getErrorMessage } from 'radashi';
 import type { AppModule } from '../AppModule.js';
 import { ModuleContext } from '../types/ModuleContext.js';
 
@@ -28,7 +25,8 @@ class UnigenModule implements AppModule {
             })
         })
 
-        ipInfo.init().catch(e => Logger.error(`[IPINFO] 获取国家代码出错：${getErrorMessage(e)}`))
+        // 不再自动判断所处位置，而是暴露选项，让用户选择。根据选项值来决定更新服务器，下载服务器等信息。
+        // ipInfo.init().catch(e => Logger.error(`[IPINFO] 获取国家代码出错：${getErrorMessage(e)}`))
 
         await Promise.all([
             ensureDir(themeFile()),

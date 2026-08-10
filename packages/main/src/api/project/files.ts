@@ -1,5 +1,6 @@
 
 import { configService } from "$libs/store/index.js";
+import { path2URL } from "$libs/utils/sys/appfile.js";
 import { os } from "@orpc/server";
 import { randomUUID } from 'crypto';
 import Logger from 'electron-log/main.js';
@@ -83,7 +84,7 @@ const getURL = os
     .handler(async ({ input, context }) => {
         const ctx = context as RpcContext;
         const fullPath = ctx.project.getPath(input, true);
-        return `appfile://${fullPath}`
+        return path2URL(fullPath)
     });
 
 

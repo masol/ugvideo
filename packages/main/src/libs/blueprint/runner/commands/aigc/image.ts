@@ -1,4 +1,5 @@
 import { getSmartImage } from "$libs/model/index.js";
+import { path2URL } from "$libs/utils/sys/appfile.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { generateImage } from "ai";
 import dayjs from "dayjs";
@@ -36,7 +37,7 @@ export async function imageAIGC(ctx: IRunnerContext): Promise<void> {
     await writeFile(absPath, image.uint8Array);
 
 
-    ctx.notify("show-asset", `appfile://${absPath}`);
+    ctx.notify("show-asset", path2URL(absPath));
     ctx.info(`[aigc image] ${filename} (${image.uint8Array.length} bytes)`);
-    ctx.notify("", `![Render Result](appfile://${absPath})`);
+    ctx.notify("", `![Render Result](${path2URL(absPath)}`);
 }

@@ -1,3 +1,4 @@
+import { PROTOCAL_NAME } from '$libs/utils/sys/appfile.js';
 import { app, net, protocol } from 'electron';
 import Logger from 'electron-log/main';
 import { resolve } from 'path';
@@ -5,7 +6,6 @@ import { pathToFileURL } from 'url';
 import { AppModule } from '../AppModule.js';
 import { ModuleContext } from '../types/ModuleContext.js';
 
-const PROTOCAL_NAME = "appfile"
 /**
  * 注册自定义协议 appfile://
  *

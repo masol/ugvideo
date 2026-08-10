@@ -30,7 +30,7 @@
 
 <header class="flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
   <div class="space-y-2">
-    <h1 class="text-2xl font-semibold tracking-tight lg:text-3xl">搜索增强</h1>
+    <h1 class="text-2xl font-semibold tracking-tight lg:text-3xl">搜索增强(尚未实现)</h1>
     <p class="text-sm text-muted-foreground">管理 SERP 搜索后端</p>
     <div
       class="flex flex-wrap items-center gap-3 pt-1 text-xs text-muted-foreground"

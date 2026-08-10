@@ -11,6 +11,7 @@ import Logger from "electron-log";
 //     return null;
 // }
 
+// 根据所处位置，决定下载服务器的地址。
 async function getCountry(): Promise<string | null> {
     try {
         const url = `http://ip.nc.gy/country`;
