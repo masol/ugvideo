@@ -1,3 +1,5 @@
+import Logger from "electron-log/renderer.js";
+
 function slash(path: string) {
     return path.replace(/\\/g, '/');
 }
@@ -9,6 +11,8 @@ export function path2URL(path: string) {
     const withLeadingSlash = normalized.startsWith('/') ? normalized : `/${normalized}`;
     // 3. 编码特殊字符，但保留 / : @ 等字符
     const encoded = encodeURI(withLeadingSlash); // encodeURI 不会编码 / : @
-    // 4. 拼接协议，三个斜杠
-    return `appfile://${encoded}`; // 因为 encoded 以 / 开头，所以是 appfile:///...
+    // 4. 拼接协议
+    const url = `appfile://localhost${encoded}`;
+    Logger.debug("path2URL url=", url);
+    return url;
 }

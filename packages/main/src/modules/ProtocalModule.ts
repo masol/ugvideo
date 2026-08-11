@@ -1,7 +1,8 @@
-import { PROTOCAL_NAME } from '$libs/utils/sys/appfile.js';
+import { PROTOCOL_NAME } from '$libs/utils/sys/appfile.js';
 import { app, net, protocol } from 'electron';
 import Logger from 'electron-log/main';
-import { resolve } from 'path';
+import { platform } from 'os';
+import path from 'path';
 import { pathToFileURL } from 'url';
 import { AppModule } from '../AppModule.js';
 import { ModuleContext } from '../types/ModuleContext.js';
@@ -22,13 +23,13 @@ import { ModuleContext } from '../types/ModuleContext.js';
 /** 第一步：在 app ready 之前调用 */
 export function registerSchemes(): void {
     if (app.isReady()) {
-        Logger.error(`试图注册协议${PROTOCAL_NAME},但是app已经就绪。`)
+        Logger.error(`试图注册协议${PROTOCOL_NAME},但是app已经就绪。`)
     }
     //   console.log('顶层同步：app.isReady() =', app.isReady()) // false
 
     protocol.registerSchemesAsPrivileged([
         {
-            scheme: PROTOCAL_NAME,
+            scheme: PROTOCOL_NAME,
             privileges: {
                 standard: true,
                 secure: true,
@@ -42,34 +43,38 @@ export function registerSchemes(): void {
 }
 
 function registerFileProtocol(): void {
-    protocol.handle(PROTOCAL_NAME, (request) => {
+    protocol.handle(PROTOCOL_NAME, (request) => {
+        const rawUrl = request.url;
+        Logger.debug("rawUrl=", rawUrl);
 
-        // 1. 拿到最原始的 URL 字符串
-        const rawUrl = request.url
+        // 1. 使用标准 URL 解析，拿到路径名（已自动解码）
+        const parsedUrl = new URL(rawUrl);
+        const pathname = parsedUrl.pathname;   // 如 "/D:/tools/..." 或 "/home/..."
+        Logger.debug("pathname=", pathname);
 
-        // 2. 剥离自定义协议头（保留后面的全部内容）
-        // 例如: "myproto://home/masol/..." -> "home/masol/..."
-        // 或者: "myproto:///home/masol/..." -> "/home/masol/..."
-        const prefixLength = `${PROTOCAL_NAME}://`.length
-        let remainingPath = rawUrl.slice(prefixLength)
+        // 2. 根据平台还原为文件系统绝对路径
+        let realFsPath;
+        if (platform() === 'win32') {
+            // Windows: pathname 形如 "/D:/tools/..."
+            // 去掉前导斜杠，保留 "D:/tools/..."
+            realFsPath = pathname.slice(1);
+        } else {
+            // Linux/macOS: pathname 就是绝对路径 "/home/..."
+            realFsPath = pathname;
+        }
 
-        // 3. URL 解码（处理中文、空格等转义字符）
-        remainingPath = decodeURIComponent(remainingPath)
+        // 3. 规范化路径（处理斜杠、'.' '..' 等）
+        realFsPath = path.normalize(realFsPath);
+        Logger.debug("realFsPath=", realFsPath);
 
-        // 4. 利用 path.resolve() 跨平台转为系统绝对路径
-        // - 如果剩余部分是 "home/masol/..."，resolve("/") 会把它安全变成 Linux 的 "/home/masol/..."
-        // - 如果在 Windows 上是 "C:/data/..."，resolve() 会自动识别盘符并转为 "C:\data\..."
-        const realFsPath = resolve('/', remainingPath)
-
-        // 5. 转为标准 file:// URL
-        const targetFileUrl = pathToFileURL(realFsPath).href
-
-        // console.log("targetFileUrl=", targetFileUrl)
+        // 4. 转为标准 file:// URL 并 fetch
+        const targetFileUrl = pathToFileURL(realFsPath).href;
+        Logger.debug("targetFileUrl=", targetFileUrl);
 
         return net.fetch(targetFileUrl, {
             headers: request.headers,
-        })
-    })
+        });
+    });
 }
 
 class ProtocalModule implements AppModule {
