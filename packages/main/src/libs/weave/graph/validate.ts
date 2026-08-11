@@ -6,15 +6,14 @@ import type { DirectedGraph } from 'graphology';
 import { hasCycle } from 'graphology-dag';
 import type { CompiledProducts } from '../concept/compiled-products.js';
 import type { ConceptTable } from '../concept/concept-table.js';
-import type { ExternalInput, FlowGraph, FlowNode, HumanFlow } from '../types.js';
+import type { FlowGraph, FlowNode, HumanFlow } from '../types.js';
 import { topoOrder } from './graph-ops.js';
 
 export interface ValidationError {
     kind:
     | 'cycle' | 'orphan' | 'orphan-edge' | 'missing-input' | 'missing-output'
     | 'multiple-terminal' | 'no-terminal' | 'invalid-external-edge'
-    | 'missing-concept' | 'unreachable' | 'invalid-jump-target'
-    | 'missing-fallback' | 'invalid-default-value';
+    | 'missing-concept' | 'unreachable' | 'invalid-jump-target';
     nodeId?: string;
     edgeId?: string;
     graphId?: string;
@@ -32,7 +31,6 @@ export function validateHumanFlow(
     const g = flow.g;
     const flowNodes = collectFlowNodes(flow, conceptTable);
     const externalInputs = compiled.getExternalInputs(flow.id);
-    // const externalInputNames = new Set(externalInputs.map(e => e.name));
 
     // 1. 无环
     if (hasCycle(g)) {
@@ -69,24 +67,13 @@ export function validateHumanFlow(
         });
     }
 
-    // 4. 外部输入默认值合法性
-    for (const ext of externalInputs) {
-        if (ext.providedBy === 'config' && !ext.hasDefault) {
-            errors.push({
-                kind: 'invalid-default-value',
-                message: `配置项「${ext.name}」必须提供默认值`,
-                category: 'missing-io',
-            });
-        }
-    }
-
-    // 5. 路径级输入闭合性（核心校验）
+    // 4. 路径级输入闭合性
     const pathClosureErrors = validatePathClosure(
         g, flowNodes, externalInputs, conceptTable,
     );
     errors.push(...pathClosureErrors);
 
-    // 6. 外部边引用合法
+    // 5. 外部边引用合法
     for (const node of flowNodes) {
         for (const edge of node.externalEdges) {
             if (edge.kind === 'internal') {
@@ -125,7 +112,7 @@ export function validateHumanFlow(
         }
     }
 
-    // 7. 约束可达
+    // 6. 约束可达
     for (const node of flowNodes) {
         for (const vid of node.validatorIds) {
             if (!conceptTable.get(vid)) {
@@ -139,7 +126,7 @@ export function validateHumanFlow(
         }
     }
 
-    // 8. outputs 合法性
+    // 7. outputs 合法性
     for (const node of flowNodes) {
         for (const outId of node.outputs) {
             if (!conceptTable.get(outId)) {
@@ -165,12 +152,21 @@ const MAX_PATHS_PER_NODE = 50;
 function validatePathClosure(
     g: DirectedGraph,
     flowNodes: FlowNode[],
-    externalInputs: ExternalInput[],
+    externalInputs: import('../types.js').ExternalInput[],
     conceptTable: ConceptTable,
 ): ValidationError[] {
     const errors: ValidationError[] = [];
     const nodeById = new Map(flowNodes.map(n => [n.id, n]));
-    const externalInputNames = new Set(externalInputs.map(e => e.name));
+
+    // 从 ExternalInput 构造外部输入 artifact 名集合
+    const externalInputNames = new Set<string>();
+    for (const ext of externalInputs) {
+        const artifact = conceptTable.get(ext.artifactId);
+        if (artifact && artifact.kind === 'artifact') {
+            externalInputNames.add(artifact.name);
+        }
+    }
+
     const initial = initialNodesPure(g);
 
     for (const node of flowNodes) {
@@ -222,7 +218,6 @@ function validatePathClosure(
     return errors;
 }
 
-/** 枚举从任一 initial 到 target 的所有简单路径（上限限制） */
 function enumeratePathsTo(
     g: DirectedGraph,
     initials: string[],
@@ -230,16 +225,12 @@ function enumeratePathsTo(
     limit: number,
 ): string[][] {
     const results: string[][] = [];
-    const initSet = new Set(initials);
 
     function dfs(current: string, path: string[]): void {
         if (results.length >= limit) return;
         if (current === target) {
             results.push([...path]);
             return;
-        }
-        if (!initSet.has(path[0]) && path.length > 0) {
-            // 已经离开 initial 区，沿路径继续
         }
         g.forEachOutNeighbor(current, (next) => {
             if (path.includes(next)) return;
@@ -261,7 +252,6 @@ function enumeratePathsTo(
     return results;
 }
 
-/** 收集节点需要的 artifact 名（按 inputs 数组里的概念名） */
 function collectRequiredArtifactNames(
     node: FlowNode,
     conceptTable: ConceptTable,

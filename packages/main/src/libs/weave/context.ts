@@ -1,13 +1,14 @@
 /**
- * weaver · 全局上下文
+ * weaver · 全局上下文（DI 容器）
  */
 
 import { PrjDB } from '$libs/project/controllers/drizzle/index.js';
 import type { IRunnerContext } from '$types/blueprint/context.js';
 import { CompiledProducts } from './concept/compiled-products.js';
 import { ConceptTable } from './concept/concept-table.js';
-import { getGlobalKB, type GlobalKB } from './concept/kb.js';
-import { WeaveStorage } from './storage.js';
+import { createGlobalKB, type GlobalKB } from './concept/kb.js';
+import { WeaveStorage } from './storage/index.js';
+import type { WeaveConfig } from './types.js';
 
 export class WeaveContext {
     readonly storage: WeaveStorage;
@@ -15,32 +16,21 @@ export class WeaveContext {
     readonly conceptTable: ConceptTable;
     readonly compiled: CompiledProducts;
     readonly kb: GlobalKB;
-
-    currentFlowIds: string[] = [];
-    reactRound: number = 0;
-
-    private userInputsCache: string[] | null = null;
-    private globalGoalCache: string | null = null;
+    readonly config: WeaveConfig;
+    readonly inputDocs: string[];
 
     constructor(readonly ctx: IRunnerContext) {
         this.storage = new WeaveStorage(ctx);
         this.prjdb = PrjDB.ensure(ctx.prj);
         this.conceptTable = new ConceptTable();
         this.compiled = new CompiledProducts();
-        this.kb = getGlobalKB(this.storage);
-    }
-
-    get userInputs(): string[] {
-        if (this.userInputsCache) return this.userInputsCache;
-        const body = (this.ctx.cmd.body ?? '').trim();
-        this.userInputsCache = body ? body.split(/^---$/m).map(s => s.trim()).filter(Boolean) : [];
-        return this.userInputsCache;
+        this.kb = createGlobalKB(this.storage.decision);
+        this.config = this.storage.getConfig();
+        this.inputDocs = this.storage.getInputDocs();
     }
 
     get globalGoal(): string {
-        if (this.globalGoalCache !== null) return this.globalGoalCache;
-        this.globalGoalCache = this.userInputs.join('\n\n---\n\n');
-        return this.globalGoalCache;
+        return this.inputDocs.join('\n\n---\n\n');
     }
 
     get conceptCount(): number {
@@ -51,13 +41,8 @@ export class WeaveContext {
         this.ctx.notify(title, body);
     }
 
-    warn(msg: string): void {
-        this.ctx.warn(msg);
-    }
-
-    debug(msg: string): void {
-        this.ctx.debug(msg);
-    }
+    warn(msg: string): void { this.ctx.warn(msg); }
+    debug(msg: string): void { this.ctx.debug(msg); }
 }
 
 export function createWeaveContext(ctx: IRunnerContext): WeaveContext {

@@ -1,10 +1,10 @@
 /**
- * weaver · 阶段 ⑩ emit-formal-doc
+ * weaver · node ② emit-formal-doc
  */
 
-import { topoOrder } from '../../shared/graph/graph-ops.js';
-import type { HumanFlow, HumanNode } from '../../shared/types.js';
-import type { WeaveContext } from '../../shared/weave-context.js';
+import type { WeaveContext } from '../../context.js';
+import { topoOrder } from '../../graph/graph-ops.js';
+import type { HumanFlow, HumanNode } from '../../types.js';
 
 export async function emitFormalDoc(
     ctx: WeaveContext,
@@ -26,7 +26,11 @@ export async function emitFormalDoc(
         if (extInputs.length > 0) {
             sections.push(`\n### 外部输入\n`);
             for (const ext of extInputs) {
-                sections.push(`- ${ext.name}（${ext.providedBy}${ext.hasDefault ? ` 默认=${ext.defaultValue}` : ''}）`);
+                const artifact = ctx.conceptTable.get(ext.artifactId);
+                const artifactName = artifact?.name ?? ext.artifactId.slice(0, 8);
+                const defaultStr = ext.defaultValue ? ` 默认=${ext.defaultValue}` : '';
+                const source = ext.defaultValue ? 'config' : 'prompt-once';
+                sections.push(`- ${artifactName}（${source}${defaultStr}）`);
             }
         }
 
@@ -58,18 +62,10 @@ export async function emitFormalDoc(
                 sections.push(`- 约束：${humanNode.validatorIds.length} 条`);
             }
         }
-
-        const inferences = ctx.compiled.getInferences().filter(i => i.target === flow.id);
-        if (inferences.length > 0) {
-            sections.push(`\n### 编译器补全项\n`);
-            for (const inf of inferences) {
-                sections.push(`- [${inf.kind}] ${inf.note}`);
-            }
-        }
     }
 
     const doc = sections.join('\n');
-    ctx.notify('形式化文档生成完成', `共 ${flows.length} 个工作流，总计 ${ctx.conceptTable.count()} 个概念`);
+    ctx.notify('emit-formal-doc', `共 ${flows.length} 个工作流，总计 ${ctx.conceptTable.count()} 个概念`);
 
     return doc;
 }

@@ -2,7 +2,7 @@
  * weaver · 知识检索门面
  */
 
-import type { WeaveStorage } from '../storage.js';
+import type { DecisionStorage } from '../storage/decision.js';
 
 export interface KBLookupResult<T> {
     item: T;
@@ -15,35 +15,26 @@ export interface GlobalKB {
     searchSkill(query: string, limit: number): Promise<KBLookupResult<{ id: string; signature: string }>[]>;
     registerSkill(id: string, signature: string): void;
     searchConceptDedupe(feature: string): Promise<string | null>;
-    /** 注入概念归一缓存（由 ConceptTable.deduplicate 调用） */
     injectConceptDedupeEntry(feature: string, canonicalId: string): void;
 }
 
-let _globalKB: GlobalKB | null = null;
-
-export function getGlobalKB(storage: WeaveStorage): GlobalKB {
-    if (_globalKB) return _globalKB;
-    _globalKB = createInMemoryKB(storage);
-    return _globalKB;
-}
-
-function createInMemoryKB(storage: WeaveStorage): GlobalKB {
+export function createGlobalKB(decisionStorage: DecisionStorage): GlobalKB {
     const toolCache: { id: string; name: string; description: string }[] = [];
     const skillCache: { id: string; signature: string }[] = [];
     const conceptDedupeCache: Map<string, string> = new Map();
 
     function refreshToolCache(): void {
         toolCache.length = 0;
-        for (const id of storage.listToolIds()) {
-            const t = storage.getTool(id);
+        for (const id of decisionStorage.listToolIds()) {
+            const t = decisionStorage.getTool(id);
             if (t) toolCache.push({ id, name: t.name, description: t.description });
         }
     }
 
     function refreshSkillCache(): void {
         skillCache.length = 0;
-        for (const id of storage.listSkillIds()) {
-            const s = storage.getSkill(id);
+        for (const id of decisionStorage.listSkillIds()) {
+            const s = decisionStorage.getSkill(id);
             if (s) skillCache.push({ id, signature: s.signature });
         }
     }
@@ -61,7 +52,7 @@ function createInMemoryKB(storage: WeaveStorage): GlobalKB {
         return union > 0 ? 1 - inter / union : 1;
     }
 
-    const kb: GlobalKB = {
+    return {
         async searchTool(query, limit) {
             if (toolCache.length === 0) refreshToolCache();
             const scored = toolCache.map(t => ({
@@ -73,7 +64,7 @@ function createInMemoryKB(storage: WeaveStorage): GlobalKB {
         },
 
         registerTool(id, name, description) {
-            storage.saveTool(id, { name, description, keywords: [] });
+            decisionStorage.saveTool(id, { name, description, keywords: [] });
             refreshToolCache();
         },
 
@@ -108,11 +99,4 @@ function createInMemoryKB(storage: WeaveStorage): GlobalKB {
             conceptDedupeCache.set(feature, canonicalId);
         },
     };
-
-    return kb;
-}
-
-export function injectConceptDedupeEntry(feature: string, canonicalId: string): void {
-    if (!_globalKB) return;
-    _globalKB.injectConceptDedupeEntry(feature, canonicalId);
 }
