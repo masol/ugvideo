@@ -45,12 +45,12 @@ export function registerSchemes(): void {
 function registerFileProtocol(): void {
     protocol.handle(PROTOCOL_NAME, (request) => {
         const rawUrl = request.url;
-        Logger.debug("rawUrl=", rawUrl);
+        // Logger.debug("rawUrl=", rawUrl);
 
         // 1. 使用标准 URL 解析，拿到路径名（已自动解码）
         const parsedUrl = new URL(rawUrl);
         const pathname = parsedUrl.pathname;   // 如 "/D:/tools/..." 或 "/home/..."
-        Logger.debug("pathname=", pathname);
+        // Logger.debug("pathname=", pathname);
 
         // 2. 根据平台还原为文件系统绝对路径
         let realFsPath;
@@ -65,11 +65,11 @@ function registerFileProtocol(): void {
 
         // 3. 规范化路径（处理斜杠、'.' '..' 等）
         realFsPath = path.normalize(realFsPath);
-        Logger.debug("realFsPath=", realFsPath);
+        // Logger.debug("realFsPath=", realFsPath);
 
         // 4. 转为标准 file:// URL 并 fetch
         const targetFileUrl = pathToFileURL(realFsPath).href;
-        Logger.debug("targetFileUrl=", targetFileUrl);
+        // Logger.debug("targetFileUrl=", targetFileUrl);
 
         return net.fetch(targetFileUrl, {
             headers: request.headers,

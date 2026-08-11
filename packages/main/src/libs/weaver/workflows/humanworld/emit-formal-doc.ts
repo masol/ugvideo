@@ -26,7 +26,7 @@ export async function emitFormalDoc(
         if (extInputs.length > 0) {
             sections.push(`\n### 外部输入\n`);
             for (const ext of extInputs) {
-                sections.push(`- ${ext.name}（${ext.providedBy}）`);
+                sections.push(`- ${ext.name}（${ext.providedBy}${ext.hasDefault ? ` 默认=${ext.defaultValue}` : ''}）`);
             }
         }
 

@@ -1,22 +1,12 @@
 /**
  * weaver · CompiledProducts
- *
- * 编译产物表：externalInputs / inferences。
- * 不挂在 FlowGraph 上，是编译过程的副产物。
  */
 
 import type { ExternalInput, Inference } from '../types.js';
 
 export class CompiledProducts {
-    /** 按 graphId 分组的外部输入 */
     private _externalInputs: Map<string, ExternalInput[]> = new Map();
-
-    /** 所有补全记录 */
     private _inferences: Inference[] = [];
-
-    // ────────────────────────────────────────────────────────────────
-    // 外部输入
-    // ────────────────────────────────────────────────────────────────
 
     setExternalInputs(graphId: string, inputs: ExternalInput[]): void {
         this._externalInputs.set(graphId, inputs);
@@ -40,10 +30,6 @@ export class CompiledProducts {
         return out;
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // 补全记录
-    // ────────────────────────────────────────────────────────────────
-
     addInference(inference: Inference): void {
         this._inferences.push(inference);
     }
@@ -63,10 +49,6 @@ export class CompiledProducts {
     clearInferences(): void {
         this._inferences = [];
     }
-
-    // ────────────────────────────────────────────────────────────────
-    // 序列化
-    // ────────────────────────────────────────────────────────────────
 
     toJSON(): {
         externalInputs: Record<string, ExternalInput[]>;

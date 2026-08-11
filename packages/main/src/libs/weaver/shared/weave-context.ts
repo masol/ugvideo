@@ -7,7 +7,6 @@ import type { IRunnerContext } from '$types/blueprint/context.js';
 import { CompiledProducts } from './concept/compiled-products.js';
 import { ConceptTable } from './concept/concept-table.js';
 import { getGlobalKB, type GlobalKB } from './concept/kb.js';
-import { DecisionKB, getGlobalDecisionKB } from './decision/decision-kb.js';
 import { WeaveStorage } from './storage.js';
 
 export class WeaveContext {
@@ -16,7 +15,6 @@ export class WeaveContext {
     readonly conceptTable: ConceptTable;
     readonly compiled: CompiledProducts;
     readonly kb: GlobalKB;
-    readonly decisionKB: DecisionKB;
 
     currentFlowIds: string[] = [];
     reactRound: number = 0;
@@ -30,7 +28,6 @@ export class WeaveContext {
         this.conceptTable = new ConceptTable();
         this.compiled = new CompiledProducts();
         this.kb = getGlobalKB(this.storage);
-        this.decisionKB = getGlobalDecisionKB(this.storage);
     }
 
     get userInputs(): string[] {

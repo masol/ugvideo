@@ -1,5 +1,8 @@
 /**
- * weaver · 阶段 ② split-compound-actions
+ * weaver · 阶段 ④ split-actions
+ *
+ * 仅对非标准格式下的多动作步骤做原子化拆解。
+ * 标准格式下步骤已是原子，直接跳过。
  */
 
 import { getSmartModel } from '$libs/model/balancer/get-smart-model.js';
@@ -8,29 +11,28 @@ import { randomUUID } from 'node:crypto';
 import type { HumanFlow, HumanNode } from '../../shared/types.js';
 import type { WeaveContext } from '../../shared/weave-context.js';
 
-const SPLIT_INSTRUCTIONS = `你是动作拆解专家。给定一个工作流步骤（可能包含多个动作），拆解到最小动作原子。
+const SPLIT_INSTRUCTIONS = `你是动作拆解专家。给定一个步骤（含多个动作），拆解为原子动作。
 
-## 你的产物（必须是 markdown 分节）
+## 你的产物（markdown）
 
-**动作 1：{原子动作描述}**
-- 输入：{这个动作需要什么}
-- 输出：{这个动作产生什么}
-
-**动作 2：{原子动作描述}**
+**动作 1：{原子动作}**
 - 输入：...
 - 输出：...
 
-【关键规则】
-- 每个原子动作必须是"一节点 = 一动作"——不能包含"和"、"然后"、"接着"等复合连接词
-- 原子动作必须可以独立执行
-- 拆解后所有原子动作的文本拼接应大致等于原步骤文本
+【规则】
+- 每个原子动作必须是"一节点 = 一动作"——不能包含"和""然后""接着"
+- 原子动作可独立执行
+- 拆解后所有原子的文本拼接应大致等于原步骤
 
-只输出原子动作列表，不要输出其他内容。`;
+只输出原子动作列表。`;
 
 export async function splitCompoundActions(
     ctx: WeaveContext,
     flows: HumanFlow[],
+    isStandard: boolean,
 ): Promise<void> {
+    if (isStandard) return; // 标准格式下步骤已是原子
+
     const model = getSmartModel(undefined, ctx.ctx);
 
     for (const flow of flows) {
@@ -47,72 +49,15 @@ export async function splitCompoundActions(
             const atoms = parseAtomsFromMarkdown(text);
             if (atoms.length <= 1) continue;
 
-            const newNodeIds: string[] = [];
-            const firstArtifactId = node.inputs[0];
-            const lastArtifactId = node.outputs[0];
-
-            let prevId: string | null = null;
-            let prevArtifactId: string | null = null;
-
-            for (let i = 0; i < atoms.length; i++) {
-                const atom = atoms[i];
-                const newNodeId = randomUUID();
-                newNodeIds.push(newNodeId);
-
-                const thisOutputId = i === atoms.length - 1
-                    ? lastArtifactId
-                    : randomUUID();
-
-                const newNode: HumanNode = {
-                    kind: 'human',
-                    id: newNodeId,
-                    name: atom.name,
-                    aliases: [],
-                    intent: atom.action,
-                    inferred: false,
-                    validatorIds: [],
-                    actionAtom: atom.action,
-                    inputs: i === 0 ? [firstArtifactId] : [prevArtifactId!],
-                    outputs: [thisOutputId],
-                    aligned: null,
-                    externalEdges: [],
-                };
-
-                ctx.conceptTable.register(newNode);
-                flow.g.addNode(newNodeId, { nodeId: newNodeId });
-
-                if (prevId) {
-                    flow.g.addEdge(prevId, newNodeId, {});
-                }
-                prevId = newNodeId;
-                prevArtifactId = thisOutputId;
-            }
-
-            const inNeighbors = flow.g.inNeighbors(node.id);
-            const outNeighbors = flow.g.outNeighbors(node.id);
-            flow.g.dropNode(node.id);
-            ctx.conceptTable.unregister(node.id);
-
-            for (const inN of inNeighbors) {
-                flow.g.addEdge(inN, newNodeIds[0], {});
-            }
-            for (const outN of outNeighbors) {
-                flow.g.addEdge(newNodeIds[newNodeIds.length - 1], outN, {});
-            }
-
-            ctx.compiled.addInference({
-                kind: 'added-node',
-                target: flow.id,
-                note: `节点「${node.name}」拆解为 ${atoms.length} 个原子动作`,
-                nearestOriginRef: node.originRef ?? { sourceText: node.intent, paragraphRange: [0, 0] },
-            });
+            applySplit(ctx, flow, node, atoms);
         }
     }
+
+    ctx.storage.saveAtomActions('split completed');
 }
 
 interface AtomAction {
     name: string;
-    action: string;
     input: string;
     output: string;
 }
@@ -124,10 +69,76 @@ function parseAtomsFromMarkdown(markdown: string): AtomAction[] {
     while ((m = regex.exec(markdown)) !== null) {
         atoms.push({
             name: m[2].trim(),
-            action: m[2].trim(),
             input: m[3].trim(),
             output: m[4].trim(),
         });
     }
     return atoms;
+}
+
+function applySplit(
+    ctx: WeaveContext,
+    flow: HumanFlow,
+    node: HumanNode,
+    atoms: AtomAction[],
+): void {
+    const firstArtifactId = node.inputs[0];
+    const lastArtifactId = node.outputs[0];
+    const newNodeIds: string[] = [];
+
+    let prevId: string | null = null;
+    let prevArtifactId: string | null = null;
+
+    for (let i = 0; i < atoms.length; i++) {
+        const atom = atoms[i];
+        const newNodeId = randomUUID();
+        newNodeIds.push(newNodeId);
+
+        const thisOutputId = i === atoms.length - 1
+            ? lastArtifactId
+            : randomUUID();
+
+        const newNode: HumanNode = {
+            kind: 'human',
+            id: newNodeId,
+            name: atom.name,
+            aliases: [],
+            intent: atom.input + ' → ' + atom.output,
+            inferred: false,
+            validatorIds: [],
+            actionAtom: atom.name,
+            inputs: i === 0 ? [firstArtifactId] : [prevArtifactId!],
+            outputs: [thisOutputId],
+            aligned: null,
+            externalEdges: [],
+        };
+
+        ctx.conceptTable.register(newNode);
+        flow.g.addNode(newNodeId, { nodeId: newNodeId });
+
+        if (prevId) {
+            flow.g.addEdge(prevId, newNodeId, {});
+        }
+        prevId = newNodeId;
+        prevArtifactId = thisOutputId;
+    }
+
+    const inNeighbors = flow.g.inNeighbors(node.id);
+    const outNeighbors = flow.g.outNeighbors(node.id);
+    flow.g.dropNode(node.id);
+    ctx.conceptTable.unregister(node.id);
+
+    for (const inN of inNeighbors) {
+        flow.g.addEdge(inN, newNodeIds[0], {});
+    }
+    for (const outN of outNeighbors) {
+        flow.g.addEdge(newNodeIds[newNodeIds.length - 1], outN, {});
+    }
+
+    ctx.compiled.addInference({
+        kind: 'added-node',
+        target: flow.id,
+        note: `节点「${node.name}」拆解为 ${atoms.length} 个原子动作`,
+        nearestOriginRef: node.originRef ?? { sourceText: node.intent, paragraphRange: [0, 0] },
+    });
 }

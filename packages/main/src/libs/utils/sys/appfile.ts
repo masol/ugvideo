@@ -1,4 +1,3 @@
-import Logger from "electron-log/main.js";
 import { pathToFileURL } from "url";
 
 
@@ -16,6 +15,5 @@ export function path2URL(filePath: string): string {
 
     // 3. 拼接自定义协议，带上 localhost 主机名
     const ret = `${PROTOCOL_NAME}://localhost${pathname}`;
-    Logger.debug("path2URL=", ret);
     return ret;
 }

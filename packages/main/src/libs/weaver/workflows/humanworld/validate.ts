@@ -1,8 +1,5 @@
 /**
  * weaver · 阶段 ⑦ validate-humanflow
- *
- * 纯代码校验：基于 FlowGraph.g + ConceptTable + CompiledProducts。
- * 复用 shared/graph/validate.ts 的 validateHumanFlow。
  */
 
 import { errorsToString, validateHumanFlow } from '$libs/weaver/shared/graph/validate.js';

@@ -1,4 +1,3 @@
-import Logger from "electron-log/renderer.js";
 
 function slash(path: string) {
     return path.replace(/\\/g, '/');
@@ -13,6 +12,5 @@ export function path2URL(path: string) {
     const encoded = encodeURI(withLeadingSlash); // encodeURI 不会编码 / : @
     // 4. 拼接协议
     const url = `appfile://localhost${encoded}`;
-    Logger.debug("path2URL url=", url);
     return url;
 }

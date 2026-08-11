@@ -1,19 +1,23 @@
 /**
  * weaver · WeaveStorage
  *
- * 统一封装所有 KV 操作。节点侧永不出现裸 key，永不感知层级。
- * 所有 key 前缀：#weave:
+ * 统一封装所有 KV 操作。所有 key 前缀：#weave:
  *
- * 【约定】key 形态：
- *   #weave:state:gflow              // 当前编译的 HumanFlow 快照（整体 JSON）
- *   #weave:state:external_inputs    // 外部输入表（按 graphId 分组）
- *   #weave:state:inferences         // 补全记录数组
- *   #weave:state:concept_snapshot   // 概念表快照（用于断点恢复）
- *   #weave:idx:human_flows          // HumanFlow id 列表
- *   #weave:kb:decision:<id>         // 决策 KB 条目
- *   #weave:kb:tool:<toolId>         // 工具 KB 条目
- *   #weave:kb:skill:<skillId>       // skill KB 条目
- *   #weave:vocab:<formal>           // 词汇表条目
+ * 约定 key 形态：
+ *   #weave:state:gflow:<flowId>           // HumanFlow 快照
+ *   #weave:state:standard_doc             // 解析后的 StandardFlowDoc
+ *   #weave:state:external_inputs          // 外部输入表
+ *   #weave:state:inferences               // 补全记录
+ *   #weave:state:concept_snapshot         // 概念表快照
+ *   #weave:state:macro_info               // LLM 收集的宏观信息
+ *   #weave:state:step_outputs             // LLM 识别的步骤输出
+ *   #weave:state:atom_actions             // 拆解后的原子动作
+ *   #weave:state:vocab_alignment          // 词汇对齐表
+ *   #weave:idx:human_flows                // HumanFlow id 列表
+ *   #weave:kb:decision:<id>               // 决策 KB
+ *   #weave:kb:tool:<toolId>               // 工具 KB
+ *   #weave:kb:skill:<skillId>             // skill KB
+ *   #weave:vocab:<formal>                 // 词汇表
  */
 
 import { PrjDB } from '$libs/project/controllers/drizzle/index.js';
@@ -25,26 +29,18 @@ import type {
     HumanFlow,
     Inference,
     Skill,
+    StandardFlowDoc,
 } from './types.js';
 
 const NS = '#weave:';
-
-// ════════════════════════════════════════════════════════════════════
-// 序列化基础工具
-// ════════════════════════════════════════════════════════════════════
 
 function k(suffix: string): string {
     return `${NS}${suffix}`;
 }
 
-/** 深度克隆（去除不可序列化字段） */
 function clone<T>(v: T): T {
     return JSON.parse(JSON.stringify(v)) as T;
 }
-
-// ════════════════════════════════════════════════════════════════════
-// WeaveStorage —— 主类
-// ════════════════════════════════════════════════════════════════════
 
 export class WeaveStorage {
     private prjdb: PrjDB;
@@ -62,21 +58,17 @@ export class WeaveStorage {
     }
 
     // ────────────────────────────────────────────────────────────────
-    // HumanFlow 快照
+    // HumanFlow
     // ────────────────────────────────────────────────────────────────
 
     saveHumanFlow(flow: HumanFlow): void {
-        const snapshot = {
-            ...flow,
-            g: undefined,
-        };
+        const snapshot = { ...flow, g: undefined };
         this.write(`state:gflow:${flow.id}`, snapshot);
         this.addToIndex('idx:human_flows', flow.id);
     }
 
     getHumanFlow(id: string): HumanFlow | null {
-        const snap = this.read<HumanFlow>(`state:gflow:${id}`);
-        return snap ?? null;
+        return this.read<HumanFlow>(`state:gflow:${id}`);
     }
 
     listHumanFlowIds(): string[] {
@@ -94,6 +86,18 @@ export class WeaveStorage {
         if (!list.includes(id)) {
             this.write(idxKey, [...list, id]);
         }
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // 标准格式文档
+    // ────────────────────────────────────────────────────────────────
+
+    saveStandardDoc(doc: StandardFlowDoc): void {
+        this.write('state:standard_doc', doc);
+    }
+
+    getStandardDoc(): StandardFlowDoc | null {
+        return this.read<StandardFlowDoc>('state:standard_doc');
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -136,11 +140,48 @@ export class WeaveStorage {
     }
 
     // ────────────────────────────────────────────────────────────────
+    // 阶段产物
+    // ────────────────────────────────────────────────────────────────
+
+    saveMacroInfo(info: string): void {
+        this.write('state:macro_info', info);
+    }
+
+    getMacroInfo(): string | null {
+        return this.read<string>('state:macro_info');
+    }
+
+    saveStepOutputs(text: string): void {
+        this.write('state:step_outputs', text);
+    }
+
+    getStepOutputs(): string | null {
+        return this.read<string>('state:step_outputs');
+    }
+
+    saveAtomActions(text: string): void {
+        this.write('state:atom_actions', text);
+    }
+
+    getAtomActions(): string | null {
+        return this.read<string>('state:atom_actions');
+    }
+
+    saveVocabAlignment(text: string): void {
+        this.write('state:vocab_alignment', text);
+    }
+
+    getVocabAlignment(): string | null {
+        return this.read<string>('state:vocab_alignment');
+    }
+
+    // ────────────────────────────────────────────────────────────────
     // 决策 KB
     // ────────────────────────────────────────────────────────────────
 
     saveDecisionEntry(entry: DecisionEntry): void {
         this.write(`kb:decision:${entry.id}`, entry);
+        this.addToIndex('idx:decision_entries', entry.id);
     }
 
     getDecisionEntry(id: string): DecisionEntry | null {
@@ -153,10 +194,7 @@ export class WeaveStorage {
     }
 
     indexDecisionEntry(id: string): void {
-        const list = this.read<string[]>('idx:decision_entries') ?? [];
-        if (!list.includes(id)) {
-            this.write('idx:decision_entries', [...list, id]);
-        }
+        this.addToIndex('idx:decision_entries', id);
     }
 
     supersedeDecisionEntry(oldId: string, newId: string): void {
@@ -169,15 +207,12 @@ export class WeaveStorage {
     }
 
     // ────────────────────────────────────────────────────────────────
-    // 工具 KB
+    // 工具 / Skill KB
     // ────────────────────────────────────────────────────────────────
 
     saveTool(toolId: string, tool: { name: string; description: string; keywords: string[] }): void {
         this.write(`kb:tool:${toolId}`, tool);
-        const list = this.read<string[]>('idx:tools') ?? [];
-        if (!list.includes(toolId)) {
-            this.write('idx:tools', [...list, toolId]);
-        }
+        this.addToIndex('idx:tools', toolId);
     }
 
     getTool(toolId: string): { name: string; description: string; keywords: string[] } | null {
@@ -188,16 +223,9 @@ export class WeaveStorage {
         return this.read<string[]>('idx:tools') ?? [];
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // Skill KB
-    // ────────────────────────────────────────────────────────────────
-
     saveSkill(skill: Skill): void {
         this.write(`kb:skill:${skill.id}`, skill);
-        const list = this.read<string[]>('idx:skills') ?? [];
-        if (!list.includes(skill.id)) {
-            this.write('idx:skills', [...list, skill.id]);
-        }
+        this.addToIndex('idx:skills', skill.id);
     }
 
     getSkill(id: string): Skill | null {
@@ -225,10 +253,7 @@ export class WeaveStorage {
     }
 
     indexVocab(formalName: string): void {
-        const list = this.read<string[]>('idx:vocab') ?? [];
-        if (!list.includes(formalName)) {
-            this.write('idx:vocab', [...list, formalName]);
-        }
+        this.addToIndex('idx:vocab', formalName);
     }
 
     // ────────────────────────────────────────────────────────────────

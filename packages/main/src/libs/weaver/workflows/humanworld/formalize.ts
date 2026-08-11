@@ -1,86 +1,254 @@
 /**
- * weaver · 阶段 ⑤ formalize-humanflow
+ * weaver · 阶段 ⑥ formalize（纯代码优先）
+ *
+ * 基于已对齐的 IO + 步骤顺序，纯代码构造 DAG。
+ * 仅在无法静态判定跳转条件时回退 LLM（本版本未启用 LLM 兜底，留接口）。
  */
 
-import { getSmartModel } from '$libs/model/balancer/get-smart-model.js';
-import { generateText } from 'ai';
+import { randomUUID } from 'node:crypto';
 import { addEdge, addNode, createGraph } from '../../shared/graph/gdag.js';
-import type { HumanFlow, HumanNode } from '../../shared/types.js';
+import type {
+    Artifact,
+    HumanFlow,
+    HumanNode,
+    StandardFlow,
+    StandardStep
+} from '../../shared/types.js';
 import type { WeaveContext } from '../../shared/weave-context.js';
 
-const FORMALIZE_INSTRUCTIONS = `你是工作流形式化专家。给定节点列表（含输入/输出 artifact），构建顺序流和条件分支。
-
-## 你的产物（markdown）
-
-**节点顺序流**：
-- 步骤 1 → 步骤 2
-- 步骤 2 → 步骤 3
-
-**条件分支**：
-- 步骤 2 如果 {condition} → 步骤 3
-- 步骤 2 否则 → 步骤 5
-
-**子流程引用**：
-- 步骤 4 → 子流程：{subProcessName}（返回：是/否）
-
-只输出形式化结果。`;
-
-export async function formalizeHumanFlow(
+export function formalizeHumanFlow(
     ctx: WeaveContext,
-    flows: HumanFlow[],
-    feedback?: string,
-): Promise<{ ok: boolean }> {
-    const model = getSmartModel(undefined, ctx.ctx);
+    standards: StandardFlow[],
+): { ok: boolean; flows: HumanFlow[] } {
+    const flows: HumanFlow[] = [];
 
-    for (const flow of flows) {
-        const nodes = ctx.conceptTable.listFlowNodes()
-            .filter(n => flow.g.hasNode(n.id)) as HumanNode[];
+    for (const std of standards) {
+        if (std.steps.length === 0) continue;
+        const flow = buildFlowFromStandard(ctx, std);
+        flows.push(flow);
+    }
 
-        flow.g = createGraph();
-        for (const node of nodes) {
-            addNode(flow.g, node.id);
-        }
+    return { ok: true, flows };
+}
 
-        const nodeListText = nodes.map(n =>
-            `- ${n.name} (${n.id.slice(0, 8)}): ${n.intent}`
-        ).join('\n');
+function buildFlowFromStandard(ctx: WeaveContext, std: StandardFlow): HumanFlow {
+    const flowId = randomUUID();
+    const g = createGraph();
+    const stepIdByOrder = new Map<number, string>();
+    const artifactIdByName = new Map<string, string>();
 
-        const { text } = await generateText({
-            model,
-            instructions: FORMALIZE_INSTRUCTIONS,
-            prompt: feedback
-                ? `## 上一轮失败：\n${feedback}\n\n## 节点列表：\n${nodeListText}`
-                : `## 节点列表：\n${nodeListText}`,
-        });
+    // 1. 注册全局输入产生的 artifacts
+    for (const gi of std.globalInputs) {
+        const id = registerArtifact(ctx, gi.key, `global input: ${gi.key}`, gi.hasDefault);
+        artifactIdByName.set(gi.key, id);
+    }
 
-        const seqRegex = /步骤\s+(\d+)\s*→\s*步骤\s+(\d+)/g;
-        let m: RegExpExecArray | null;
-        while ((m = seqRegex.exec(text)) !== null) {
-            const fromOrder = parseInt(m[1], 10);
-            const toOrder = parseInt(m[2], 10);
-            const fromNode = nodes[fromOrder - 1];
-            const toNode = nodes[toOrder - 1];
-            if (fromNode && toNode) {
-                addEdge(flow.g, fromNode.id, toNode.id, {});
+    // 2. 创建节点
+    for (const step of std.steps) {
+        const nodeId = randomUUID();
+        stepIdByOrder.set(step.order, nodeId);
+        addNode(g, nodeId);
+
+        // 注册 inputs artifacts（若未注册）
+        for (const inputName of step.inputs) {
+            if (!artifactIdByName.has(inputName)) {
+                const id = registerArtifact(ctx, inputName, `input of ${step.name}`, false);
+                artifactIdByName.set(inputName, id);
             }
         }
 
-        const condRegex = /步骤\s+(\d+)\s*如果\s*\{?([^}→\n]+)\}?\s*→\s*步骤\s+(\d+)/g;
-        while ((m = condRegex.exec(text)) !== null) {
-            const fromOrder = parseInt(m[1], 10);
-            const conditionDesc = m[2].trim();
-            const toOrder = parseInt(m[3], 10);
-            const fromNode = nodes[fromOrder - 1];
-            const toNode = nodes[toOrder - 1];
-            if (fromNode && toNode) {
-                fromNode.externalEdges.push({
-                    kind: 'internal',
-                    condition: conditionDesc,
-                    target: toNode.id,
-                });
+        // 注册 outputs artifacts
+        for (const outputName of step.outputs) {
+            if (!artifactIdByName.has(outputName)) {
+                const id = registerArtifact(ctx, outputName, `output of ${step.name}`, false);
+                artifactIdByName.set(outputName, id);
             }
         }
     }
 
-    return { ok: true };
+    // 3. 添加顺序边 + 解析跳转
+    const sequenceEdgeKeys = new Set<string>();
+
+    for (let i = 0; i < std.steps.length; i++) {
+        const step = std.steps[i];
+        const fromId = stepIdByOrder.get(step.order)!;
+
+        if (step.jumps.length === 0) {
+            // 纯顺序流
+            if (i < std.steps.length - 1) {
+                const nextId = stepIdByOrder.get(step.order + 1)!;
+                addEdge(g, fromId, nextId);
+                sequenceEdgeKeys.add(edgeKey(fromId, nextId));
+            }
+            continue;
+        }
+
+        // 有跳转：不再添加默认顺序边，改由跳转段决定
+        applyJumps(ctx, g, step, fromId, stepIdByOrder, sequenceEdgeKeys);
+    }
+
+    // 4. 注册 HumanNode
+    for (const step of std.steps) {
+        const nodeId = stepIdByOrder.get(step.order)!;
+        const node = createHumanNode(step, nodeId, artifactIdByName);
+        ctx.conceptTable.register(node);
+    }
+
+    // 5. 收集 ExternalInput（仅无默认值的视为 external input）
+    const externalInputs = std.globalInputs
+        .filter(gi => !gi.hasDefault)
+        .map(gi => ({
+            name: gi.key,
+            alias: gi.key,
+            providedBy: 'prompt-once' as const,
+            hasDefault: false,
+            consumedBy: collectConsumers(std.steps, gi.key),
+            graphId: flowId,
+        }));
+    ctx.compiled.setExternalInputs(flowId, externalInputs);
+
+    // 6. 配置项也注册（让 KB 可见）
+    for (const gi of std.globalInputs) {
+        if (gi.hasDefault) {
+            ctx.compiled.addExternalInput(flowId, {
+                name: gi.key,
+                alias: gi.key,
+                providedBy: 'config',
+                hasDefault: true,
+                defaultValue: gi.defaultValue,
+                consumedBy: collectConsumers(std.steps, gi.key),
+                graphId: flowId,
+            });
+        }
+    }
+
+    const flow: HumanFlow = {
+        kind: 'dag',
+        isHumanWorld: true,
+        id: flowId,
+        name: std.name,
+        aliases: [],
+        intent: std.goal,
+        inferred: false,
+        validatorIds: [],
+        actionAtom: `执行 ${std.name}`,
+        inputs: [],
+        outputs: [],
+        g,
+        formalDoc: '',
+    };
+
+    return flow;
+}
+
+function applyJumps(
+    ctx: WeaveContext,
+    g: ReturnType<typeof createGraph>,
+    step: StandardStep,
+    fromId: string,
+    stepIdByOrder: Map<number, string>,
+    sequenceEdgeKeys: Set<string>,
+): void {
+    const node = ctx.conceptTable.get(fromId) as HumanNode | null;
+
+    for (const jump of step.jumps) {
+        if (jump.kind === 'subprocess') {
+            // 子流程边：在 outer react 阶段解析 targetGraphId
+            const targetStepId = stepIdByOrder.get(jump.targetStepOrder);
+            if (targetStepId && node) {
+                node.externalEdges.push({
+                    kind: 'external',
+                    condition: jump.condition,
+                    targetGraphId: jump.targetSubFlowName, // 占位
+                    targetNodeId: targetStepId,
+                    returnAfter: jump.returnAfter,
+                });
+            }
+            continue;
+        }
+
+        if (jump.kind === 'fallback' && jump.targetStepOrder === null) {
+            // 否则 → 结束：不添加出边，让节点成为 terminal
+            continue;
+        }
+
+        const targetOrder = jump.kind === 'fallback'
+            ? jump.targetStepOrder!
+            : jump.targetStepOrder;
+        const targetId = stepIdByOrder.get(targetOrder);
+        if (!targetId) continue;
+
+        if (node) {
+            node.externalEdges.push({
+                kind: 'internal',
+                condition: jump.kind === 'conditional' ? jump.condition : null,
+                target: targetId,
+            });
+        }
+        addEdge(g, fromId, targetId);
+        sequenceEdgeKeys.add(edgeKey(fromId, targetId));
+    }
+}
+
+function createHumanNode(
+    step: StandardStep,
+    nodeId: string,
+    artifactIdByName: Map<string, string>,
+): HumanNode {
+    const inputIds = step.inputs
+        .map(name => artifactIdByName.get(name))
+        .filter((id): id is string => id !== undefined);
+    const outputIds = step.outputs
+        .map(name => artifactIdByName.get(name))
+        .filter((id): id is string => id !== undefined);
+
+    return {
+        kind: 'human',
+        id: nodeId,
+        name: step.name,
+        aliases: [],
+        intent: step.intent,
+        inferred: false,
+        validatorIds: [],
+        actionAtom: step.action,
+        inputs: inputIds,
+        outputs: outputIds,
+        aligned: null,
+        externalEdges: [],
+    };
+}
+
+function registerArtifact(
+    ctx: WeaveContext,
+    name: string,
+    intent: string,
+    inferred: boolean,
+): string {
+    const existing = ctx.conceptTable.getByName(name);
+    if (existing) return existing.id;
+
+    const id = randomUUID();
+    ctx.conceptTable.register({
+        kind: 'artifact',
+        id,
+        name,
+        aliases: [],
+        intent,
+        inferred,
+        validatorIds: [],
+        shape: 'scalar',
+        semanticFields: [],
+        dataSchema: null,
+    } as Artifact);
+    return id;
+}
+
+function collectConsumers(steps: StandardStep[], artifactName: string): string[] {
+    return steps
+        .filter(s => s.inputs.includes(artifactName))
+        .map(s => s.name);
+}
+
+function edgeKey(from: string, to: string): string {
+    return `${from}->${to}`;
 }

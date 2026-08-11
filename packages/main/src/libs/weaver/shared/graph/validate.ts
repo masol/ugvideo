@@ -1,38 +1,28 @@
 /**
- * weaver · DAG 验证
- *
- * 纯代码校验：基于 FlowGraph.g + ConceptTable。
- * 校验清单：
- *   1. 无环
- *   2. 依赖闭合（每节点 inputs 都能在前置 outputs ∪ externalInputs 找到）
- *   3. 终端唯一
- *   4. 外部边引用合法
- *   5. 约束可达（subject / target 概念存在）
- *   6. 全节点可达
+ * weaver · DAG 验证（含路径级输入闭合性）
  */
 
 import type { DirectedGraph } from 'graphology';
 import { hasCycle } from 'graphology-dag';
 import type { CompiledProducts } from '../concept/compiled-products.js';
 import type { ConceptTable } from '../concept/concept-table.js';
-import type { FlowGraph, FlowNode, HumanFlow } from '../types.js';
+import type { ExternalInput, FlowGraph, FlowNode, HumanFlow } from '../types.js';
 import { topoOrder } from './graph-ops.js';
 
 export interface ValidationError {
-    kind: 'cycle' | 'orphan' | 'orphan-edge' | 'missing-input' | 'missing-output'
+    kind:
+    | 'cycle' | 'orphan' | 'orphan-edge' | 'missing-input' | 'missing-output'
     | 'multiple-terminal' | 'no-terminal' | 'invalid-external-edge'
-    | 'missing-concept' | 'unreachable';
+    | 'missing-concept' | 'unreachable' | 'invalid-jump-target'
+    | 'missing-fallback' | 'invalid-default-value';
     nodeId?: string;
     edgeId?: string;
     graphId?: string;
     message: string;
-    /** 错误分类——决定回溯方向 */
     category: 'missing-concept' | 'missing-node' | 'missing-io' | 'structural';
+    pathContext?: string[];
 }
 
-/**
- * 主验证入口
- */
 export function validateHumanFlow(
     flow: HumanFlow,
     conceptTable: ConceptTable,
@@ -41,6 +31,8 @@ export function validateHumanFlow(
     const errors: ValidationError[] = [];
     const g = flow.g;
     const flowNodes = collectFlowNodes(flow, conceptTable);
+    const externalInputs = compiled.getExternalInputs(flow.id);
+    // const externalInputNames = new Set(externalInputs.map(e => e.name));
 
     // 1. 无环
     if (hasCycle(g)) {
@@ -77,36 +69,24 @@ export function validateHumanFlow(
         });
     }
 
-    // 4. 依赖闭合
-    const externalInputs = compiled.getExternalInputs(flow.id);
-    const externalInputNames = new Set(externalInputs.map(e => e.name));
-
-    for (const node of flowNodes) {
-        // 收集此节点上游能产出的所有 artifact 名
-        const upstreamOutputs = new Set<string>();
-        for (const ancestorId of ancestorsOf(g, node.id)) {
-            const ancestor = flowNodes.find(n => n.id === ancestorId);
-            if (ancestor) {
-                for (const out of ancestor.outputs) upstreamOutputs.add(out);
-            }
-        }
-        // 加入外部输入
-        for (const ext of externalInputs) upstreamOutputs.add(ext.name);
-
-        // 检查每个 input
-        for (const inputName of node.inputs) {
-            if (!upstreamOutputs.has(inputName) && !externalInputNames.has(inputName)) {
-                errors.push({
-                    kind: 'missing-input',
-                    nodeId: node.id,
-                    message: `节点「${node.name}」的输入「${inputName}」既无前置产出，也不在外部输入中`,
-                    category: 'missing-concept',
-                });
-            }
+    // 4. 外部输入默认值合法性
+    for (const ext of externalInputs) {
+        if (ext.providedBy === 'config' && !ext.hasDefault) {
+            errors.push({
+                kind: 'invalid-default-value',
+                message: `配置项「${ext.name}」必须提供默认值`,
+                category: 'missing-io',
+            });
         }
     }
 
-    // 5. 外部边引用合法
+    // 5. 路径级输入闭合性（核心校验）
+    const pathClosureErrors = validatePathClosure(
+        g, flowNodes, externalInputs, conceptTable,
+    );
+    errors.push(...pathClosureErrors);
+
+    // 6. 外部边引用合法
     for (const node of flowNodes) {
         for (const edge of node.externalEdges) {
             if (edge.kind === 'internal') {
@@ -120,7 +100,6 @@ export function validateHumanFlow(
                     });
                 }
             } else {
-                // 外部边：检查 targetGraphId 存在 + targetNodeId 存在
                 const targetGraph = conceptTable.get(edge.targetGraphId);
                 if (!targetGraph || targetGraph.kind !== 'dag') {
                     errors.push({
@@ -146,7 +125,7 @@ export function validateHumanFlow(
         }
     }
 
-    // 6. 约束可达（每节点的 validatorIds 引用的约束都存在）
+    // 7. 约束可达
     for (const node of flowNodes) {
         for (const vid of node.validatorIds) {
             if (!conceptTable.get(vid)) {
@@ -160,7 +139,7 @@ export function validateHumanFlow(
         }
     }
 
-    // 7. outputs 合法性（每节点 outputs 指向的概念都存在）
+    // 8. outputs 合法性
     for (const node of flowNodes) {
         for (const outId of node.outputs) {
             if (!conceptTable.get(outId)) {
@@ -178,10 +157,127 @@ export function validateHumanFlow(
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 辅助函数
+// 路径级输入闭合性校验
 // ════════════════════════════════════════════════════════════════════
 
-/** 收集 FlowGraph 中的所有 FlowNode */
+const MAX_PATHS_PER_NODE = 50;
+
+function validatePathClosure(
+    g: DirectedGraph,
+    flowNodes: FlowNode[],
+    externalInputs: ExternalInput[],
+    conceptTable: ConceptTable,
+): ValidationError[] {
+    const errors: ValidationError[] = [];
+    const nodeById = new Map(flowNodes.map(n => [n.id, n]));
+    const externalInputNames = new Set(externalInputs.map(e => e.name));
+    const initial = initialNodesPure(g);
+
+    for (const node of flowNodes) {
+        const paths = enumeratePathsTo(g, initial, node.id, MAX_PATHS_PER_NODE);
+        if (paths.length === 0) {
+            errors.push({
+                kind: 'unreachable',
+                nodeId: node.id,
+                message: `节点「${node.name}」不可达`,
+                category: 'structural',
+            });
+            continue;
+        }
+
+        const requiredArtifacts = collectRequiredArtifactNames(node, conceptTable);
+        const missingByPath: string[][] = [];
+
+        for (const path of paths) {
+            const producedOnPath = new Set<string>();
+            for (const ancestorId of path.slice(0, -1)) {
+                const ancestor = nodeById.get(ancestorId);
+                if (ancestor) {
+                    for (const outId of ancestor.outputs) {
+                        const a = conceptTable.get(outId);
+                        if (a && a.kind === 'artifact') producedOnPath.add(a.name);
+                    }
+                }
+            }
+
+            const missing = requiredArtifacts.filter(
+                name => !producedOnPath.has(name) && !externalInputNames.has(name),
+            );
+            if (missing.length > 0) {
+                missingByPath.push(missing);
+            }
+        }
+
+        if (missingByPath.length === paths.length) {
+            errors.push({
+                kind: 'missing-input',
+                nodeId: node.id,
+                message: `节点「${node.name}」在所有路径上都缺少输入：${missingByPath[0].join(', ')}`,
+                category: 'missing-io',
+                pathContext: paths[0],
+            });
+        }
+    }
+
+    return errors;
+}
+
+/** 枚举从任一 initial 到 target 的所有简单路径（上限限制） */
+function enumeratePathsTo(
+    g: DirectedGraph,
+    initials: string[],
+    target: string,
+    limit: number,
+): string[][] {
+    const results: string[][] = [];
+    const initSet = new Set(initials);
+
+    function dfs(current: string, path: string[]): void {
+        if (results.length >= limit) return;
+        if (current === target) {
+            results.push([...path]);
+            return;
+        }
+        if (!initSet.has(path[0]) && path.length > 0) {
+            // 已经离开 initial 区，沿路径继续
+        }
+        g.forEachOutNeighbor(current, (next) => {
+            if (path.includes(next)) return;
+            path.push(next);
+            dfs(next, path);
+            path.pop();
+        });
+    }
+
+    for (const init of initials) {
+        if (results.length >= limit) break;
+        if (init === target) {
+            results.push([init]);
+        } else {
+            dfs(init, [init]);
+        }
+    }
+
+    return results;
+}
+
+/** 收集节点需要的 artifact 名（按 inputs 数组里的概念名） */
+function collectRequiredArtifactNames(
+    node: FlowNode,
+    conceptTable: ConceptTable,
+): string[] {
+    const names: string[] = [];
+    for (const inputId of node.inputs) {
+        const a = conceptTable.get(inputId);
+        if (a && a.kind === 'artifact') names.push(a.name);
+    }
+    return names;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 辅助
+// ════════════════════════════════════════════════════════════════════
+
 function collectFlowNodes(flow: FlowGraph, conceptTable: ConceptTable): FlowNode[] {
     const out: FlowNode[] = [];
     for (const nodeId of flow.g.nodes()) {
@@ -193,7 +289,6 @@ function collectFlowNodes(flow: FlowGraph, conceptTable: ConceptTable): FlowNode
     return out;
 }
 
-/** 纯函数版终端节点（不依赖概念表） */
 function terminalNodesPure(g: DirectedGraph): string[] {
     const out: string[] = [];
     g.forEachNode((id) => {
@@ -202,28 +297,18 @@ function terminalNodesPure(g: DirectedGraph): string[] {
     return out;
 }
 
-/** 纯函数版祖先 */
-function ancestorsOf(g: DirectedGraph, nodeId: string): Set<string> {
-    const acc = new Set<string>();
-    const queue = [nodeId];
-    while (queue.length > 0) {
-        const cur = queue.shift()!;
-        g.forEachInNeighbor(cur, (nb) => {
-            if (!acc.has(nb)) {
-                acc.add(nb);
-                queue.push(nb);
-            }
-        });
-    }
-    return acc;
+function initialNodesPure(g: DirectedGraph): string[] {
+    const out: string[] = [];
+    g.forEachNode((id) => {
+        if (g.inDegree(id) === 0) out.push(id);
+    });
+    return out;
 }
 
-/** 错误分类辅助——决定 reAct 回溯方向 */
 export function classifyError(err: ValidationError): 'missing-concept' | 'missing-node' | 'missing-io' | 'structural' {
     return err.category;
 }
 
-/** 错误转字符串（用于 reAct 反馈） */
 export function errorsToString(errors: ValidationError[]): string {
     return errors.map((e, i) => `${i + 1}. [${e.kind}] ${e.message}`).join('\n');
 }
