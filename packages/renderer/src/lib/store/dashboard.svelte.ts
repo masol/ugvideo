@@ -8,6 +8,7 @@ import evtbus from "$lib/utils/evtbus";
 import { hooks } from "$lib/utils/hook";
 import type { RunState } from "@app/main/types";
 import log from "electron-log/renderer";
+import { getErrorMessage } from "radashi";
 import { toast } from "svelte-sonner";
 
 // ─── 类型 ───────────────────────────────────────────────────────
@@ -103,12 +104,29 @@ class DashboardStore {
             if (evt.success) {
                 const msg = "✓ 任务已成功完成 · 所有步骤已保存";
                 this.#pushLog(msg);
-                toast.success(msg);
+                confirmStore.request({
+                    title: "任务成功",
+                    message: msg,
+                    hideCancel: true,
+                    icon: "IconCheckFilled",
+                    confirmLabel: "我知道了",
+                    size: "xl"
+                }).catch(e => toast.error(getErrorMessage(e)))
+                // toast.success(msg);
             } else {
                 const reasonText = evt.reason ? ` · ${evt.reason}` : "";
                 const msg = `✗ 任务已终止${reasonText}`;
                 this.#pushLog(msg);
-                toast.error(msg);
+                confirmStore.request({
+                    title: "任务失败",
+                    message: msg,
+                    hideCancel: true,
+                    icon: "IconFaceIdError",
+                    confirmLabel: "我知道了",
+                    destructive: true,
+                    size: "xl"
+                }).catch(e => toast.error(getErrorMessage(e)))
+                // toast.error(msg);
             }
         });
 

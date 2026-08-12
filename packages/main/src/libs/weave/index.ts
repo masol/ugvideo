@@ -1,55 +1,80 @@
 /**
  * weaver · 工作流主入口
+ *
+ * 三阶段编排：
+ *   ① parse           (targetStep >= 1)
+ *   ② emit-formal-doc  (targetStep >= 2)
+ * ③ emit-standard-doc (targetStep >= 3)
  */
 
-import { PrjDB } from '$libs/project/controllers/drizzle/index.js';
-import type { IRunnerContext } from '$types/blueprint/context.js';
-import { createWeaveContext } from './context.js';
-import { emitFormalDoc } from './nodes/emit-formal-doc/index.js';
-import { emitStandardDoc } from './nodes/emit-standard-doc/index.js';
-import { parseWorkflow } from './nodes/parse/index.js';
-import { parseWeaveTarget, WeaveTargetOrder } from './types.js';
+import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
+import type { IRunnerContext } from "$types/blueprint/context.js";
+import { getErrorMessage } from "radashi";
+import { createWeaveContext } from "./context.js";
+import { parseWorkflow } from "./nodes/parse/index.js";
+
+
+/** 阶段编号常量 */
+const WeaveStep = {
+    Parse: 1,
+    FormalDoc: 2,
+    StandardDoc: 3,
+} as const;
+
+/**
+ * target 解析：将 "N/M" 形式转为数字步骤（1-based）。
+ * 缺省或非法 → Infinity（执行到底）。
+ */
+function parseTargetStep(raw: string | null | undefined): number {
+    if (!raw) return Infinity;
+    const m = raw.trim().match(/^(\d+)\/(\d+)$/);
+    if (!m) return Infinity;
+    const x = parseInt(m[1], 10);
+    const y = parseInt(m[2], 10);
+    if (x < 1 || x > y) return Infinity;
+    return x;
+}
 
 export async function run(ctx: IRunnerContext): Promise<void> {
     const weaveCtx = createWeaveContext(ctx);
-    weaveCtx.notify('weaver', '开始编译');
+    weaveCtx.ctx.notify("weaver", "开始编译");
 
     const prjdb = PrjDB.ensure(ctx.prj);
-    const target = parseWeaveTarget(prjdb.get<string>('target'));
-    const targetOrder = target ? WeaveTargetOrder[target] : WeaveTargetOrder.full;
+    const targetStep = parseTargetStep(prjdb.get<string>("target"));
 
     try {
-        // 阶段 1：解析（标准格式 / LLM 路径统一入口）
-        const flows = await parseWorkflow(weaveCtx);
-
-        // 落盘 HumanFlow
-        for (const flow of flows) {
-            weaveCtx.storage.workflow.saveHumanFlow(flow);
-        }
-        weaveCtx.storage.concept.saveConceptTable(weaveCtx.conceptTable.toJSON());
-
-        if (targetOrder <= WeaveTargetOrder.parse) {
-            weaveCtx.notify('weaver 完成（target=parse）', `共 ${flows.length} 个工作流`);
+        // ① parse
+        await parseWorkflow(weaveCtx);
+        const flows = weaveCtx.conceptManager.listHumanFlows();
+        if (targetStep <= WeaveStep.Parse) {
+            ctx.notify('weaver 完成（target=parse）', `共 ${flows.length} 个工作流`);
             return;
         }
+        weaveCtx.ctx.notify(
+            "weaver 完成",
+            `共 ${flows.length} 个工作流，${weaveCtx.conceptCount} 个概念`,
+        );
 
-        // 阶段 2：形式化文档
-        const formalDoc = await emitFormalDoc(weaveCtx, flows);
-        for (const flow of flows) flow.formalDoc = formalDoc;
-        weaveCtx.storage.workflow.saveFormalDoc(flows[0]?.id ?? 'all', formalDoc);
+        // @TODO: 这里开始经human-workflow编译为agent-workflow(agent-workflow是编译过程的intermediate)
+        // await compile(weaveCtx);
+        // if (targetStep <= WeaveStep.Parse) {
+        //     weaveCtx.notify('weaver 完成（target=parse）', `共 ${flows.length} 个工作流`);
+        //     return;
+        // }
 
-        if (targetOrder <= WeaveTargetOrder.formalDoc) {
-            weaveCtx.notify('weaver 完成（target=formalDoc）', `共 ${flows.length} 个工作流`);
-            return;
-        }
 
-        // 阶段 3：标准格式 markdown
-        const standardDoc = emitStandardDoc(weaveCtx, flows);
-        weaveCtx.storage.workflow.saveStandardDoc(standardDoc);
+        // @TODO: 开始将agent-workflow编译为代码。
+        // await generate(weaveCtx);
+        // if (targetStep <= WeaveStep.Parse) {
+        //     weaveCtx.notify('weaver 完成（target=parse）', `共 ${flows.length} 个工作流`);
+        //     return;
+        // }
 
-        weaveCtx.notify('weaver 完成', `共 ${flows.length} 个工作流，${weaveCtx.conceptTable.count()} 个概念`);
+        // @TOD: 开始将编译后的代码导出为项目类型。
+        // await dump(weaveCtx);
+
     } catch (err) {
-        weaveCtx.notify('weaver 失败', (err as Error).message);
+        weaveCtx.ctx.notify("weaver 失败", getErrorMessage(err));
         throw err;
     }
 }

@@ -1,70 +1,127 @@
 /**
  * weaver · node ① parse
  *
- * 统一入口：markdown → HumanFlow[]
- * 流程：
- *   1. parseMarkdown() → MDAST
- *   2. 尝试标准格式 tryStandard(MDAST) → 成功则返回
- *   3. 失败 → LLM 路径 runLLMReact() → 标准 markdown
- *   4. 重新 parseMarkdown + tryStandard
+ * 整体门控逻辑：
+ * - 输入：script
+ * - 输出：parsed_docs_index（所有文档 id 的数组）
+ *
+ * 门控过：
+ *   读取所有缓存的标准文档 → 逐个解析 → 验证 → 注册到 ConceptManager
+ *
+ * 门控未过：
+ *   读取所有原始文档 → 逐个解析 → 验证 → 注册到 ConceptManager → 导出标准格式 → 缓存
  */
 
-import { PrjDB } from '$libs/project/controllers/drizzle/index.js';
-import type { Root } from 'mdast';
-import remarkParse from 'remark-parse';
-import { unified } from 'unified';
-import type { WeaveContext } from '../../context.js';
-import type { HumanFlow } from '../../types.js';
-import { runLLMReact } from './llm.js';
-import { tryStandard } from './standard.js';
+import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
+import type { WeaveContext } from "../../context.js";
+import { errorsToString, validateHumanFlow } from "../../graph/validate.js";
+import { exportToStandardFormat } from "./export-standard.js";
+import { parseMarkdown, tryStandard } from "./standard.js";
 
-export async function parseWorkflow(ctx: WeaveContext): Promise<HumanFlow[]> {
+export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
     const docs = ctx.inputDocs;
-    const flows: HumanFlow[] = [];
-    const allErrors: string[] = [];
+    const outputKey = ctx.storage.workflow.latestKey("parsed_docs_index");
 
-    // 阶段 1：标准格式尝试
-    for (let i = 0; i < docs.length; i++) {
-        const doc = docs[i];
-        const tree = parseMarkdown(doc);
-        const result = tryStandard(tree, ctx);
+    // 整体门控
+    const shouldSkip = !checkExpiry(ctx.ctx, {
+        inputKeys: "script",
+        outputKeys: outputKey,
+    });
 
-        if (result.flow) {
-            flows.push(result.flow);
-        } else {
-            allErrors.push(`工作流 ${i + 1}：${result.errors.join('; ')}`);
+    if (shouldSkip) {
+        // 门控过 → 读缓存的标准文档集合
+        const cachedIndex = ctx.storage.workflow.getParsedDocsIndex();
+        if (cachedIndex && cachedIndex.length === docs.length) {
+            ctx.ctx.notify("parse", `命中缓存，共 ${cachedIndex.length} 个文档`);
+
+            // 逐个读取标准文档并解析
+            for (let i = 0; i < cachedIndex.length; i++) {
+                const standardDoc = ctx.storage.workflow.getStandardDoc(i);
+                if (!standardDoc) {
+                    throw new Error(`[parse] 缓存的标准文档 ${i} 不存在`);
+                }
+
+                const tree = parseMarkdown(standardDoc);
+                const result = tryStandard(tree, ctx);
+
+                if (!result.flow) {
+                    throw new Error(
+                        `[parse] 缓存的标准文档 ${i} 解析失败：\n${result.errors.join("\n")}`
+                    );
+                }
+
+                // 验证
+                const validationErrors = validateHumanFlow(result.flow, ctx.conceptManager);
+                if (validationErrors.length > 0) {
+                    throw new Error(
+                        `[parse] 文档 ${i} 验证失败：\n${errorsToString(validationErrors)}`
+                    );
+                }
+
+                // 注册到 ConceptManager
+                registerFlow(ctx, result.flow, i);
+            }
+
+            ctx.ctx.notify("parse 完成", `共 ${cachedIndex.length} 个工作流（从缓存）`);
+            return;
         }
     }
 
-    if (allErrors.length === 0) {
-        ctx.notify('parse', `标准格式命中，共 ${flows.length} 个工作流`);
-        return flows;
-    }
+    // 门控未过 → 解析原始文档
+    ctx.ctx.notify("parse", `开始解析 ${docs.length} 个原始文档`);
 
-    // 阶段 2：LLM 路径
-    ctx.notify('parse', `标准格式未命中，转 LLM 路径`);
-    const standardDocs = await runLLMReact(ctx, allErrors);
+    const docIds: string[] = [];
 
-    // 写回 prjdb.set('script', [...])（对齐 prod2adimg）
-    const prjdb = PrjDB.ensure(ctx.ctx.prj);
-    prjdb.set('script', standardDocs);
+    for (let i = 0; i < docs.length; i++) {
+        const doc = docs[i];
 
-    // 阶段 3：重新解析
-    const finalFlows: HumanFlow[] = [];
-    for (let i = 0; i < standardDocs.length; i++) {
-        const doc = standardDocs[i];
+        // 尝试解析为标准文档
         const tree = parseMarkdown(doc);
         const result = tryStandard(tree, ctx);
 
         if (!result.flow) {
-            throw new Error(`[parse] LLM 路径仍未产出合法标准格式：${result.errors.join('; ')}`);
+            // TODO: 后续引入 LLM 补全分支（当前先报错）
+            throw new Error(
+                `[parse] 文档 ${i} 不符合标准格式：\n${result.errors.join("\n")}\n\n` +
+                `（LLM 补全功能尚未实现）`
+            );
         }
-        finalFlows.push(result.flow);
+
+        // 验证
+        const validationErrors = validateHumanFlow(result.flow, ctx.conceptManager);
+        if (validationErrors.length > 0) {
+            throw new Error(
+                `[parse] 文档 ${i} 验证失败：\n${errorsToString(validationErrors)}`
+            );
+        }
+
+        // 注册到 ConceptManager
+        registerFlow(ctx, result.flow, i);
+
+        // 导出标准格式
+        const standardDoc = exportToStandardFormat(result.flow, ctx);
+
+        // 缓存标准文档
+        ctx.storage.workflow.saveStandardDoc(i, standardDoc);
+
+        // 记录文档 id
+        docIds.push(`doc_${i}`);
     }
 
-    return finalFlows;
+    // 保存文档 id 列表（整体门控的输出）
+    ctx.storage.workflow.saveParsedDocsIndex(docIds);
+
+    ctx.ctx.notify("parse 完成", `共 ${docs.length} 个工作流`);
 }
 
-export function parseMarkdown(markdown: string): Root {
-    return unified().use(remarkParse).parse(markdown);
+/** 注册 flow 到 ConceptManager，并标记主入口（index 0） */
+function registerFlow(
+    ctx: WeaveContext,
+    flow: import("../../types.js").HumanFlow,
+    index: number
+): void {
+    ctx.conceptManager.graphs.register(flow);
+    if (index === 0) {
+        ctx.conceptManager.setEntryGraph(flow.id);
+    }
 }

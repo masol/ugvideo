@@ -58,7 +58,8 @@ class ProjectStore {
     }
 
     private procError(e: unknown): boolean {
-        return procApiError(e);
+        procApiError(e);
+        return false;
     }
 
     // 非命令入口！只被dashboardStore调用。

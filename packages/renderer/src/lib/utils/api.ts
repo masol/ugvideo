@@ -1,8 +1,8 @@
 import type { AppClient, NotifyContract } from '@app/main/types';
-import { COMMON_ORPC_ERROR_DEFS, createORPCClient, ORPCError } from '@orpc/client';
+import { createORPCClient, ORPCError } from '@orpc/client';
 import { RPCLink } from '@orpc/client/message-port';
 import Logger from 'electron-log/renderer';
-import { isPlainObject } from 'radashi';
+import { getErrorMessage, isPlainObject } from 'radashi';
 import { toast } from 'svelte-sonner';
 import evtbus, { type Events } from './evtbus';
 
@@ -105,20 +105,28 @@ export const safeApi = (): AppClient => {
 };
 
 
-export function procApiError(e: unknown): boolean {
+export function getErrorMsg(e: unknown): string {
     let msg: string;
     if (e instanceof ORPCError) {
         if (e.status === 601) { // 用户取消。
-            return false;
-        } else if (e.status === COMMON_ORPC_ERROR_DEFS.TOO_MANY_REQUESTS.status) {
-            toast.success(e.message)
-            return false;
+            return "";
         }
+        // 项目已被打开，不再区别报告，以错误型态报告。
+        // else if (e.status === COMMON_ORPC_ERROR_DEFS.TOO_MANY_REQUESTS.status) {
+        //     return "";
+        // }
         msg = e.message || e.code;
     } else {
-        msg = e instanceof Error ? e.message : String(e)
+        msg = getErrorMessage(e);
     }
-    Logger.error("ProjectStore error:", msg, e);
-    toast.error(msg);
-    return false;
+    return msg;
+}
+
+
+export function procApiError(e: unknown): void {
+    const msg = getErrorMsg(e);
+    if (msg) {
+        Logger.error("ProjectStore error:", msg, e);
+        toast.error(msg);
+    }
 }

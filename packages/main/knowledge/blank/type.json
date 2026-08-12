@@ -56,7 +56,7 @@
                             {
                                 "type": "text-list",
                                 "binding": {
-                                    "key": "workflow_description"
+                                    "key": "script"
                                 },
                                 "addLabel": "添加描述片段",
                                 "emptyTitle": "还没有描述",

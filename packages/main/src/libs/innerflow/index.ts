@@ -1,5 +1,5 @@
 import { throwNotfound } from "$libs/utils/err.js";
-import { compile } from '$libs/weave/workflows/compile/index.js';
+import { compile } from '$libs/weave/index.js';
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { run as runProd2adimg } from './prod2adimg/run.js';
 import { run as runVideo } from './video/index.js';

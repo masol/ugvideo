@@ -1,39 +1,19 @@
 /**
- * weaver · node ③ emit-standard-doc
+ * weaver · 导出标准格式
+ *
+ * 将内存中的 HumanFlow 导出为标准格式 markdown。
  */
 
-import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
 import type { WeaveContext } from "../../context.js";
 import type { ExternalEdge, HumanFlow, HumanNode } from "../../types.js";
 
-export function emitStandardDoc(
-    ctx: WeaveContext,
-    flows: HumanFlow[],
+export function exportToStandardFormat(
+    flow: HumanFlow,
+    ctx: WeaveContext
 ): string {
-    const outputKey = ctx.storage.workflow.latestKey("standard_output_doc");
-
-    if (!checkExpiry(ctx.ctx, {
-        inputKeys: ctx.storage.workflow.latestKey("formal_doc:all"),
-        outputKeys: outputKey,
-    })) {
-        const cached = ctx.storage.workflow.getStandardOutputDoc();
-        if (cached) return cached;
-    }
-
-    const sections: string[] = [];
-
-    for (const flow of flows) {
-        sections.push(renderFlow(flow, ctx));
-    }
-
-    const doc = sections.join("\n\n---\n\n");
-    ctx.storage.workflow.saveStandardOutputDoc(doc);
-    return doc;
-}
-
-function renderFlow(flow: HumanFlow, ctx: WeaveContext): string {
     const lines: string[] = [];
 
+    // 一级标题：工作流名称
     lines.push(`# ${flow.name}`);
     lines.push("");
     lines.push(flow.intent || "（无总则）");
@@ -41,6 +21,22 @@ function renderFlow(flow: HumanFlow, ctx: WeaveContext): string {
     lines.push("---");
     lines.push("");
 
+    // 全局输入（从 flow.inputs 推导）
+    lines.push("## 全局输入");
+    lines.push("");
+
+    if (flow.inputs.length === 0) {
+        lines.push("- （无外部输入）");
+    } else {
+        for (const inputId of flow.inputs) {
+            const artifact = ctx.conceptManager.artifacts.get(inputId);
+            const artifactName = artifact?.name ?? inputId.slice(0, 8);
+            lines.push(`- 输入项 \`${artifactName}\``);
+        }
+    }
+    lines.push("");
+
+    // 节点清单（按拓扑序）
     const nodes = flow.g.nodes()
         .map((id) => ctx.conceptManager.nodes.get(id))
         .filter((n): n is HumanNode => n !== null);

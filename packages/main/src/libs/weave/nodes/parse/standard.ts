@@ -1,50 +1,54 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * weaver · parse · 标准格式校验 + 构造 HumanFlow
- *
- * 输入：MDAST（由 parse/index.ts 产出）
- * 输出：{ flow, errors }
  */
 
-import type { Heading, List, ListItem, Root, RootContent } from 'mdast';
-import { randomUUID } from 'node:crypto';
-import type { WeaveContext } from '../../context.js';
-import { addEdge, addNode, createGraph } from '../../graph/gdag.js';
-import { errorsToString, validateHumanFlow } from '../../graph/validate.js';
+import type { Heading, List, ListItem, Root, RootContent } from "mdast";
+import { randomUUID } from "node:crypto";
+import remarkParse from "remark-parse";
+import { unified } from "unified";
+import type { WeaveContext } from "../../context.js";
+import { addEdge, addNode, createGraph } from "../../graph/gdag.js";
 import type {
     Artifact,
-    ExternalInput,
     HumanFlow,
     HumanNode,
-} from '../../types.js';
+} from "../../types.js";
 
 export interface StandardResult {
     flow: HumanFlow | null;
     errors: string[];
 }
 
+/** 解析 markdown 为 AST */
+export function parseMarkdown(markdown: string): Root {
+    return unified().use(remarkParse).parse(markdown);
+}
+
+/** 尝试解析标准格式 */
 export function tryStandard(tree: Root, ctx: WeaveContext): StandardResult {
     const errors: string[] = [];
+    // const mgr = ctx.conceptManager;
 
     const h1Nodes = tree.children.filter(
-        (n): n is Heading => n.type === 'heading' && n.depth === 1,
+        (n): n is Heading => n.type === "heading" && n.depth === 1,
     );
     if (h1Nodes.length !== 1) {
-        errors.push('必须恰好 1 个一级标题');
+        errors.push("必须恰好 1 个一级标题");
         return { flow: null, errors };
     }
 
     const flowName = headingText(h1Nodes[0]);
     if (!flowName) {
-        errors.push('一级标题为空');
+        errors.push("一级标题为空");
         return { flow: null, errors };
     }
 
     const sections = collectFlowSections(tree.children);
     const goal = extractGoal(sections.preSteps);
 
-    const globalInputSection = sections.sections.find(s =>
-        s.heading && /^全局输入$/.test(s.heading),
+    const globalInputSection = sections.sections.find(
+        (s) => s.heading && /^全局输入$/.test(s.heading),
     );
     if (!globalInputSection) {
         errors.push('缺少「全局输入」段');
@@ -53,15 +57,15 @@ export function tryStandard(tree: Root, ctx: WeaveContext): StandardResult {
 
     const globalInputs = parseGlobalInputs(globalInputSection.body);
     if (globalInputs === null) {
-        errors.push('全局输入段格式非法');
+        errors.push("全局输入段格式非法");
         return { flow: null, errors };
     }
 
-    const stepSections = sections.sections.filter(s =>
-        s.heading && /^(\d+)\.\s*.+/.test(s.heading),
+    const stepSections = sections.sections.filter(
+        (s) => s.heading && /^(\d+)\.\s*.+/.test(s.heading),
     );
     if (stepSections.length === 0) {
-        errors.push('至少需要 1 个步骤');
+        errors.push("至少需要 1 个步骤");
         return { flow: null, errors };
     }
 
@@ -84,12 +88,6 @@ export function tryStandard(tree: Root, ctx: WeaveContext): StandardResult {
 
     const flow = buildHumanFlow(flowName, goal, globalInputs, steps, ctx);
 
-    // DAG 校验
-    const validationErrors = validateHumanFlow(flow, ctx.conceptTable, ctx.compiled);
-    if (validationErrors.length > 0) {
-        return { flow: null, errors: [errorsToString(validationErrors)] };
-    }
-
     return { flow, errors: [] };
 }
 
@@ -100,7 +98,7 @@ interface ParsedGlobalInput {
 }
 
 interface ParsedJump {
-    kind: 'conditional' | 'fallback' | 'subprocess';
+    kind: "conditional" | "fallback" | "subprocess";
     condition: string | null;
     targetStepOrder: number | null;
     targetSubFlowName?: string;
@@ -124,6 +122,7 @@ function buildHumanFlow(
     steps: ParsedStep[],
     ctx: WeaveContext,
 ): HumanFlow {
+    const mgr = ctx.conceptManager;
     const flowId = randomUUID();
     const g = createGraph();
     const stepIdByOrder = new Map<number, string>();
@@ -175,37 +174,24 @@ function buildHumanFlow(
     for (const step of steps) {
         const nodeId = stepIdByOrder.get(step.order)!;
         const node = createHumanNode(step, nodeId, artifactIdByName);
-        ctx.conceptTable.register(node);
+        mgr.nodes.register(node);
     }
-
-    // 构造 ExternalInput（指向 artifact + 默认值）
-    const externalInputs: ExternalInput[] = [];
-    for (const gi of globalInputs) {
-        const artifactId = artifactIdByName.get(gi.key);
-        if (artifactId) {
-            externalInputs.push({
-                artifactId,
-                defaultValue: gi.defaultValue,
-            });
-        }
-    }
-    ctx.compiled.setExternalInputs(flowId, externalInputs);
 
     // 图级 inputs/outputs
     const flowInputIds = globalInputs
-        .filter(gi => !gi.hasDefault)
-        .map(gi => artifactIdByName.get(gi.key)!)
+        .filter((gi) => !gi.hasDefault)
+        .map((gi) => artifactIdByName.get(gi.key)!)
         .filter(Boolean);
 
     const terminalNodes = steps
-        .filter(s => stepIdByOrder.has(s.order))
-        .map(s => ctx.conceptTable.get(stepIdByOrder.get(s.order)!))
-        .filter((n): n is HumanNode => n !== null && (n.kind === 'human' || n.kind === 'flow-node'))
-        .filter(n => g.outDegree(n.id) === 0);
-    const flowOutputIds = terminalNodes.flatMap(n => n.outputs);
+        .filter((s) => stepIdByOrder.has(s.order))
+        .map((s) => mgr.nodes.get(stepIdByOrder.get(s.order)!))
+        .filter((n): n is HumanNode => n !== null)
+        .filter((n) => g.outDegree(n.id) === 0);
+    const flowOutputIds = terminalNodes.flatMap((n) => n.outputs);
 
     const flow: HumanFlow = {
-        kind: 'dag',
+        kind: "dag",
         isHumanWorld: true,
         id: flowId,
         name: flowName,
@@ -217,7 +203,7 @@ function buildHumanFlow(
         inputs: flowInputIds,
         outputs: flowOutputIds,
         g,
-        formalDoc: '',
+        formalDoc: "",
     };
 
     return flow;
@@ -230,8 +216,8 @@ function applyJumps(
     stepIdByOrder: Map<number, string>,
 ): void {
     for (const jump of step.jumps) {
-        if (jump.kind === 'subprocess') continue;
-        if (jump.kind === 'fallback' && jump.targetStepOrder === null) continue;
+        if (jump.kind === "subprocess") continue;
+        if (jump.kind === "fallback" && jump.targetStepOrder === null) continue;
 
         const targetOrder = jump.targetStepOrder!;
         const targetId = stepIdByOrder.get(targetOrder);
@@ -247,22 +233,22 @@ function createHumanNode(
     artifactIdByName: Map<string, string>,
 ): HumanNode {
     const inputIds = step.inputs
-        .map(name => artifactIdByName.get(name))
+        .map((name) => artifactIdByName.get(name))
         .filter((id): id is string => id !== undefined);
     const outputIds = step.outputs
-        .map(name => artifactIdByName.get(name))
+        .map((name) => artifactIdByName.get(name))
         .filter((id): id is string => id !== undefined);
 
     const externalEdges = step.jumps
-        .filter(j => j.kind === 'conditional' || j.kind === 'fallback')
-        .map(j => ({
-            kind: 'internal' as const,
+        .filter((j) => j.kind === "conditional" || j.kind === "fallback")
+        .map((j) => ({
+            kind: "internal" as const,
             condition: j.condition,
-            target: '',
+            target: "",
         }));
 
     return {
-        kind: 'human',
+        kind: "human",
         id: nodeId,
         name: step.name,
         aliases: [],
@@ -283,19 +269,19 @@ function registerArtifact(
     intent: string,
     inferred: boolean,
 ): string {
-    const existing = ctx.conceptTable.getByName(name);
+    const existing = ctx.conceptManager.artifacts.getByName(name);
     if (existing) return existing.id;
 
     const id = randomUUID();
-    ctx.conceptTable.register({
-        kind: 'artifact',
+    ctx.conceptManager.artifacts.register({
+        kind: "artifact",
         id,
         name,
         aliases: [],
         intent,
         inferred,
         validatorIds: [],
-        shape: 'scalar',
+        shape: "scalar",
         semanticFields: [],
         dataSchema: null,
     } as Artifact);
@@ -323,13 +309,13 @@ function collectFlowSections(children: RootContent[]): FlowSections {
     let passedH1 = false;
 
     for (const node of children) {
-        if (node.type === 'heading' && node.depth === 1) {
+        if (node.type === "heading" && node.depth === 1) {
             passedH1 = true;
             continue;
         }
         if (!passedH1) continue;
 
-        if (node.type === 'heading' && node.depth === 2) {
+        if (node.type === "heading" && node.depth === 2) {
             current = { heading: headingText(node), body: [] };
             sections.push(current);
             continue;
@@ -348,13 +334,13 @@ function collectFlowSections(children: RootContent[]): FlowSections {
 function extractGoal(preSteps: RootContent[]): string {
     const texts: string[] = [];
     for (const node of preSteps) {
-        if (node.type === 'paragraph') {
+        if (node.type === "paragraph") {
             texts.push(plainText(node));
-        } else if (node.type === 'thematicBreak') {
+        } else if (node.type === "thematicBreak") {
             break;
         }
     }
-    return texts.join('\n\n').trim();
+    return texts.join("\n\n").trim();
 }
 
 const RE_CONFIG = /^-\s*配置项\s+`([^`]+)`（默认：([^）]+)）\s*$/;
@@ -363,7 +349,7 @@ const RE_INPUT = /^-\s*输入项\s+`([^`]+)`\s*$/;
 function parseGlobalInputs(body: RootContent[]): ParsedGlobalInput[] | null {
     const inputs: ParsedGlobalInput[] = [];
     for (const node of body) {
-        if (node.type !== 'list') return null;
+        if (node.type !== "list") return null;
         if (node.ordered) return null;
         for (const item of node.children) {
             const text = plainText(item).trim();
@@ -381,7 +367,7 @@ function parseGlobalInputs(body: RootContent[]): ParsedGlobalInput[] | null {
     return inputs;
 }
 
-const REQUIRED_FIELDS = ['目的', '输入', '输出', '动作'] as const;
+const REQUIRED_FIELDS = ["目的", "输入", "输出", "动作"] as const;
 
 function parseStandardStep(section: FlowSection): ParsedStep | null {
     const m = section.heading!.match(/^(\d+)\.\s*(.+)$/);
@@ -397,20 +383,20 @@ function parseStandardStep(section: FlowSection): ParsedStep | null {
         if (!(required in fields)) return null;
     }
 
-    const inputs = parseArtifactList(fields['输入']);
-    const outputs = parseArtifactList(fields['输出']);
+    const inputs = parseArtifactList(fields["输入"]);
+    const outputs = parseArtifactList(fields["输出"]);
     if (inputs === null || outputs === null) return null;
 
-    const jumps = fields['跳转'] ? parseJumps(fields['跳转']) : [];
-    if (fields['跳转'] && jumps === null) return null;
+    const jumps = fields["跳转"] ? parseJumps(fields["跳转"]) : [];
+    if (fields["跳转"] && jumps === null) return null;
 
     return {
         order,
         name,
-        intent: fields['目的'].trim(),
+        intent: fields["目的"].trim(),
         inputs,
         outputs,
-        action: fields['动作'].trim(),
+        action: fields["动作"].trim(),
         jumps: jumps ?? [],
     };
 }
@@ -418,7 +404,7 @@ function parseStandardStep(section: FlowSection): ParsedStep | null {
 function extractListFields(body: RootContent[]): Record<string, string> | null {
     const fields: Record<string, string> = {};
     for (const node of body) {
-        if (node.type !== 'list') return null;
+        if (node.type !== "list") return null;
         if (node.ordered) return null;
         for (const item of node.children) {
             const parsed = parseFieldItem(item);
@@ -431,7 +417,7 @@ function extractListFields(body: RootContent[]): Record<string, string> | null {
 
 function parseFieldItem(item: ListItem): { key: string; value: string } | null {
     const firstChild = item.children[0];
-    if (!firstChild || firstChild.type !== 'paragraph') return null;
+    if (!firstChild || firstChild.type !== "paragraph") return null;
 
     const text = plainText(firstChild).trim();
     const m = text.match(/^([^\s：:]+)[：:]\s*([\s\S]*)$/);
@@ -442,16 +428,16 @@ function parseFieldItem(item: ListItem): { key: string; value: string } | null {
 
     if (item.children.length > 1) {
         const subLists = item.children.slice(1).filter(
-            (c): c is List => c.type === 'list',
+            (c): c is List => c.type === "list",
         );
         if (subLists.length > 0) {
             const subTexts: string[] = [inlineValue];
             for (const sub of subLists) {
                 for (const subItem of sub.children) {
-                    subTexts.push('- ' + plainText(subItem).trim());
+                    subTexts.push("- " + plainText(subItem).trim());
                 }
             }
-            return { key, value: subTexts.join('\n') };
+            return { key, value: subTexts.join("\n") };
         }
     }
 
@@ -484,7 +470,7 @@ const RE_FALLBACK_END = /^\s*-\s*否则\s*→\s*结束\s*$/;
 const RE_SUBPROCESS = /^\s*-\s*子流程：若\s+`([^`]+)`\s*→\s*调用子流程\s+`([^`]+)`\s*的步骤\s+(\d+)（返回：(是|否)）\s*$/;
 
 function parseJumps(text: string): ParsedJump[] | null {
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
     const jumps: ParsedJump[] = [];
     let sawFallback = false;
 
@@ -497,7 +483,7 @@ function parseJumps(text: string): ParsedJump[] | null {
         if (mCond) {
             if (sawFallback) return null;
             jumps.push({
-                kind: 'conditional',
+                kind: "conditional",
                 condition: mCond[1],
                 targetStepOrder: parseInt(mCond[2], 10),
                 targetSubFlowName: undefined,
@@ -505,7 +491,7 @@ function parseJumps(text: string): ParsedJump[] | null {
             });
         } else if (mFbStep) {
             jumps.push({
-                kind: 'fallback',
+                kind: "fallback",
                 condition: null,
                 targetStepOrder: parseInt(mFbStep[1], 10),
                 targetSubFlowName: undefined,
@@ -514,7 +500,7 @@ function parseJumps(text: string): ParsedJump[] | null {
             sawFallback = true;
         } else if (mFbEnd) {
             jumps.push({
-                kind: 'fallback',
+                kind: "fallback",
                 condition: null,
                 targetStepOrder: null,
                 targetSubFlowName: undefined,
@@ -523,11 +509,11 @@ function parseJumps(text: string): ParsedJump[] | null {
             sawFallback = true;
         } else if (mSub) {
             jumps.push({
-                kind: 'subprocess',
+                kind: "subprocess",
                 condition: mSub[1],
                 targetStepOrder: parseInt(mSub[3], 10),
                 targetSubFlowName: mSub[2],
-                returnAfter: mSub[4] === '是',
+                returnAfter: mSub[4] === "是",
             });
         } else {
             return null;
@@ -542,9 +528,9 @@ function headingText(node: Heading): string {
 }
 
 function plainText(node: any): string {
-    if ('value' in node && typeof node.value === 'string') return node.value;
-    if ('children' in node && Array.isArray(node.children)) {
-        return node.children.map(plainText).join('');
+    if ("value" in node && typeof node.value === "string") return node.value;
+    if ("children" in node && Array.isArray(node.children)) {
+        return node.children.map(plainText).join("");
     }
-    return '';
+    return "";
 }

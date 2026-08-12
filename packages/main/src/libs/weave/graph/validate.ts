@@ -2,42 +2,39 @@
  * weaver · DAG 验证（含路径级输入闭合性）
  */
 
-import type { DirectedGraph } from 'graphology';
-import { hasCycle } from 'graphology-dag';
-import type { CompiledProducts } from '../concept/compiled-products.js';
-import type { ConceptTable } from '../concept/concept-table.js';
-import type { FlowGraph, FlowNode, HumanFlow } from '../types.js';
-import { topoOrder } from './graph-ops.js';
+import type { DirectedGraph } from "graphology";
+import { hasCycle } from "graphology-dag";
+import type { ConceptManager } from "../concept/concept-manager.js";
+import type { FlowGraph, FlowNode, HumanFlow } from "../types.js";
+import { topoOrder } from "./graph-ops.js";
 
 export interface ValidationError {
     kind:
-    | 'cycle' | 'orphan' | 'orphan-edge' | 'missing-input' | 'missing-output'
-    | 'multiple-terminal' | 'no-terminal' | 'invalid-external-edge'
-    | 'missing-concept' | 'unreachable' | 'invalid-jump-target';
+    | "cycle" | "orphan" | "orphan-edge" | "missing-input" | "missing-output"
+    | "multiple-terminal" | "no-terminal" | "invalid-external-edge"
+    | "missing-concept" | "unreachable" | "invalid-jump-target";
     nodeId?: string;
     edgeId?: string;
     graphId?: string;
     message: string;
-    category: 'missing-concept' | 'missing-node' | 'missing-io' | 'structural';
+    category: "missing-concept" | "missing-node" | "missing-io" | "structural";
     pathContext?: string[];
 }
 
 export function validateHumanFlow(
     flow: HumanFlow,
-    conceptTable: ConceptTable,
-    compiled: CompiledProducts,
+    conceptManager: ConceptManager,
 ): ValidationError[] {
     const errors: ValidationError[] = [];
     const g = flow.g;
-    const flowNodes = collectFlowNodes(flow, conceptTable);
-    const externalInputs = compiled.getExternalInputs(flow.id);
+    const flowNodes = collectFlowNodes(flow, conceptManager);
 
     // 1. 无环
     if (hasCycle(g)) {
         errors.push({
-            kind: 'cycle',
-            message: '图存在循环',
-            category: 'structural',
+            kind: "cycle",
+            message: "图存在循环",
+            category: "structural",
         });
     }
 
@@ -45,9 +42,9 @@ export function validateHumanFlow(
     const order = topoOrder(g);
     if (order.length !== g.order) {
         errors.push({
-            kind: 'unreachable',
+            kind: "unreachable",
             message: `存在不可达节点：图共 ${g.order} 个，拓扑序仅 ${order.length} 个`,
-            category: 'structural',
+            category: "structural",
         });
     }
 
@@ -55,56 +52,55 @@ export function validateHumanFlow(
     const terminals = terminalNodesPure(g);
     if (terminals.length === 0) {
         errors.push({
-            kind: 'no-terminal',
-            message: '图中不存在终端节点',
-            category: 'structural',
+            kind: "no-terminal",
+            message: "图中不存在终端节点",
+            category: "structural",
         });
     } else if (terminals.length > 1) {
         errors.push({
-            kind: 'multiple-terminal',
-            message: `存在多个终端节点：${terminals.map(t => `「${t}」`).join('、')}`,
-            category: 'structural',
+            kind: "multiple-terminal",
+            message: `存在多个终端节点：${terminals.map((t) => `「${t}」`).join("、")}`,
+            category: "structural",
         });
     }
 
     // 4. 路径级输入闭合性
     const pathClosureErrors = validatePathClosure(
-        g, flowNodes, externalInputs, conceptTable,
+        g, flowNodes, conceptManager,
     );
     errors.push(...pathClosureErrors);
 
     // 5. 外部边引用合法
     for (const node of flowNodes) {
         for (const edge of node.externalEdges) {
-            if (edge.kind === 'internal') {
+            if (edge.kind === "internal") {
                 if (!g.hasNode(edge.target)) {
                     errors.push({
-                        kind: 'orphan-edge',
+                        kind: "orphan-edge",
                         nodeId: node.id,
-                        edgeId: edge.condition ?? 'unconditional',
+                        edgeId: edge.condition ?? "unconditional",
                         message: `节点「${node.name}」的内部边指向不存在的节点「${edge.target}」`,
-                        category: 'structural',
+                        category: "structural",
                     });
                 }
             } else {
-                const targetGraph = conceptTable.get(edge.targetGraphId);
-                if (!targetGraph || targetGraph.kind !== 'dag') {
+                const targetGraph = conceptManager.graphs.get(edge.targetGraphId);
+                if (!targetGraph) {
                     errors.push({
-                        kind: 'invalid-external-edge',
+                        kind: "invalid-external-edge",
                         nodeId: node.id,
                         graphId: edge.targetGraphId,
                         message: `节点「${node.name}」的外部边指向不存在的图「${edge.targetGraphId}」`,
-                        category: 'missing-concept',
+                        category: "missing-concept",
                     });
                 } else {
-                    const targetFlow = targetGraph as FlowGraph;
-                    if (!targetFlow.g.hasNode(edge.targetNodeId)) {
+                    if (!targetGraph.g.hasNode(edge.targetNodeId)) {
                         errors.push({
-                            kind: 'invalid-external-edge',
+                            kind: "invalid-external-edge",
                             nodeId: node.id,
                             graphId: edge.targetGraphId,
                             message: `节点「${node.name}」的外部边指向图「${edge.targetGraphId}」中不存在的节点「${edge.targetNodeId}」`,
-                            category: 'missing-concept',
+                            category: "missing-concept",
                         });
                     }
                 }
@@ -115,12 +111,12 @@ export function validateHumanFlow(
     // 6. 约束可达
     for (const node of flowNodes) {
         for (const vid of node.validatorIds) {
-            if (!conceptTable.get(vid)) {
+            if (!conceptManager.get(vid)) {
                 errors.push({
-                    kind: 'missing-concept',
+                    kind: "missing-concept",
                     nodeId: node.id,
                     message: `节点「${node.name}」挂载的约束器「${vid}」不存在`,
-                    category: 'missing-concept',
+                    category: "missing-concept",
                 });
             }
         }
@@ -129,12 +125,12 @@ export function validateHumanFlow(
     // 7. outputs 合法性
     for (const node of flowNodes) {
         for (const outId of node.outputs) {
-            if (!conceptTable.get(outId)) {
+            if (!conceptManager.get(outId)) {
                 errors.push({
-                    kind: 'missing-output',
+                    kind: "missing-output",
                     nodeId: node.id,
                     message: `节点「${node.name}」的输出「${outId}」不在概念表中`,
-                    category: 'missing-concept',
+                    category: "missing-concept",
                 });
             }
         }
@@ -152,64 +148,57 @@ const MAX_PATHS_PER_NODE = 50;
 function validatePathClosure(
     g: DirectedGraph,
     flowNodes: FlowNode[],
-    externalInputs: import('../types.js').ExternalInput[],
-    conceptTable: ConceptTable,
+    conceptManager: ConceptManager,
 ): ValidationError[] {
     const errors: ValidationError[] = [];
-    const nodeById = new Map(flowNodes.map(n => [n.id, n]));
-
-    // 从 ExternalInput 构造外部输入 artifact 名集合
-    const externalInputNames = new Set<string>();
-    for (const ext of externalInputs) {
-        const artifact = conceptTable.get(ext.artifactId);
-        if (artifact && artifact.kind === 'artifact') {
-            externalInputNames.add(artifact.name);
-        }
-    }
-
+    const nodeById = new Map(flowNodes.map((n) => [n.id, n]));
     const initial = initialNodesPure(g);
 
     for (const node of flowNodes) {
         const paths = enumeratePathsTo(g, initial, node.id, MAX_PATHS_PER_NODE);
         if (paths.length === 0) {
             errors.push({
-                kind: 'unreachable',
+                kind: "unreachable",
                 nodeId: node.id,
                 message: `节点「${node.name}」不可达`,
-                category: 'structural',
+                category: "structural",
             });
             continue;
         }
 
-        const requiredArtifacts = collectRequiredArtifactNames(node, conceptTable);
+        const requiredArtifacts = collectRequiredArtifactNames(node, conceptManager);
         const missingByPath: string[][] = [];
 
         for (const path of paths) {
             const producedOnPath = new Set<string>();
+
+            // 收集路径上所有祖先节点的输出
             for (const ancestorId of path.slice(0, -1)) {
                 const ancestor = nodeById.get(ancestorId);
                 if (ancestor) {
                     for (const outId of ancestor.outputs) {
-                        const a = conceptTable.get(outId);
-                        if (a && a.kind === 'artifact') producedOnPath.add(a.name);
+                        const a = conceptManager.artifacts.get(outId);
+                        if (a) producedOnPath.add(a.name);
                     }
                 }
             }
 
+            // 检查当前节点的 inputs 中，是否有未被路径上任何祖先产出的
             const missing = requiredArtifacts.filter(
-                name => !producedOnPath.has(name) && !externalInputNames.has(name),
+                (name) => !producedOnPath.has(name),
             );
             if (missing.length > 0) {
                 missingByPath.push(missing);
             }
         }
 
+        // 如果所有路径都缺少某些输入，报错
         if (missingByPath.length === paths.length) {
             errors.push({
-                kind: 'missing-input',
+                kind: "missing-input",
                 nodeId: node.id,
-                message: `节点「${node.name}」在所有路径上都缺少输入：${missingByPath[0].join(', ')}`,
-                category: 'missing-io',
+                message: `节点「${node.name}」在所有路径上都缺少输入：${missingByPath[0].join(", ")}`,
+                category: "missing-io",
                 pathContext: paths[0],
             });
         }
@@ -254,12 +243,12 @@ function enumeratePathsTo(
 
 function collectRequiredArtifactNames(
     node: FlowNode,
-    conceptTable: ConceptTable,
+    conceptManager: ConceptManager,
 ): string[] {
     const names: string[] = [];
     for (const inputId of node.inputs) {
-        const a = conceptTable.get(inputId);
-        if (a && a.kind === 'artifact') names.push(a.name);
+        const a = conceptManager.artifacts.get(inputId);
+        if (a) names.push(a.name);
     }
     return names;
 }
@@ -268,11 +257,11 @@ function collectRequiredArtifactNames(
 // 辅助
 // ════════════════════════════════════════════════════════════════════
 
-function collectFlowNodes(flow: FlowGraph, conceptTable: ConceptTable): FlowNode[] {
+function collectFlowNodes(flow: FlowGraph, conceptManager: ConceptManager): FlowNode[] {
     const out: FlowNode[] = [];
     for (const nodeId of flow.g.nodes()) {
-        const node = conceptTable.get(nodeId);
-        if (node && (node.kind === 'flow-node' || node.kind === 'human')) {
+        const node = conceptManager.get(nodeId);
+        if (node && (node.kind === "flow-node" || node.kind === "human")) {
             out.push(node as FlowNode);
         }
     }
@@ -295,10 +284,10 @@ function initialNodesPure(g: DirectedGraph): string[] {
     return out;
 }
 
-export function classifyError(err: ValidationError): 'missing-concept' | 'missing-node' | 'missing-io' | 'structural' {
+export function classifyError(err: ValidationError): "missing-concept" | "missing-node" | "missing-io" | "structural" {
     return err.category;
 }
 
 export function errorsToString(errors: ValidationError[]): string {
-    return errors.map((e, i) => `${i + 1}. [${e.kind}] ${e.message}`).join('\n');
+    return errors.map((e, i) => `${i + 1}. [${e.kind}] ${e.message}`).join("\n");
 }

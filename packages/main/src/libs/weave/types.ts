@@ -106,12 +106,6 @@ export interface HumanFlow extends FlowGraph {
 // 编译产物
 // ════════════════════════════════════════════════════════════════════
 
-/**
- * 外部输入：无上游产出、被节点消费的 artifact。
- * 本质 = artifact 指针 + 默认值（有默认值 = 配置项，无 = 运行时输入）
- * 来源：kv-store（config:* 或 prompt-once）
- * 不存储：扫描 DAG 即可构建（门控：DAG 已存在）
- */
 export interface ExternalInput {
     artifactId: string;
     defaultValue?: string;
@@ -129,40 +123,6 @@ export interface Skill {
     promptTemplate: PromptPair;
     authority: 'human' | 'llm';
     version: number;
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 配置
-// ════════════════════════════════════════════════════════════════════
-
-export interface WeaveConfig {
-    maxReactRounds: number;
-    maxPathsPerNode: number;
-    skipStandardParse: boolean;
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 入口控制 target
-// ════════════════════════════════════════════════════════════════════
-
-export type WeaveTarget =
-    | 'parse'
-    | 'formalDoc'
-    | 'standardDoc'
-    | 'full';
-
-export const WeaveTargetOrder: Record<WeaveTarget, number> = {
-    parse: 1,
-    formalDoc: 2,
-    standardDoc: 3,
-    full: 4,
-};
-
-export function parseWeaveTarget(raw: string | null | undefined): WeaveTarget | null {
-    if (!raw) return null;
-    const v = raw.trim();
-    if (v in WeaveTargetOrder) return v as WeaveTarget;
-    return null;
 }
 
 // ════════════════════════════════════════════════════════════════════

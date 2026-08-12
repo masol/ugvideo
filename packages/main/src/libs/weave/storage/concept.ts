@@ -9,10 +9,10 @@ export class ConceptStorage extends BaseStorage {
     protected NS = '#weave:concept:';
 
     saveConceptTable(concepts: ConceptReference[]): void {
-        this.write('snapshot', concepts);
+        this.set('snapshot', concepts);
     }
 
     getConceptTable(): ConceptReference[] {
-        return this.read<ConceptReference[]>('snapshot') ?? [];
+        return this.get<ConceptReference[]>('snapshot') ?? [];
     }
 }

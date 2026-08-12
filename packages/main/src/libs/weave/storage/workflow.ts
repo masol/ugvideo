@@ -1,53 +1,50 @@
 /**
  * weaver · Workflow Storage
+ *
+ * 关键变更：
+ * - 整体门控：parsed_docs_index（所有文档 id 的数组）
+ * - 标准文档缓存：standard_doc:<doc_index>
+ * - formalDoc / standardDoc 仍写 KV（它们是后续节点的产出）
  */
 
-import type { HumanFlow } from '../types.js';
-import { BaseStorage } from './base.js';
+import { BaseStorage } from "./base.js";
 
 export class WorkflowStorage extends BaseStorage {
-    protected NS = '#weave:wf:';
+    protected NS = "#weave:wf:";
 
-    saveHumanFlow(flow: HumanFlow): void {
-        const snapshot = { ...flow };
-        this.write(`flow:${flow.id}`, snapshot);
-        this.appendToIndex('idx:human_flows', flow.id);
+    /** 保存所有已解析文档的 id 列表（整体门控的输出 key） */
+    saveParsedDocsIndex(docIds: string[]): void {
+        this.set("parsed_docs_index", docIds);
     }
 
-    getHumanFlow(id: string): HumanFlow | null {
-        return this.read<HumanFlow>(`flow:${id}`);
+    getParsedDocsIndex(): string[] | null {
+        return this.get<string[]>("parsed_docs_index");
     }
 
-    listHumanFlowIds(): string[] {
-        return this.read<string[]>('idx:human_flows') ?? [];
+    /** 保存单个标准文档（按 index） */
+    saveStandardDoc(docIndex: number, markdown: string): void {
+        this.set(`standard_doc:${docIndex}`, markdown);
     }
 
-    listHumanFlows(): HumanFlow[] {
-        return this.listHumanFlowIds()
-            .map(id => this.getHumanFlow(id))
-            .filter((f): f is HumanFlow => f !== null);
+    getStandardDoc(docIndex: number): string | null {
+        return this.get<string>(`standard_doc:${docIndex}`);
     }
 
-    saveFormalDoc(flowId: string, doc: string): void {
-        this.write(`formal_doc:${flowId}`, doc);
+    /** 形式化文档（节点 ② 的产出） */
+    saveFormalDocAll(doc: string): void {
+        this.set("formal_doc:all", doc);
     }
 
-    getFormalDoc(flowId: string): string | null {
-        return this.read<string>(`formal_doc:${flowId}`);
+    getFormalDocAll(): string | null {
+        return this.get<string>("formal_doc:all");
     }
 
-    saveStandardDoc(doc: string): void {
-        this.write('standard_doc', doc);
+    /** 标准输出文档（节点 ③ 的产出） */
+    saveStandardOutputDoc(doc: string): void {
+        this.set("standard_output_doc", doc);
     }
 
-    getStandardDoc(): string | null {
-        return this.read<string>('standard_doc');
-    }
-
-    private appendToIndex(idxKey: string, id: string): void {
-        const list = this.read<string[]>(idxKey) ?? [];
-        if (!list.includes(id)) {
-            this.write(idxKey, [...list, id]);
-        }
+    getStandardOutputDoc(): string | null {
+        return this.get<string>("standard_output_doc");
     }
 }
