@@ -1,11 +1,20 @@
 /**
  * weaver · 导出标准格式
- *
- * 将内存中的 HumanFlow 导出为标准格式 markdown。
  */
 
 import type { WeaveContext } from "../../context.js";
-import type { ExternalEdge, HumanFlow, HumanNode } from "../../types.js";
+import type { HumanFlow, HumanNode, Jumper } from "../../types.js";
+import {
+    KW_ACTION,
+    KW_CONDITION,
+    KW_EXTERNAL_TARGET,
+    KW_GLOBAL_INPUTS,
+    KW_INPUTS,
+    KW_INTERNAL_TARGET,
+    KW_JUMPS,
+    KW_OUTPUTS,
+    KW_PURPOSE
+} from "./keywords.js";
 
 export function exportToStandardFormat(
     flow: HumanFlow,
@@ -13,7 +22,6 @@ export function exportToStandardFormat(
 ): string {
     const lines: string[] = [];
 
-    // 一级标题：工作流名称
     lines.push(`# ${flow.name}`);
     lines.push("");
     lines.push(flow.intent || "（无总则）");
@@ -21,8 +29,7 @@ export function exportToStandardFormat(
     lines.push("---");
     lines.push("");
 
-    // 全局输入（从 flow.inputs 推导）
-    lines.push("## 全局输入");
+    lines.push(`## ${KW_GLOBAL_INPUTS[0]}`);
     lines.push("");
 
     if (flow.inputs.length === 0) {
@@ -30,13 +37,12 @@ export function exportToStandardFormat(
     } else {
         for (const inputId of flow.inputs) {
             const artifact = ctx.conceptManager.artifacts.get(inputId);
-            const artifactName = artifact?.name ?? inputId.slice(0, 8);
-            lines.push(`- 输入项 \`${artifactName}\``);
+            const name = artifact?.name ?? inputId;
+            lines.push(`- 输入项 \`${name}\``);
         }
     }
     lines.push("");
 
-    // 节点清单（按拓扑序）
     const nodes = flow.g.nodes()
         .map((id) => ctx.conceptManager.nodes.get(id))
         .filter((n): n is HumanNode => n !== null);
@@ -45,30 +51,31 @@ export function exportToStandardFormat(
         const node = nodes[i];
         lines.push(`## ${i + 1}. ${node.name}`);
         lines.push("");
-        lines.push(`- 目的：${node.intent}`);
+
+        lines.push(`- ${KW_PURPOSE[0]}：${node.intent}`);
 
         const inputNames = node.inputs
             .map((id) => {
                 const a = ctx.conceptManager.artifacts.get(id);
-                return a ? `\`${a.name}\`` : `\`${id.slice(0, 8)}\``;
+                return a ? `\`${a.name}\`` : `\`${id}\``;
             })
             .join(" ");
-        lines.push(`- 输入：${inputNames}`);
+        lines.push(`- ${KW_INPUTS[0]}：${inputNames}`);
 
         const outputNames = node.outputs
             .map((id) => {
                 const a = ctx.conceptManager.artifacts.get(id);
-                return a ? `\`${a.name}\`` : `\`${id.slice(0, 8)}\``;
+                return a ? `\`${a.name}\`` : `\`${id}\``;
             })
             .join(" ");
-        lines.push(`- 输出：${outputNames}`);
+        lines.push(`- ${KW_OUTPUTS[0]}：${outputNames}`);
 
-        lines.push(`- 动作：${node.actionAtom}`);
+        lines.push(`- ${KW_ACTION[0]}：${node.actionAtom}`);
 
-        if (node.externalEdges.length > 0) {
-            lines.push("- 跳转：");
-            for (const edge of node.externalEdges) {
-                lines.push(renderJumpLine(edge, nodes, ctx));
+        if (node.jumpers.length > 0) {
+            lines.push(`- ${KW_JUMPS[0]}：`);
+            for (const jp of node.jumpers) {
+                lines.push(renderJumperLine(jp));
             }
         }
         lines.push("");
@@ -77,22 +84,12 @@ export function exportToStandardFormat(
     return lines.join("\n");
 }
 
-function renderJumpLine(
-    edge: ExternalEdge,
-    nodes: HumanNode[],
-    ctx: WeaveContext,
-): string {
-    if (edge.kind === "external") {
-        const targetGraph = ctx.conceptManager.graphs.get(edge.targetGraphId);
-        const subName = targetGraph ? targetGraph.name : edge.targetGraphId;
-        return `  - 子流程：若 \`${edge.condition ?? ""}\` → 调用子流程 \`${subName}\` 的步骤 1（返回：${edge.returnAfter ? "是" : "否"}）`;
+function renderJumperLine(jp: Jumper): string {
+    if (jp.kind === "external") {
+        return `  - ${KW_CONDITION[0]}：${jp.condition ?? ""}\n    ${KW_EXTERNAL_TARGET[0]}：${jp.target}`;
     }
-
-    const targetIdx = nodes.findIndex((n) => n.id === edge.target);
-    const targetRef = targetIdx >= 0 ? `步骤 ${targetIdx + 1}` : "结束";
-
-    if (edge.condition) {
-        return `  - 若 \`${edge.condition}\` → ${targetRef}`;
+    if (jp.condition) {
+        return `  - ${KW_CONDITION[0]}：${jp.condition}\n    ${KW_INTERNAL_TARGET[0]}：${jp.target}`;
     }
-    return `  - 否则 → ${targetRef}`;
+    return `  - 否则：\n    ${KW_INTERNAL_TARGET[0]}：${jp.target}`;
 }

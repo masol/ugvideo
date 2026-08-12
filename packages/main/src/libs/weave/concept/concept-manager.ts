@@ -1,11 +1,5 @@
 /**
  * weaver · ConceptManager
- *
- * 概念管理中心。由四个子中心组成：
- *   - artifacts: Artifact（数据制品）
- *   - graphs:    FlowGraph（工作流图）
- *   - nodes:     FlowNode（工作流节点）
- *   - others:    Constraint / Edge（其他可执行概念）
  */
 
 import type { WeaveContext } from "../context.js";
@@ -14,7 +8,6 @@ import type {
     ConceptKind,
     ConceptReference,
     Constraint,
-    Edge,
     FlowGraph,
     FlowNode,
     HumanFlow
@@ -37,10 +30,6 @@ export class ConceptManager {
         this.others = new OthersCenter(wctx);
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // 主入口标记
-    // ────────────────────────────────────────────────────────────────
-
     get entryGraphId(): string | null {
         return this.graphs.entryGraphId;
     }
@@ -48,10 +37,6 @@ export class ConceptManager {
     setEntryGraph(graphId: string): void {
         this.graphs.setEntryGraph(graphId);
     }
-
-    // ────────────────────────────────────────────────────────────────
-    // 聚合查询（遍历四个子中心）
-    // ────────────────────────────────────────────────────────────────
 
     get(id: string): ConceptReference | null {
         return (
@@ -98,13 +83,7 @@ export class ConceptManager {
         if (!kind || kind === "flow-node" || kind === "human") {
             out.push(...this.nodes.list());
         }
-        if (
-            !kind ||
-            kind === "constraint" ||
-            kind === "edge"
-        ) {
-            out.push(...this.others.list(kind));
-        }
+        if (!kind || kind === "constraint") out.push(...this.others.list());
         return out;
     }
 
@@ -116,10 +95,6 @@ export class ConceptManager {
             this.others.count()
         );
     }
-
-    // ────────────────────────────────────────────────────────────────
-    // 便捷聚合查询
-    // ────────────────────────────────────────────────────────────────
 
     listArtifacts(): Artifact[] {
         return this.artifacts.list();
@@ -145,18 +120,10 @@ export class ConceptManager {
         return this.others.listConstraints();
     }
 
-    listEdges(): Edge[] {
-        return this.others.listEdges();
-    }
-
     /** 反查：哪些图包含该节点 */
     getGraphsContaining(nodeId: string): FlowGraph[] {
         return this.graphs.getGraphsContaining(nodeId);
     }
-
-    // ────────────────────────────────────────────────────────────────
-    // 清空
-    // ────────────────────────────────────────────────────────────────
 
     clear(): void {
         this.artifacts.clear();

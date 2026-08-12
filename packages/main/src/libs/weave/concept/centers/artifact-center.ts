@@ -1,7 +1,5 @@
 /**
  * weaver · ArtifactCenter
- *
- * 管理所有 Artifact 概念。
  */
 
 import type { WeaveContext } from "../../context.js";
@@ -57,7 +55,6 @@ export class ArtifactCenter {
         this.aliasIndex.clear();
     }
 
-    // 提供给 ConceptManager 聚合查询用
     getByNameLower(lower: string): ConceptReference | null {
         return this.getByName(lower);
     }

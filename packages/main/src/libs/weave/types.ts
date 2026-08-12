@@ -7,7 +7,7 @@ export interface OriginRef {
     paragraphRange: [number, number];
 }
 
-export type ConceptKind = 'artifact' | 'flow-node' | 'human' | 'constraint' | 'edge' | 'dag';
+export type ConceptKind = 'artifact' | 'flow-node' | 'human' | 'constraint' | 'dag';
 
 export interface ConceptReference {
     kind: ConceptKind;
@@ -17,7 +17,7 @@ export interface ConceptReference {
     intent: string;
     inferred: boolean;
     originRef?: OriginRef;
-    validatorIds: string[];
+    constraintIds: string[];
 }
 
 export interface ExecutableConcept extends ConceptReference {
@@ -26,64 +26,44 @@ export interface ExecutableConcept extends ConceptReference {
     outputs: string[];
 }
 
-export interface JSONSchema {
-    type: 'object' | 'array' | 'string' | 'number' | 'boolean';
-    properties?: Record<string, JSONSchema>;
-    items?: JSONSchema;
-    required?: string[];
-}
-
 export interface Artifact extends ConceptReference {
     kind: 'artifact';
     shape: 'scalar' | 'array';
     semanticFields: string[];
-    dataSchema: JSONSchema | null;
 }
 
-export type ConstraintRelation =
-    | 'equals' | 'subset-of' | 'superset-of'
-    | 'references' | 'freshness>=' | 'unique-by'
-    | 'covers' | 'excludes';
-
+/**
+ * Constraint —— 验证机制
+ *
+ * 对 Artifact：验证其值是否有效。
+ * 对 Node：判断节点执行是否正确（通过判断其输入/输出产物）。
+ */
 export interface Constraint extends ExecutableConcept {
     kind: 'constraint';
-    relation?: ConstraintRelation;
 }
 
-export interface Edge extends ExecutableConcept {
-    kind: 'edge';
-}
-
-export type ExternalEdge =
-    | {
-        kind: 'internal';
-        condition: string | null;
-        target: string;
-    }
-    | {
-        kind: 'external';
-        condition: string | null;
-        targetGraphId: string;
-        targetNodeId: string;
-        returnAfter: boolean;
-    };
+/**
+ * Jumper —— 标准 DAG 之外的额外跳转
+ *
+ * 在某个节点退出前，额外执行一个跳转动作。
+ * - internal: 跳到本图内另一节点（执行完不返回）。
+ * - external: 跳到另一图（target = 目标图 id），执行完自动返回原图继续。
+ *
+ * target:
+ *   - internal →目标节点 name（解析阶段即为 id）
+ *   - external → 目标图 id
+ */
+export type Jumper = {
+    kind: 'internal' | 'external';
+    condition: string | null;
+    target: string;
+};
 
 export type FlowNodeKind = 'flow-node' | 'human';
 
-export type AlignedKind =
-    | 'kv-read' | 'kv-write' | 'tool-call' | 'llm-call' | 'prompt-user';
-
-export interface AlignedAction {
-    kind: AlignedKind;
-    toolId: string | null;
-    signature: string;
-    missingToolWarning: string | null;
-}
-
 export interface FlowNode extends ExecutableConcept {
     kind: FlowNodeKind;
-    aligned: AlignedAction | null;
-    externalEdges: ExternalEdge[];
+    jumpers: Jumper[];
 }
 
 export interface HumanNode extends FlowNode {
@@ -105,11 +85,6 @@ export interface HumanFlow extends FlowGraph {
 // ════════════════════════════════════════════════════════════════════
 // 编译产物
 // ════════════════════════════════════════════════════════════════════
-
-export interface ExternalInput {
-    artifactId: string;
-    defaultValue?: string;
-}
 
 export interface PromptPair {
     system: string;

@@ -4,6 +4,7 @@
  * 管理所有 FlowGraph（包括 HumanFlow）。
  */
 
+import { throwUnprcessable } from "$libs/utils/err.js";
 import type { WeaveContext } from "../../context.js";
 import type { FlowGraph, HumanFlow } from "../../types.js";
 
@@ -12,14 +13,13 @@ export class GraphCenter {
     private nameIndex: Map<string, string> = new Map();
     private aliasIndex: Map<string, string> = new Map();
 
-    /** 主入口工作流 id（数组 index 0 对应） */
     private _entryGraphId: string | null = null;
 
     constructor(private readonly wctx: WeaveContext) { }
 
     register(graph: FlowGraph): void {
         if (this.graphs.has(graph.id)) {
-            throw new Error(`[GraphCenter] id 重复：${graph.id}`);
+            throwUnprcessable(`[GraphCenter] id 重复：${graph.id}`);
         }
         this.graphs.set(graph.id, graph);
         const lower = graph.name.toLowerCase();

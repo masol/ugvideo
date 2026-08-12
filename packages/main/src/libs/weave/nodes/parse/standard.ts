@@ -4,20 +4,66 @@
  */
 
 import type { Heading, List, ListItem, Root, RootContent } from "mdast";
-import { randomUUID } from "node:crypto";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import type { WeaveContext } from "../../context.js";
-import { addEdge, addNode, createGraph } from "../../graph/gdag.js";
-import type {
-    Artifact,
-    HumanFlow,
-    HumanNode,
-} from "../../types.js";
+import type { HumanFlow } from "../../types.js";
+import { buildHumanFlowFromParsed } from "./build-flow.js";
+import {
+    KW_ACTION,
+    KW_CONDITION,
+    KW_EXTERNAL_TARGET,
+    KW_GLOBAL_INPUTS,
+    KW_INPUTS,
+    KW_INTERNAL_TARGET,
+    KW_JUMPS,
+    KW_OUTPUTS,
+    KW_PURPOSE,
+} from "./keywords.js";
+
+// ════════════════════════════════════════════════════════════════════
+// 公开接口
+// ════════════════════════════════════════════════════════════════════
+
+export interface CollectedSections {
+    flowName: string;
+    goal: string;
+    globalInputs: ParsedGlobalInput[];
+    parsedNodes: ParsedNode[];
+    rawStepSections: FlowSection[];
+}
 
 export interface StandardResult {
     flow: HumanFlow | null;
     errors: string[];
+    sections: CollectedSections | null;
+}
+
+export interface ParsedGlobalInput {
+    key: string;
+    hasDefault: boolean;
+    defaultValue?: string;
+}
+
+export interface ParsedJumper {
+    kind: "internal" | "external";
+    condition: string | null;
+    target: string;
+}
+
+export interface ParsedNode {
+    order: number;
+    name: string;
+    intent: string;
+    inputs: string[];
+    outputs: string[];
+    action: string;
+    jumpers: ParsedJumper[];
+}
+
+export interface FlowSection {
+    heading: string | null;
+    body: RootContent[];
 }
 
 /** 解析 markdown 为 AST */
@@ -25,284 +71,91 @@ export function parseMarkdown(markdown: string): Root {
     return unified().use(remarkParse).parse(markdown);
 }
 
-/** 尝试解析标准格式 */
+/** 尝试解析标准格式，无论成功失败都尽量返回已收集的 sections */
 export function tryStandard(tree: Root, ctx: WeaveContext): StandardResult {
     const errors: string[] = [];
-    // const mgr = ctx.conceptManager;
 
     const h1Nodes = tree.children.filter(
         (n): n is Heading => n.type === "heading" && n.depth === 1,
     );
     if (h1Nodes.length !== 1) {
         errors.push("必须恰好 1 个一级标题");
-        return { flow: null, errors };
+        return { flow: null, errors, sections: null };
     }
 
     const flowName = headingText(h1Nodes[0]);
     if (!flowName) {
         errors.push("一级标题为空");
-        return { flow: null, errors };
+        return { flow: null, errors, sections: null };
     }
 
-    const sections = collectFlowSections(tree.children);
-    const goal = extractGoal(sections.preSteps);
+    const allSections = collectFlowSections(tree.children);
+    const goal = extractGoal(allSections.preSteps);
 
-    const globalInputSection = sections.sections.find(
-        (s) => s.heading && /^全局输入$/.test(s.heading),
+    const globalInputSection = allSections.sections.find(
+        (s) => s.heading && matchKeyword(s.heading, KW_GLOBAL_INPUTS),
     );
-    if (!globalInputSection) {
-        errors.push('缺少「全局输入」段');
-        return { flow: null, errors };
-    }
+    const globalInputs: ParsedGlobalInput[] = globalInputSection
+        ? parseGlobalInputs(globalInputSection.body) ?? []
+        : [];
 
-    const globalInputs = parseGlobalInputs(globalInputSection.body);
-    if (globalInputs === null) {
-        errors.push("全局输入段格式非法");
-        return { flow: null, errors };
-    }
-
-    const stepSections = sections.sections.filter(
-        (s) => s.heading && /^(\d+)\.\s*.+/.test(s.heading),
+    const stepSections = allSections.sections.filter(
+        (s) => s.heading && /^\d+\.\s*.+/.test(s.heading),
     );
+
     if (stepSections.length === 0) {
         errors.push("至少需要 1 个步骤");
-        return { flow: null, errors };
+        return {
+            flow: null,
+            errors,
+            sections: { flowName, goal, globalInputs, parsedNodes: [], rawStepSections: [] },
+        };
     }
 
-    const steps: ParsedStep[] = [];
+    const parsedNodes: ParsedNode[] = [];
+    let hasNodeError = false;
+
     for (const sec of stepSections) {
-        const step = parseStandardStep(sec);
-        if (!step) {
-            errors.push(`步骤「${sec.heading}」格式非法`);
-            return { flow: null, errors };
+        const node = parseStandardNode(sec);
+        if (!node) {
+            errors.push(`节点「${sec.heading}」格式非法`);
+            hasNodeError = true;
+            continue;
         }
-        steps.push(step);
+        parsedNodes.push(node);
     }
 
-    for (let i = 0; i < steps.length; i++) {
-        if (steps[i].order !== i + 1) {
-            errors.push(`步骤序号不连续：期望 ${i + 1}，实际 ${steps[i].order}`);
-            return { flow: null, errors };
-        }
-    }
-
-    const flow = buildHumanFlow(flowName, goal, globalInputs, steps, ctx);
-
-    return { flow, errors: [] };
-}
-
-interface ParsedGlobalInput {
-    key: string;
-    hasDefault: boolean;
-    defaultValue?: string;
-}
-
-interface ParsedJump {
-    kind: "conditional" | "fallback" | "subprocess";
-    condition: string | null;
-    targetStepOrder: number | null;
-    targetSubFlowName?: string;
-    returnAfter?: boolean;
-}
-
-interface ParsedStep {
-    order: number;
-    name: string;
-    intent: string;
-    inputs: string[];
-    outputs: string[];
-    action: string;
-    jumps: ParsedJump[];
-}
-
-function buildHumanFlow(
-    flowName: string,
-    goal: string,
-    globalInputs: ParsedGlobalInput[],
-    steps: ParsedStep[],
-    ctx: WeaveContext,
-): HumanFlow {
-    const mgr = ctx.conceptManager;
-    const flowId = randomUUID();
-    const g = createGraph();
-    const stepIdByOrder = new Map<number, string>();
-    const artifactIdByName = new Map<string, string>();
-
-    // 注册全局输入 artifacts
-    for (const gi of globalInputs) {
-        const id = registerArtifact(ctx, gi.key, `全局输入：${gi.key}`, true);
-        artifactIdByName.set(gi.key, id);
-    }
-
-    // 注册步骤 + artifacts
-    for (const step of steps) {
-        const nodeId = randomUUID();
-        stepIdByOrder.set(step.order, nodeId);
-        addNode(g, nodeId);
-
-        for (const inputName of step.inputs) {
-            if (!artifactIdByName.has(inputName)) {
-                const id = registerArtifact(ctx, inputName, `${step.name} 的输入`, false);
-                artifactIdByName.set(inputName, id);
-            }
-        }
-
-        for (const outputName of step.outputs) {
-            if (!artifactIdByName.has(outputName)) {
-                const id = registerArtifact(ctx, outputName, `${step.name} 的输出`, false);
-                artifactIdByName.set(outputName, id);
-            }
-        }
-    }
-
-    // 添加边
-    for (let i = 0; i < steps.length; i++) {
-        const step = steps[i];
-        const fromId = stepIdByOrder.get(step.order)!;
-
-        if (step.jumps.length === 0) {
-            if (i < steps.length - 1) {
-                const nextId = stepIdByOrder.get(step.order + 1)!;
-                addEdge(g, fromId, nextId);
-            }
-        } else {
-            applyJumps(g, step, fromId, stepIdByOrder);
-        }
-    }
-
-    // 注册 HumanNode
-    for (const step of steps) {
-        const nodeId = stepIdByOrder.get(step.order)!;
-        const node = createHumanNode(step, nodeId, artifactIdByName);
-        mgr.nodes.register(node);
-    }
-
-    // 图级 inputs/outputs
-    const flowInputIds = globalInputs
-        .filter((gi) => !gi.hasDefault)
-        .map((gi) => artifactIdByName.get(gi.key)!)
-        .filter(Boolean);
-
-    const terminalNodes = steps
-        .filter((s) => stepIdByOrder.has(s.order))
-        .map((s) => mgr.nodes.get(stepIdByOrder.get(s.order)!))
-        .filter((n): n is HumanNode => n !== null)
-        .filter((n) => g.outDegree(n.id) === 0);
-    const flowOutputIds = terminalNodes.flatMap((n) => n.outputs);
-
-    const flow: HumanFlow = {
-        kind: "dag",
-        isHumanWorld: true,
-        id: flowId,
-        name: flowName,
-        aliases: [],
-        intent: goal,
-        inferred: false,
-        validatorIds: [],
-        actionAtom: `执行 ${flowName}`,
-        inputs: flowInputIds,
-        outputs: flowOutputIds,
-        g,
-        formalDoc: "",
+    const sections: CollectedSections = {
+        flowName,
+        goal,
+        globalInputs,
+        parsedNodes,
+        rawStepSections: stepSections,
     };
 
-    return flow;
-}
-
-function applyJumps(
-    g: ReturnType<typeof createGraph>,
-    step: ParsedStep,
-    fromId: string,
-    stepIdByOrder: Map<number, string>,
-): void {
-    for (const jump of step.jumps) {
-        if (jump.kind === "subprocess") continue;
-        if (jump.kind === "fallback" && jump.targetStepOrder === null) continue;
-
-        const targetOrder = jump.targetStepOrder!;
-        const targetId = stepIdByOrder.get(targetOrder);
-        if (!targetId) continue;
-
-        addEdge(g, fromId, targetId);
+    if (hasNodeError) {
+        return { flow: null, errors, sections };
     }
-}
 
-function createHumanNode(
-    step: ParsedStep,
-    nodeId: string,
-    artifactIdByName: Map<string, string>,
-): HumanNode {
-    const inputIds = step.inputs
-        .map((name) => artifactIdByName.get(name))
-        .filter((id): id is string => id !== undefined);
-    const outputIds = step.outputs
-        .map((name) => artifactIdByName.get(name))
-        .filter((id): id is string => id !== undefined);
+    for (let i = 0; i < parsedNodes.length; i++) {
+        if (parsedNodes[i].order !== i + 1) {
+            errors.push(`节点序号不连续：期望 ${i + 1}，实际 ${parsedNodes[i].order}`);
+            return { flow: null, errors, sections };
+        }
+    }
 
-    const externalEdges = step.jumps
-        .filter((j) => j.kind === "conditional" || j.kind === "fallback")
-        .map((j) => ({
-            kind: "internal" as const,
-            condition: j.condition,
-            target: "",
-        }));
-
-    return {
-        kind: "human",
-        id: nodeId,
-        name: step.name,
-        aliases: [],
-        intent: step.intent,
-        inferred: false,
-        validatorIds: [],
-        actionAtom: step.action,
-        inputs: inputIds,
-        outputs: outputIds,
-        aligned: null,
-        externalEdges,
-    };
-}
-
-function registerArtifact(
-    ctx: WeaveContext,
-    name: string,
-    intent: string,
-    inferred: boolean,
-): string {
-    const existing = ctx.conceptManager.artifacts.getByName(name);
-    if (existing) return existing.id;
-
-    const id = randomUUID();
-    ctx.conceptManager.artifacts.register({
-        kind: "artifact",
-        id,
-        name,
-        aliases: [],
-        intent,
-        inferred,
-        validatorIds: [],
-        shape: "scalar",
-        semanticFields: [],
-        dataSchema: null,
-    } as Artifact);
-    return id;
+    const flow = buildHumanFlowFromParsed(flowName, goal, globalInputs, parsedNodes, ctx);
+    return { flow, errors: [], sections };
 }
 
 // ════════════════════════════════════════════════════════════════════
 // markdown 结构提取
 // ════════════════════════════════════════════════════════════════════
 
-interface FlowSection {
-    heading: string | null;
-    body: RootContent[];
-}
-
-interface FlowSections {
+function collectFlowSections(children: RootContent[]): {
     preSteps: RootContent[];
     sections: FlowSection[];
-}
-
-function collectFlowSections(children: RootContent[]): FlowSections {
+} {
     const preSteps: RootContent[] = [];
     const sections: FlowSection[] = [];
     let current: FlowSection | null = null;
@@ -334,42 +187,45 @@ function collectFlowSections(children: RootContent[]): FlowSections {
 function extractGoal(preSteps: RootContent[]): string {
     const texts: string[] = [];
     for (const node of preSteps) {
-        if (node.type === "paragraph") {
-            texts.push(plainText(node));
-        } else if (node.type === "thematicBreak") {
-            break;
-        }
+        if (node.type === "paragraph") texts.push(plainText(node));
+        else if (node.type === "thematicBreak") break;
     }
     return texts.join("\n\n").trim();
 }
 
-const RE_CONFIG = /^-\s*配置项\s+`([^`]+)`（默认：([^）]+)）\s*$/;
-const RE_INPUT = /^-\s*输入项\s+`([^`]+)`\s*$/;
-
 function parseGlobalInputs(body: RootContent[]): ParsedGlobalInput[] | null {
     const inputs: ParsedGlobalInput[] = [];
     for (const node of body) {
-        if (node.type !== "list") return null;
-        if (node.ordered) return null;
+        if (node.type !== "list" || node.ordered) return null;
         for (const item of node.children) {
-            const text = plainText(item).trim();
-            const mConfig = text.match(RE_CONFIG);
-            const mInput = text.match(RE_INPUT);
-            if (mConfig) {
-                inputs.push({ key: mConfig[1], hasDefault: true, defaultValue: mConfig[2] });
-            } else if (mInput) {
-                inputs.push({ key: mInput[1], hasDefault: false });
-            } else {
-                return null;
-            }
+            const entry = parseGlobalInputItem(item);
+            if (!entry) return null;
+            inputs.push(entry);
         }
     }
     return inputs;
 }
 
-const REQUIRED_FIELDS = ["目的", "输入", "输出", "动作"] as const;
+function parseGlobalInputItem(item: ListItem): ParsedGlobalInput | null {
+    const text = plainText(item).trim();
+    const configMatch = text.match(/^-\s*配置项\s+`([^`]+)`（默认：([^）]+)）\s*$/);
+    const inputMatch = text.match(/^-\s*输入项\s+`([^`]+)`\s*$/);
+    if (configMatch) {
+        return { key: configMatch[1], hasDefault: true, defaultValue: configMatch[2] };
+    }
+    if (inputMatch) {
+        return { key: inputMatch[1], hasDefault: false };
+    }
+    return null;
+}
 
-function parseStandardStep(section: FlowSection): ParsedStep | null {
+// ════════════════════════════════════════════════════════════════════
+// 节点解析 —— 句法驱动
+// ════════════════════════════════════════════════════════════════════
+
+const REQUIRED_NODE_FIELDS: string[][] = [KW_PURPOSE, KW_INPUTS, KW_OUTPUTS, KW_ACTION];
+
+function parseStandardNode(section: FlowSection): ParsedNode | null {
     const m = section.heading!.match(/^(\d+)\.\s*(.+)$/);
     if (!m) return null;
 
@@ -379,33 +235,36 @@ function parseStandardStep(section: FlowSection): ParsedStep | null {
     const fields = extractListFields(section.body);
     if (!fields) return null;
 
-    for (const required of REQUIRED_FIELDS) {
-        if (!(required in fields)) return null;
+    for (const required of REQUIRED_NODE_FIELDS) {
+        if (!(required[0] in fields)) return null;
     }
 
-    const inputs = parseArtifactList(fields["输入"]);
-    const outputs = parseArtifactList(fields["输出"]);
+    const inputs = parseArtifactList(fields[KW_INPUTS[0]]);
+    const outputs = parseArtifactList(fields[KW_OUTPUTS[0]]);
     if (inputs === null || outputs === null) return null;
 
-    const jumps = fields["跳转"] ? parseJumps(fields["跳转"]) : [];
-    if (fields["跳转"] && jumps === null) return null;
+    const jumpers: ParsedJumper[] = [];
+    if (fields[KW_JUMPS[0]]) {
+        const jps = parseJumperList(fields[KW_JUMPS[0]]);
+        if (jps === null) return null;
+        jumpers.push(...jps);
+    }
 
     return {
         order,
         name,
-        intent: fields["目的"].trim(),
+        intent: fields[KW_PURPOSE[0]].trim(),
         inputs,
         outputs,
-        action: fields["动作"].trim(),
-        jumps: jumps ?? [],
+        action: fields[KW_ACTION[0]].trim(),
+        jumpers,
     };
 }
 
 function extractListFields(body: RootContent[]): Record<string, string> | null {
     const fields: Record<string, string> = {};
     for (const node of body) {
-        if (node.type !== "list") return null;
-        if (node.ordered) return null;
+        if (node.type !== "list" || node.ordered) return null;
         for (const item of node.children) {
             const parsed = parseFieldItem(item);
             if (!parsed) return null;
@@ -420,7 +279,7 @@ function parseFieldItem(item: ListItem): { key: string; value: string } | null {
     if (!firstChild || firstChild.type !== "paragraph") return null;
 
     const text = plainText(firstChild).trim();
-    const m = text.match(/^([^\s：:]+)[：:]\s*([\s\S]*)$/);
+    const m = text.match(/^([^：:\s]+)[：:]\s*([\s\S]*)$/);
     if (!m) return null;
 
     const key = m[1];
@@ -464,63 +323,103 @@ function parseArtifactList(text: string): string[] | null {
     return names;
 }
 
-const RE_CONDITIONAL = /^\s*-\s*若\s+`([^`]+)`\s*→\s*步骤\s+(\d+)\s*$/;
-const RE_FALLBACK_STEP = /^\s*-\s*否则\s*→\s*步骤\s+(\d+)\s*$/;
-const RE_FALLBACK_END = /^\s*-\s*否则\s*→\s*结束\s*$/;
-const RE_SUBPROCESS = /^\s*-\s*子流程：若\s+`([^`]+)`\s*→\s*调用子流程\s+`([^`]+)`\s*的步骤\s+(\d+)（返回：(是|否)）\s*$/;
+// ════════════════════════════════════════════════════════════════════
+// 跳转解析
+// ════════════════════════════════════════════════════════════════════
 
-function parseJumps(text: string): ParsedJump[] | null {
+function parseJumperList(text: string): ParsedJumper[] | null {
     const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
-    const jumps: ParsedJump[] = [];
+    const jumpers: ParsedJumper[] = [];
+    let i = 0;
     let sawFallback = false;
 
-    for (const line of lines) {
-        const mCond = line.match(RE_CONDITIONAL);
-        const mFbStep = line.match(RE_FALLBACK_STEP);
-        const mFbEnd = line.match(RE_FALLBACK_END);
-        const mSub = line.match(RE_SUBPROCESS);
+    while (i < lines.length) {
+        const headLine = lines[i];
 
-        if (mCond) {
-            if (sawFallback) return null;
-            jumps.push({
-                kind: "conditional",
-                condition: mCond[1],
-                targetStepOrder: parseInt(mCond[2], 10),
-                targetSubFlowName: undefined,
-                returnAfter: undefined,
-            });
-        } else if (mFbStep) {
-            jumps.push({
-                kind: "fallback",
-                condition: null,
-                targetStepOrder: parseInt(mFbStep[1], 10),
-                targetSubFlowName: undefined,
-                returnAfter: undefined,
-            });
-            sawFallback = true;
-        } else if (mFbEnd) {
-            jumps.push({
-                kind: "fallback",
-                condition: null,
-                targetStepOrder: null,
-                targetSubFlowName: undefined,
-                returnAfter: undefined,
-            });
-            sawFallback = true;
-        } else if (mSub) {
-            jumps.push({
-                kind: "subprocess",
-                condition: mSub[1],
-                targetStepOrder: parseInt(mSub[3], 10),
-                targetSubFlowName: mSub[2],
-                returnAfter: mSub[4] === "是",
-            });
-        } else {
-            return null;
+        if (isConditionLine(headLine)) {
+            const condition = extractConditionValue(headLine);
+            if (condition === null) return null;
+            const nextLine = lines[i + 1];
+            if (!nextLine) return null;
+            const target = parseTargetLine(nextLine);
+            if (target === null) return null;
+            jumpers.push({ kind: target.kind, condition, target: target.target });
+            i += 2;
+            continue;
         }
+
+        if (isFallbackLine(headLine)) {
+            if (sawFallback) return null;
+            const nextLine = lines[i + 1];
+            if (!nextLine) return null;
+            if (isEndTargetLine(nextLine)) {
+                jumpers.push({ kind: "internal", condition: null, target: "" });
+            } else {
+                const target = parseTargetLine(nextLine);
+                if (target === null) return null;
+                jumpers.push({ kind: target.kind, condition: null, target: target.target });
+            }
+            sawFallback = true;
+            i += 2;
+            continue;
+        }
+
+        return null;
     }
 
-    return jumps;
+    return jumpers;
+}
+
+function isConditionLine(line: string): boolean {
+    return new RegExp(`^-\\s*${escapeRegExp(KW_CONDITION[0])}\\s*[：:]\\s*`).test(line);
+}
+
+function isFallbackLine(line: string): boolean {
+    return /^-\s*否则\s*$/.test(line) || /^-\s*否则\s*[：:]\s*$/.test(line);
+}
+
+function isEndTargetLine(line: string): boolean {
+    return /^-\s*结束\s*$/.test(line)
+        || new RegExp(`^-\\s*${escapeRegExp(KW_INTERNAL_TARGET[0])}\\s*[：:]\\s*结束\\s*$`).test(line)
+        || new RegExp(`^-\\s*${escapeRegExp(KW_EXTERNAL_TARGET[0])}\\s*[：:]\\s*结束\\s*$`).test(line);
+}
+
+function extractConditionValue(line: string): string | null {
+    const m = line.match(new RegExp(`^-\\s*${escapeRegExp(KW_CONDITION[0])}\\s*[：:]\\s*(.+)$`));
+    return m ? m[1].trim() : null;
+}
+
+interface ParsedTarget {
+    kind: "internal" | "external";
+    target: string;
+}
+
+function parseTargetLine(line: string): ParsedTarget | null {
+    const internalByStep = line.match(
+        new RegExp(`^-\\s*${escapeRegExp(KW_INTERNAL_TARGET[0])}\\s*[：:]\\s*步骤\\s+(\\d+)\\s*$`),
+    );
+    if (internalByStep) return { kind: "internal", target: internalByStep[1] };
+
+    const internalByName = line.match(
+        new RegExp(`^-\\s*${escapeRegExp(KW_INTERNAL_TARGET[0])}\\s*[：:]\\s*(.+)$`),
+    );
+    if (internalByName) return { kind: "internal", target: internalByName[1].trim() };
+
+    const external = line.match(
+        new RegExp(`^-\\s*${escapeRegExp(KW_EXTERNAL_TARGET[0])}\\s*[：:]\\s*(.+)$`),
+    );
+    if (external) return { kind: "external", target: external[1].trim() };
+
+    return null;
+}
+
+function escapeRegExp(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function matchKeyword(text: string, keywords: readonly string[]): boolean {
+    const t = text.trim();
+    return keywords.some((k) => t === k);
 }
 
 function headingText(node: Heading): string {

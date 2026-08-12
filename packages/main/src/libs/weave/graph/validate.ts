@@ -11,10 +11,9 @@ import { topoOrder } from "./graph-ops.js";
 export interface ValidationError {
     kind:
     | "cycle" | "orphan" | "orphan-edge" | "missing-input" | "missing-output"
-    | "multiple-terminal" | "no-terminal" | "invalid-external-edge"
+    | "multiple-terminal" | "no-terminal" | "invalid-jumper"
     | "missing-concept" | "unreachable" | "invalid-jump-target";
     nodeId?: string;
-    edgeId?: string;
     graphId?: string;
     message: string;
     category: "missing-concept" | "missing-node" | "missing-io" | "structural";
@@ -29,16 +28,10 @@ export function validateHumanFlow(
     const g = flow.g;
     const flowNodes = collectFlowNodes(flow, conceptManager);
 
-    // 1. 无环
     if (hasCycle(g)) {
-        errors.push({
-            kind: "cycle",
-            message: "图存在循环",
-            category: "structural",
-        });
+        errors.push({ kind: "cycle", message: "图存在循环", category: "structural" });
     }
 
-    // 2. 全节点可达
     const order = topoOrder(g);
     if (order.length !== g.order) {
         errors.push({
@@ -48,14 +41,9 @@ export function validateHumanFlow(
         });
     }
 
-    // 3. 终端唯一
     const terminals = terminalNodesPure(g);
     if (terminals.length === 0) {
-        errors.push({
-            kind: "no-terminal",
-            message: "图中不存在终端节点",
-            category: "structural",
-        });
+        errors.push({ kind: "no-terminal", message: "图中不存在终端节点", category: "structural" });
     } else if (terminals.length > 1) {
         errors.push({
             kind: "multiple-terminal",
@@ -64,65 +52,48 @@ export function validateHumanFlow(
         });
     }
 
-    // 4. 路径级输入闭合性
-    const pathClosureErrors = validatePathClosure(
-        g, flowNodes, conceptManager,
-    );
+    const pathClosureErrors = validatePathClosure(g, flowNodes, conceptManager);
     errors.push(...pathClosureErrors);
 
-    // 5. 外部边引用合法
     for (const node of flowNodes) {
-        for (const edge of node.externalEdges) {
-            if (edge.kind === "internal") {
-                if (!g.hasNode(edge.target)) {
+        for (const jp of node.jumpers) {
+            if (jp.kind === "internal") {
+                if (!g.hasNode(jp.target)) {
                     errors.push({
-                        kind: "orphan-edge",
+                        kind: "invalid-jumper",
                         nodeId: node.id,
-                        edgeId: edge.condition ?? "unconditional",
-                        message: `节点「${node.name}」的内部边指向不存在的节点「${edge.target}」`,
+                        message: `节点「${node.name}」的内部跳转指向不存在的节点「${jp.target}」`,
                         category: "structural",
                     });
                 }
             } else {
-                const targetGraph = conceptManager.graphs.get(edge.targetGraphId);
+                // external: target = 目标图 id
+                const targetGraph = conceptManager.graphs.get(jp.target);
                 if (!targetGraph) {
                     errors.push({
-                        kind: "invalid-external-edge",
+                        kind: "invalid-jumper",
                         nodeId: node.id,
-                        graphId: edge.targetGraphId,
-                        message: `节点「${node.name}」的外部边指向不存在的图「${edge.targetGraphId}」`,
+                        message: `节点「${node.name}」的外部跳转指向不存在的图「${jp.target}」`,
                         category: "missing-concept",
                     });
-                } else {
-                    if (!targetGraph.g.hasNode(edge.targetNodeId)) {
-                        errors.push({
-                            kind: "invalid-external-edge",
-                            nodeId: node.id,
-                            graphId: edge.targetGraphId,
-                            message: `节点「${node.name}」的外部边指向图「${edge.targetGraphId}」中不存在的节点「${edge.targetNodeId}」`,
-                            category: "missing-concept",
-                        });
-                    }
                 }
             }
         }
     }
 
-    // 6. 约束可达
     for (const node of flowNodes) {
-        for (const vid of node.validatorIds) {
-            if (!conceptManager.get(vid)) {
+        for (const cid of node.constraintIds) {
+            if (!conceptManager.get(cid)) {
                 errors.push({
                     kind: "missing-concept",
                     nodeId: node.id,
-                    message: `节点「${node.name}」挂载的约束器「${vid}」不存在`,
+                    message: `节点「${node.name}」挂载的约束器「${cid}」不存在`,
                     category: "missing-concept",
                 });
             }
         }
     }
 
-    // 7. outputs 合法性
     for (const node of flowNodes) {
         for (const outId of node.outputs) {
             if (!conceptManager.get(outId)) {
@@ -171,8 +142,6 @@ function validatePathClosure(
 
         for (const path of paths) {
             const producedOnPath = new Set<string>();
-
-            // 收集路径上所有祖先节点的输出
             for (const ancestorId of path.slice(0, -1)) {
                 const ancestor = nodeById.get(ancestorId);
                 if (ancestor) {
@@ -182,17 +151,10 @@ function validatePathClosure(
                     }
                 }
             }
-
-            // 检查当前节点的 inputs 中，是否有未被路径上任何祖先产出的
-            const missing = requiredArtifacts.filter(
-                (name) => !producedOnPath.has(name),
-            );
-            if (missing.length > 0) {
-                missingByPath.push(missing);
-            }
+            const missing = requiredArtifacts.filter((name) => !producedOnPath.has(name));
+            if (missing.length > 0) missingByPath.push(missing);
         }
 
-        // 如果所有路径都缺少某些输入，报错
         if (missingByPath.length === paths.length) {
             errors.push({
                 kind: "missing-input",
@@ -214,7 +176,6 @@ function enumeratePathsTo(
     limit: number,
 ): string[][] {
     const results: string[][] = [];
-
     function dfs(current: string, path: string[]): void {
         if (results.length >= limit) return;
         if (current === target) {
@@ -228,16 +189,11 @@ function enumeratePathsTo(
             path.pop();
         });
     }
-
     for (const init of initials) {
         if (results.length >= limit) break;
-        if (init === target) {
-            results.push([init]);
-        } else {
-            dfs(init, [init]);
-        }
+        if (init === target) results.push([init]);
+        else dfs(init, [init]);
     }
-
     return results;
 }
 
@@ -270,17 +226,13 @@ function collectFlowNodes(flow: FlowGraph, conceptManager: ConceptManager): Flow
 
 function terminalNodesPure(g: DirectedGraph): string[] {
     const out: string[] = [];
-    g.forEachNode((id) => {
-        if (g.outDegree(id) === 0) out.push(id);
-    });
+    g.forEachNode((id) => { if (g.outDegree(id) === 0) out.push(id); });
     return out;
 }
 
 function initialNodesPure(g: DirectedGraph): string[] {
     const out: string[] = [];
-    g.forEachNode((id) => {
-        if (g.inDegree(id) === 0) out.push(id);
-    });
+    g.forEachNode((id) => { if (g.inDegree(id) === 0) out.push(id); });
     return out;
 }
 
