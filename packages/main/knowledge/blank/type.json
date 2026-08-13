@@ -127,51 +127,13 @@
                         "defaultOpen": true,
                         "children": [
                             {
-                                "type": "select",
-                                "binding": {
-                                    "key": "config:evaluation_mode"
-                                },
-                                "label": "评价方式",
-                                "icon": "IconStar",
-                                "fallback": "auto",
-                                "options": [
-                                    {
-                                        "value": "manual",
-                                        "label": "人工评价",
-                                        "sub": "每次迭代后用户提供文本反馈",
-                                        "badge": {
-                                            "text": "👤",
-                                            "className": "bg-foreground/10 text-foreground"
-                                        }
-                                    },
-                                    {
-                                        "value": "auto",
-                                        "label": "自动评测",
-                                        "sub": "基于测试用例和指标自动打分",
-                                        "badge": {
-                                            "text": "🤖",
-                                            "className": "bg-foreground/10 text-foreground"
-                                        }
-                                    },
-                                    {
-                                        "value": "hybrid",
-                                        "label": "混合模式",
-                                        "sub": "先自动评分，用户可覆写",
-                                        "badge": {
-                                            "text": "⚡",
-                                            "className": "bg-foreground/10 text-foreground"
-                                        }
-                                    }
-                                ]
-                            },
-                            {
                                 "type": "field",
                                 "binding": {
-                                    "key": "config:max_iterations"
+                                    "key": "maxReactRounds"
                                 },
-                                "label": "最大迭代次数",
+                                "label": "转标准格式最大轮次",
                                 "editor": "inline",
-                                "placeholder": "10",
+                                "placeholder": "4",
                                 "inputType": "number"
                             },
                             {
@@ -217,71 +179,6 @@
                                         "label": "回退",
                                         "sub": "保留稳定版本，回退无效改动",
                                         "dot": "bg-amber-500"
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        "type": "accordion-section",
-                        "title": "输出规格",
-                        "icon": "IconFileExport",
-                        "children": [
-                            {
-                                "type": "select",
-                                "binding": {
-                                    "key": "config:output_format"
-                                },
-                                "label": "工作流定义格式",
-                                "icon": "IconJson",
-                                "fallback": "json",
-                                "options": [
-                                    {
-                                        "value": "json",
-                                        "label": "JSON",
-                                        "sub": "结构化工作流节点与边",
-                                        "badge": {
-                                            "text": "JSON",
-                                            "className": "bg-foreground/10 text-foreground"
-                                        }
-                                    },
-                                    {
-                                        "value": "yaml",
-                                        "label": "YAML",
-                                        "sub": "人类可读的声明式定义",
-                                        "badge": {
-                                            "text": "YAML",
-                                            "className": "bg-foreground/10 text-foreground"
-                                        }
-                                    }
-                                ]
-                            },
-                            {
-                                "type": "select",
-                                "binding": {
-                                    "key": "language"
-                                },
-                                "label": "界面与注释语言",
-                                "icon": "IconLanguage",
-                                "fallback": "zh",
-                                "options": [
-                                    {
-                                        "value": "zh",
-                                        "label": "中文",
-                                        "sub": "简体中文",
-                                        "badge": {
-                                            "text": "ZH",
-                                            "className": "bg-linear-to-br from-rose-500 to-amber-500 text-white shadow-sm"
-                                        }
-                                    },
-                                    {
-                                        "value": "en",
-                                        "label": "English",
-                                        "sub": "English",
-                                        "badge": {
-                                            "text": "EN",
-                                            "className": "bg-linear-to-br from-sky-500 to-indigo-500 text-white shadow-sm"
-                                        }
                                     }
                                 ]
                             }

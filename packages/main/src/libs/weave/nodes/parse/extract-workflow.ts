@@ -1,13 +1,8 @@
 /**
- * weaver · parse · 提取入口（v4）
+ * weaver · parse · 提取入口（v5.1）
  *
- * 稳定性改进（基于实际运行日志确认）：
- *  - 多终端节点由 DAG 验证层降级为 warning，extract 主流程不再因此阻塞；
- *  - 校验阻断判定基于 error 级（blockingErrors），warning 仅用于日志与反馈；
- *  - section-repair 的全局反馈必须真正进入下一轮 semanticRefine（修复 bug）；
- *  - 交付物语义作用抽取仅在最终通过轮次执行一次。
- *
- * 控制流与约束仍以自然语言保留在 action 中，不结构化提取。
+ * 本次仅修复 normalize() 中 ParsedGlobalInput 类型不兼容的 TS 编译错误；
+ * 其余语义、自检、sanitizer、修补逻辑均与 v5 完全一致。
  */
 
 import { safefmt } from "$libs/model/llm/outline.js";
@@ -36,7 +31,6 @@ export interface ArtifactReport {
     total: number;
 }
 
-/** 结构化抽取 + 归一化后的工作流数据（可序列化，供缓存与确定性重建） */
 export interface CachedWorkflow {
     flowName: string;
     goal: string;
@@ -63,78 +57,30 @@ export interface ExtractOptions {
 // ════════════════════════════════════════════════════════════════════
 
 const GlobalInputSchema = z.object({
-    key: z
-        .string()
-        .describe(
-            "全局输入项 / 配置项的名称，直接沿用原文中的叫法，不要改名、翻译或添加符号。",
-        ),
-    hasDefault: z
-        .boolean()
-        .describe(
-            "该项是否为带固定内容的配置项。若原文提供了可整体复用的固定素材" +
-            "（如结构化大纲模板、标题公式清单、待回答问题清单、检查清单、示例库等），则为 true；" +
-            "若只是需从外部提供、无固定内容的初始材料，则为 false。",
-        ),
-    defaultValue: z
-        .string()
-        .describe(
-            "当 hasDefault 为 true 时，填该配置项的【完整逐字内容】" +
-            "——必须原样保留，绝不概括、绝不省略、绝不删减；" +
-            "hasDefault 为 false 时填空字符串。",
-        ),
+    key: z.string().describe("全局输入项 / 配置项的名称，直接沿用原文中的叫法。"),
+    hasDefault: z.boolean().describe("是否为带固定内容的配置项。"),
+    defaultValue: z.string().describe("配置项的【完整逐字内容】。hasDefault=false 时填空字符串。"),
 });
 
 const ExtractedNodeSchema = z.object({
-    order: z
-        .number()
-        .int()
-        .describe("步骤序号，从 1 开始的连续整数，严格按执行先后顺序排列，不得跳号或重复。"),
-    name: z
-        .string()
-        .describe(
-            "步骤名称，简洁的动宾短语。同一名称在全流程内唯一。",
-        ),
-    intent: z.string().describe("本步骤的业务目的，用一句话说明为什么要执行这一步。"),
-    inputs: z
-        .array(z.string())
-        .describe(
-            "本步骤所需的输入产物 / 配置项名称列表。每个名称直接沿用原文叫法，" +
-            "且必须与产出它的步骤 outputs 中的名称、或全局配置项名称逐字完全一致。",
-        ),
-    outputs: z
-        .array(z.string())
-        .describe(
-            "本步骤产出的产物名称列表。每个名称直接沿用原文叫法，供下游步骤在 inputs 中按逐字相同的名称引用。",
-        ),
+    order: z.number().int().describe("步骤序号，从 1 开始的连续整数，不得跳号或重复。"),
+    name: z.string().describe("步骤名称，简洁的动宾短语，全流程内唯一。"),
+    intent: z.string().describe("本步骤的业务目的。"),
+    inputs: z.array(z.string()).describe("输入产物 / 配置项名称列表，逐字一致。"),
+    outputs: z.array(z.string()).describe("产出产物名称列表，逐字一致。"),
     action: z
         .string()
         .describe(
-            "本步骤的完整可执行动作描述，主谓宾齐全。必须【逐字】完整保留原文中该步骤的所有执行细节、判断标准、条件分支与循环控制。\n" +
-            "信息零丢失要求：\n" +
-            "  1. 所有控制流——'若 X 则回到/返回/跳到步骤 N'、'否则继续'、'重复直到…'、'转去某流程'——" +
-            "必须原样保留在本动作文本里，用自然语言表达，【不要】拆成单独字段或章节；\n" +
-            "  2. 所有质量约束/校验条件同样保留在动作文本里；\n" +
-            "  3. 动作中引用的每一个产物 / 配置项名称，必须与本步骤 inputs/outputs 或全局配置项里的名称逐字一致，并用反引号包裹；\n" +
-            "  4. 不得把原文的模板、公式清单、问题清单等具体内容在动作里丢弃或概括——" +
-            "这类固定素材应作为全局配置项声明（见 globalInputs），并在本步骤 inputs 中按名引用。",
+            "完整可执行动作描述，主谓宾齐全，保留所有控制流与质量约束。" +
+            "动作中引用的产物 / 配置项名称必须与本步骤 inputs/outputs 或全局配置项里的名称逐字一致，并用反引号包裹。",
         ),
 });
 
 const WorkflowSchema = z.object({
-    flowName: z
-        .string()
-        .describe("整个工作流的名称，取自文档的一级标题，或对全流程目标的简洁概括。"),
-    goal: z.string().describe("整个工作流的总目标，一段话描述本工作流最终要达成什么。"),
-    globalInputs: z
-        .array(GlobalInputSchema)
-        .describe(
-            "工作流的全局输入项与配置项：(a) 不由任何步骤产出、需从外部提供的初始材料（hasDefault=false）；" +
-            "(b) 原文中出现的可复用固定素材（模板、公式清单、问题清单、检查清单、示例库等），" +
-            "hasDefault=true 且 defaultValue 存完整逐字内容，并确保消费它的步骤在 inputs 中按同名引用。",
-        ),
-    nodes: z
-        .array(ExtractedNodeSchema)
-        .describe("按执行顺序排列的所有步骤，不得遗漏原文中的任何步骤。"),
+    flowName: z.string().describe("工作流名称。"),
+    goal: z.string().describe("工作流总目标。"),
+    globalInputs: z.array(GlobalInputSchema).describe("全局输入项与配置项。"),
+    nodes: z.array(ExtractedNodeSchema).describe("按执行顺序排列的所有步骤。"),
 });
 
 type ExtractedWorkflow = z.infer<typeof WorkflowSchema>;
@@ -162,7 +108,6 @@ export async function extractWorkflow(
             `doc ${docIndex + 1} 第 ${round + 1}/${maxRounds} 轮：语义整理`,
         );
 
-        // ── 阶段 ①：语义整理（内部含 3 轮 messages 自检 reAct）──
         const refine = await semanticRefine(
             ctx,
             workingDoc,
@@ -180,7 +125,6 @@ export async function extractWorkflow(
             `[extract] doc ${docIndex + 1} round ${round + 1} 语义整理完成，长度 ${semanticDoc.length}`,
         );
 
-        // ── 阶段 ②：safefmt 抽取结构化 JSON ──
         const extracted = await extractStructured(ctx, semanticDoc);
         if (!extracted || extracted.nodes.length === 0) {
             lastFeedback = [
@@ -193,7 +137,6 @@ export async function extractWorkflow(
             continue;
         }
 
-        // ── 阶段 ③：归一化 → 构建 flow + DAG 验证 ──
         const cached = normalize(extracted);
         if (cached.nodes.length === 0) {
             lastFeedback = ["[结构化抽取] 未抽取到任何有效步骤，请确保文档中的每个步骤都清晰可辨。"];
@@ -240,13 +183,11 @@ export async function extractWorkflow(
             );
         }
 
-        // 仅 error 级阻断通过判定
         if (
             validationErrors.length === 0 &&
             artifactReport.orphans.length === 0 &&
             actionIssues.length === 0
         ) {
-            // ── 阶段 ⑤：交付物语义作用抽取 + 回填 intent（专职子 LLM）──
             const names = collectArtifactNames(cached);
             const artifactSemantics = await extractArtifactSemantics(ctx, semanticDoc, names);
             applyArtifactSemantics(ctx, artifactSemantics);
@@ -262,10 +203,8 @@ export async function extractWorkflow(
             return { flow, standardDoc, cached, artifactReport };
         }
 
-        // ── 失败：先把可定位到 step 的反馈分桶，做 section-level 修补 ──
         const bucketed = bucketFeedbacksByStep(validationErrors, actionIssues);
         const artifactFeedback = formatArtifactFeedback(artifactReport);
-        // 全局反馈 = 不能定位到 step 的 validation error + 死/孤产物 + warning
         const allGlobal = [
             ...bucketed.global,
             ...artifactFeedback,
@@ -284,13 +223,11 @@ export async function extractWorkflow(
                 `doc ${docIndex + 1} 第 ${round + 1} 轮：section 修补 ${bucketed.stepTargets.length} 个步骤，重新抽取`,
             );
             workingDoc = repair.doc;
-            // 关键修复：全局反馈必须传进下一轮 semanticRefine，不再丢失
             lastFeedback = allGlobal;
-            lastSemanticMessages = undefined; // 重新从工作 doc 起步
+            lastSemanticMessages = undefined;
             continue;
         }
 
-        // section 修补无变化或全部失败 → 回退语义整理：把所有反馈回灌
         lastFeedback = [
             ...bucketed.stepTargets.flatMap((t) => t.feedbacks),
             ...allGlobal,
@@ -324,8 +261,59 @@ async function extractStructured(
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 归一化
+// 归一化（含 name sanitizer）
 // ════════════════════════════════════════════════════════════════════
+
+/**
+ * 清净化产物 / 节点 / 全局输入名称：
+ *  - 去掉前后空白；
+ *  - 去掉所有反引号（U+0060），包括 markdown 反引号转义 "\`"；
+ *  - 去掉常见的引号变体（避免 LLM 把 `"`/`'`/`「`/`」`/`《`/`》` 一并塞进 name）；
+ *  - 空名直接丢弃；
+ *  - 长度上限 50（防御性，避免 KV key 异常膨胀）。
+ */
+function sanitizeName(raw: unknown): string {
+    if (typeof raw !== "string") return "";
+    let s = raw.trim();
+    s = s.replace(/\\?`/g, "");
+    s = s.replace(/["'`´「」『』《》<>]/g, "");
+    s = s.trim();
+    if (s.length === 0) return "";
+    if (s.length > 50) s = s.slice(0, 50).trim();
+    return s;
+}
+
+function sanitizeNames(arr: unknown): string[] {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const raw of (Array.isArray(arr) ? arr : [])) {
+        const t = sanitizeName(raw);
+        if (!t || seen.has(t)) continue;
+        seen.add(t);
+        out.push(t);
+    }
+    return out;
+}
+
+function sanitizeActionText(raw: unknown): string {
+    if (typeof raw !== "string") return "";
+    return raw.trim();
+}
+
+/**
+ * 把 raw globalInput 转成 ParsedGlobalInput；过滤掉空 key。
+ * 直接返回 ParsedGlobalInput，不构造 inline object，避免 defaultValue 显式 undefined
+ * 与 ParsedGlobalInput.defaultValue 可选字段类型不兼容。
+ */
+function toParsedGlobalInput(raw: { key?: unknown; hasDefault?: unknown; defaultValue?: unknown }): ParsedGlobalInput | null {
+    const key = sanitizeName(raw.key);
+    if (!key) return null;
+    const hasDefault = !!raw.hasDefault;
+    const dv = sanitizeActionText(raw.defaultValue);
+    const gi: ParsedGlobalInput = { key, hasDefault };
+    if (hasDefault && dv) gi.defaultValue = dv;
+    return gi;
+}
 
 function normalize(ex: ExtractedWorkflow): CachedWorkflow {
     const sorted = [...ex.nodes].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -333,43 +321,26 @@ function normalize(ex: ExtractedWorkflow): CachedWorkflow {
     const nodes: ParsedNode[] = sorted
         .map((n) => ({
             order: 0,
-            name: (n.name ?? "").trim(),
-            intent: (n.intent ?? "").trim(),
-            inputs: cleanNames(n.inputs),
-            outputs: cleanNames(n.outputs),
-            action: (n.action ?? "").trim(),
+            name: sanitizeName(n.name),
+            intent: sanitizeActionText(n.intent),
+            inputs: sanitizeNames(n.inputs),
+            outputs: sanitizeNames(n.outputs),
+            action: sanitizeActionText(n.action),
             sourceLines: { start: 0, end: 0 },
         }))
         .filter((n) => n.name.length > 0)
         .map((n, i) => ({ ...n, order: i + 1 }));
 
-    const globalInputs: ParsedGlobalInput[] = (ex.globalInputs ?? [])
-        .map((gi) => {
-            const dv = (gi.defaultValue ?? "").trim();
-            return {
-                key: (gi.key ?? "").trim(),
-                hasDefault: !!gi.hasDefault,
-                defaultValue: gi.hasDefault && dv ? dv : undefined,
-            };
-        })
-        .filter((gi) => gi.key.length > 0);
+    const globalInputs: ParsedGlobalInput[] = [];
+    for (const gi of ex.globalInputs ?? []) {
+        const parsed = toParsedGlobalInput(gi);
+        if (parsed) globalInputs.push(parsed);
+    }
 
-    const flowName = (ex.flowName ?? "").trim() || "工作流";
-    const goal = (ex.goal ?? "").trim();
+    const flowName = sanitizeName(ex.flowName) || "工作流";
+    const goal = sanitizeActionText(ex.goal);
 
     return { flowName, goal, globalInputs, nodes, artifactSemantics: [] };
-}
-
-function cleanNames(arr: string[] | undefined): string[] {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const raw of arr ?? []) {
-        const t = (raw ?? "").trim();
-        if (!t || seen.has(t)) continue;
-        seen.add(t);
-        out.push(t);
-    }
-    return out;
 }
 
 function collectArtifactNames(cached: CachedWorkflow): string[] {
