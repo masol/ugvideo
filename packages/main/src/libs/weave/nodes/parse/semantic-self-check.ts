@@ -1,17 +1,27 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * weaver · parse · 语义自检（v13）
+ * weaver · parse · 语义自检（v14）
  *
- * 3 项内部校验，全部用纯文本模式（mdast 解析 + 正则），不调 LLM：
- * 1. 名称对齐：扫描所有节点，提取产物名同类项（基于字面 + 关键词重叠），发现疑似不一致
- * 2. 可行性：动作段不能为空、不能含 TODO/未完成标记
- * 3. 完整性：每个节点的输入/输出/动作三项必须存在
+ * 变更：
+ * - 同名对齐：去掉字符 jaccard 启发式，改用 fuse.js（vm 沙箱 fixedpkgs 注入，v7.5）
+ *   跨步骤产物名模糊匹配：频次 =1 的低频名对频次 ≥2 的高频名索引做查询，
+ *   score ≤ 0.35 视为疑似别名并报告。
+ * - 保留三项内部校验（不调 LLM，纯 mdast + 正则）：
+ *   1. 完整性：每步输入/输出/动作三项必填
+ *   2. 可行性：动作段不能为空、不能含 TODO/未完成标记
+ *   3. 名称对齐：fuse.js 模糊匹配（替代原 jaccard）
  */
 
 import type { Heading, List, ListItem, Root, RootContent } from "mdast";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 import type { WeaveContext } from "../../context.js";
+
+/** fuse.js score 越低越相似；0.35 对中文产物名"看起来是同一概念但写法略不同"较稳 */
+const FUSE_ALIGN_THRESHOLD = 0.35;
+
+/** 至少出现 2 次才作为高频锚点（避免对唯一出现的名字做无意义比对） */
+const HIGH_FREQ_MIN_COUNT = 2;
 
 export interface SemanticCheckResult {
     issues: string[];
@@ -60,7 +70,7 @@ export function semanticSelfCheck(doc: string, _ctx: WeaveContext): SemanticChec
         }
     }
 
-    // 4. 名称对齐检查
+    // 4. 名称对齐检查（fuse.js）
     const nameAlignIssues = checkNameAlignment(stepSections);
     issues.push(...nameAlignIssues);
 
@@ -121,49 +131,56 @@ function extractListFields(body: RootContent[]): Record<string, string> {
 }
 
 /**
- * 名称对齐检查：提取所有节点输入/输出/动作中的名词短语，
- * 出现"看起来应该一致但实际不同"的情况时报问题。
- *
- * 启发式：
- * - 收集所有出现过的「输入」/「输出」中的名词
- * - 对每个名词，用 jaccard 相似度找它的「似是而非」的别名（不在同一节点出现但在不同节点出现）
- * - 报疑似不一致
+ * 名称对齐检查（fuse.js 版）：
+ * - 收集所有出现过的产物名（输入 + 输出段），统计频次
+ * - 对每个低频名（=1），用 fuse 在高频名（≥2）上做模糊查询
+ * - score ≤ 阈值即视为疑似别名，报告让模型统一名称
  */
 function checkNameAlignment(steps: StepSection[]): string[] {
     const issues: string[] = [];
 
-    // 提取每个节点出现的所有名词短语（粗略：分句 + 顿号拆分）
+    const Fuse = (globalThis as any).Fuse;
+    if (typeof Fuse !== "function") {
+        // fuse.js 未注入：跳过此项校验（不阻塞流程）
+        return issues;
+    }
+
     const namesByStep: string[][] = [];
     for (const sec of steps) {
         const fields = extractListFields(sec.body);
         const allText = `${fields["输入"] ?? ""} ${fields["输出"] ?? ""}`;
-        const names = splitToPhrases(allText);
-        namesByStep.push(names);
+        namesByStep.push(splitToPhrases(allText));
     }
 
-    // 收集全部名词，统计频次
     const freq = new Map<string, number>();
     for (const names of namesByStep) {
         for (const n of names) freq.set(n, (freq.get(n) ?? 0) + 1);
     }
 
-    // 对低频名词（出现 1 次）检查是否存在「高频近义词」
-    const highFreq = [...freq.entries()].filter(([, c]) => c >= 2).map(([n]) => n);
+    const highFreq = [...freq.entries()]
+        .filter(([, c]) => c >= HIGH_FREQ_MIN_COUNT)
+        .map(([n]) => n);
+    if (highFreq.length === 0) return issues;
+
+    const fuse = new Fuse(highFreq, {
+        threshold: FUSE_ALIGN_THRESHOLD,
+        includeScore: true,
+        ignoreLocation: true,
+    });
+
     for (let i = 0; i < steps.length; i++) {
         const stepName = steps[i].heading?.replace(/^\d+\.\s*/, "").trim() ?? `步骤${i + 1}`;
         for (const name of namesByStep[i]) {
-            if (freq.get(name)! >= 2) continue;
-            // 找疑似近义
-            for (const h of highFreq) {
-                if (name === h) continue;
-                if (isSimilar(name, h)) {
-                    issues.push(
-                        `步骤「${stepName}」使用了名词「${name}」（仅出现 1 次），` +
-                        `但其他步骤中用了类似名词「${h}」（出现 ${freq.get(h)} 次）。` +
-                        `请统一名称。`,
-                    );
-                    break;
-                }
+            if ((freq.get(name) ?? 0) >= HIGH_FREQ_MIN_COUNT) continue;
+            const hits = fuse.search(name);
+            const best = hits[0];
+            if (!best || best.score == null) continue;
+            if (best.score <= FUSE_ALIGN_THRESHOLD && best.item !== name) {
+                issues.push(
+                    `步骤「${stepName}」使用了名词「${name}」（仅出现 1 次），` +
+                    `与其他步骤中的高频名词「${best.item}」高度相似（fuse score=${best.score.toFixed(2)}）。` +
+                    `请统一名称。`,
+                );
             }
         }
     }
@@ -179,16 +196,6 @@ function splitToPhrases(text: string): string[] {
         .split(/[、，,；;\s\n]+/)
         .map((s) => s.trim())
         .filter((s) => s.length >= 2 && s.length <= 20);
-}
-
-function isSimilar(a: string, b: string): boolean {
-    if (a.length < 2 || b.length < 2) return false;
-    if (a.includes(b) || b.includes(a)) return true;
-    const setA = new Set(a);
-    const setB = new Set(b);
-    const inter = [...setA].filter((c) => setB.has(c)).length;
-    const union = new Set([...setA, ...setB]).size;
-    return union > 0 && inter / union >= 0.6;
 }
 
 function plainText(node: any): string {

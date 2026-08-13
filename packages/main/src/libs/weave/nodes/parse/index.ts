@@ -1,7 +1,7 @@
 /**
- * weaver · node ① parse（v14）
+ * weaver · node ① parse（v15）
  *
- * 缓存命中路径改为：从结构化 JSON 确定性重建 flow（不再重跑 LLM）。
+ * 缓存命中路径：从结构化 JSON 确定性重建 flow + 由代码渲染标准 doc 并回灌缓存。
  */
 
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
@@ -11,7 +11,9 @@ import type { ValidationError } from "../../graph/validate.js";
 import { errorsToString } from "../../graph/validate.js";
 import type { HumanFlow } from "../../types.js";
 import { buildHumanFlowFromParsed } from "./build-flow.js";
+import type { CachedWorkflow } from "./extract-workflow.js";
 import { extractWorkflow } from "./extract-workflow.js";
+import { renderStandardDoc } from "./render-standard.js";
 
 export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
     const docs = ctx.inputDocs;
@@ -25,8 +27,7 @@ export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
     if (shouldSkip) {
         const cachedIndex = ctx.storage.workflow.getParsedDocsIndex();
         if (cachedIndex && cachedIndex.length === docs.length) {
-            // 先确认所有 doc 的结构化缓存都在，全部命中才走缓存路径
-            const cachedAll: import("./extract-workflow.js").CachedWorkflow[] = [];
+            const cachedAll: CachedWorkflow[] = [];
             let complete = true;
             for (let i = 0; i < docs.length; i++) {
                 const c = ctx.storage.workflow.getExtractedWorkflow(i);
@@ -49,6 +50,13 @@ export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
                         ctx,
                     );
                     registerFlow(ctx, flow, i);
+                    const standardDoc = renderStandardDoc(
+                        c.flowName,
+                        c.goal,
+                        c.globalInputs,
+                        c.nodes,
+                    );
+                    ctx.storage.workflow.saveStandardDoc(i, standardDoc);
                 }
                 ctx.ctx.notify("parse 完成", `共 ${cachedAll.length} 个工作流（从缓存）`);
                 return;

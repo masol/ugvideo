@@ -11,7 +11,7 @@
 import type { WeaveContext } from "../../context.js";
 import { addEdge, addNode, createGraph } from "../../graph/gdag.js";
 import type { Artifact, HumanFlow, HumanNode, Jumper } from "../../types.js";
-import type { ParsedGlobalInput, ParsedJumper, ParsedNode } from "./standard.js";
+import type { ParsedGlobalInput, ParsedJumper, ParsedNode } from "./parse-types.js";
 
 export interface ArtifactRegistry {
     producer: Map<string, string>;

@@ -18,7 +18,7 @@ import {
     KW_OUTPUTS,
     KW_PURPOSE,
 } from "./keywords.js";
-import type { ParsedGlobalInput, ParsedJumper, ParsedNode } from "./standard.js";
+import type { ParsedGlobalInput, ParsedJumper, ParsedNode } from "./parse-types.js";
 
 export function renderStandardDoc(
     flowName: string,
