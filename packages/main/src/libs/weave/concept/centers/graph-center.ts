@@ -1,7 +1,7 @@
 /**
  * weaver · GraphCenter
  *
- * 管理所有 FlowGraph（包括 HumanFlow）。
+ * 新增 clearById：供 parse reAct rollback 使用。
  */
 
 import { throwUnprcessable } from "$libs/utils/err.js";
@@ -51,8 +51,9 @@ export class GraphCenter {
     listHumanFlows(): HumanFlow[] {
         return this.list().filter(
             (g): g is HumanFlow =>
-                'isHumanWorld' in g &&
-                (g as { isHumanWorld: unknown }).isHumanWorld === true);
+                "isHumanWorld" in g &&
+                (g as { isHumanWorld: unknown }).isHumanWorld === true,
+        );
     }
 
     count(): number {
@@ -67,13 +68,27 @@ export class GraphCenter {
         this._entryGraphId = graphId;
     }
 
-    /** 反查：哪些图包含该节点 */
     getGraphsContaining(nodeId: string): FlowGraph[] {
         const out: FlowGraph[] = [];
         for (const graph of this.graphs.values()) {
             if (graph.g.hasNode(nodeId)) out.push(graph);
         }
         return out;
+    }
+
+    /** 按 id 单点清除（供 rollback 用） */
+    clearById(id: string): boolean {
+        const graph = this.graphs.get(id);
+        if (!graph) return false;
+        this.graphs.delete(id);
+        const lower = graph.name.toLowerCase();
+        if (this.nameIndex.get(lower) === id) this.nameIndex.delete(lower);
+        for (const alias of graph.aliases) {
+            const la = alias.toLowerCase();
+            if (this.aliasIndex.get(la) === id) this.aliasIndex.delete(la);
+        }
+        if (this._entryGraphId === id) this._entryGraphId = null;
+        return true;
     }
 
     clear(): void {

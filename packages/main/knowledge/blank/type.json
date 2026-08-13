@@ -58,24 +58,15 @@
                                 "binding": {
                                     "key": "script"
                                 },
-                                "addLabel": "添加描述片段",
-                                "emptyTitle": "还没有描述",
+                                "addLabel": "添加工作流",
+                                "emptyTitle": "还没有工作流",
                                 "emptyIcon": "IconFileText",
-                                "addDialogTitle": "添加工作流描述",
-                                "editDialogTitle": "编辑描述",
-                                "editDialogDescription": "用自然语言描述工作流的步骤、规则、输入输出、异常处理等。",
+                                "addDialogTitle": "添加一个工作流的描述",
+                                "editDialogTitle": "编辑工作流",
+                                "editDialogDescription": "用自然语言描述此工作流的步骤、规则、输入输出、异常处理等。",
                                 "editAlert": true,
-                                "confirmTitle": "删除描述",
+                                "confirmTitle": "删除工作流",
                                 "confirmMessage": "删除后需重新构建，确定继续吗？"
-                            },
-                            {
-                                "type": "field",
-                                "binding": {
-                                    "key": "workflow_name"
-                                },
-                                "label": "工作流名称",
-                                "editor": "inline",
-                                "placeholder": "例如：周报自动生成流水线"
                             },
                             {
                                 "type": "field",
@@ -87,29 +78,6 @@
                                 "dialogTitle": "编辑目标",
                                 "dialogDescription": "描述该工作流要解决什么问题、最终产出什么。",
                                 "emptyHint": "点击设定目标与产出"
-                            }
-                        ]
-                    },
-                    {
-                        "type": "accordion-section",
-                        "title": "输入输出样例",
-                        "icon": "IconArrowLeftRight",
-                        "badge": "count",
-                        "children": [
-                            {
-                                "type": "text-list",
-                                "binding": {
-                                    "key": "io_examples"
-                                },
-                                "addLabel": "添加样例",
-                                "emptyTitle": "暂无输入输出样例",
-                                "emptyIcon": "IconCode",
-                                "addDialogTitle": "添加输入输出样例",
-                                "editDialogTitle": "编辑样例",
-                                "editDialogDescription": "提供典型输入及其对应的正确输出，帮助 AI 更准确理解工作流。",
-                                "editAlert": false,
-                                "confirmTitle": "删除样例",
-                                "confirmMessage": "确定删除该样例吗？"
                             }
                         ]
                     },

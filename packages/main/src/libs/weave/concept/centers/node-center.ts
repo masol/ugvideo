@@ -1,7 +1,7 @@
 /**
  * weaver · NodeCenter
  *
- * 管理所有 FlowNode（包括 HumanNode）。
+ * 新增 clearById：供 parse reAct rollback 使用。
  */
 
 import type { WeaveContext } from "../../context.js";
@@ -46,13 +46,25 @@ export class NodeCenter {
     }
 
     listHumanNodes(): HumanNode[] {
-        return this.list().filter(
-            (n): n is HumanNode => n.kind === "human"
-        );
+        return this.list().filter((n): n is HumanNode => n.kind === "human");
     }
 
     count(): number {
         return this.nodes.size;
+    }
+
+    /** 按 id 单点清除（供 rollback 用） */
+    clearById(id: string): boolean {
+        const node = this.nodes.get(id);
+        if (!node) return false;
+        this.nodes.delete(id);
+        const lowerName = node.name.toLowerCase();
+        if (this.nameIndex.get(lowerName) === id) this.nameIndex.delete(lowerName);
+        for (const alias of node.aliases) {
+            const la = alias.toLowerCase();
+            if (this.aliasIndex.get(la) === id) this.aliasIndex.delete(la);
+        }
+        return true;
     }
 
     clear(): void {
