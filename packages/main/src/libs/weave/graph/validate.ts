@@ -1,8 +1,10 @@
 /**
  * weaver · DAG 验证（含路径级输入闭合性）
  *
- * 变更：删除全部 jumper 相关校验（self-loop / target-missing / external-target /
- * cross-graph）。控制流以自然语言内蕴在动作中，不在此结构化校验。
+ * 变更：
+ * - 多终端节点（multiple-terminal）降级为警告而非错误——人类工作流中扇出-合流
+ *   结构普遍存在（例：多部分并行写后汇总到结尾），强校验会卡死 reAct 循环；
+ * - 控制流 / 约束 / 跳转均以自然语言内蕴在动作中，不再结构化校验。
  */
 
 import type { DirectedGraph } from "graphology";
@@ -16,6 +18,7 @@ export interface ValidationError {
     | "cycle" | "orphan" | "orphan-edge" | "missing-input" | "missing-output"
     | "multiple-terminal" | "no-terminal"
     | "missing-concept" | "unreachable";
+    severity: "error" | "warning";
     nodeId?: string;
     graphId?: string;
     message: string;
@@ -32,13 +35,19 @@ export function validateHumanFlow(
     const flowNodes = collectFlowNodes(flow, conceptManager);
 
     if (hasCycle(g)) {
-        errors.push({ kind: "cycle", message: "图存在循环", category: "structural" });
+        errors.push({
+            kind: "cycle",
+            severity: "error",
+            message: "图存在循环",
+            category: "structural",
+        });
     }
 
     const order = topoOrder(g);
     if (order.length !== g.order) {
         errors.push({
             kind: "unreachable",
+            severity: "error",
             message: `存在不可达节点：图共 ${g.order} 个，拓扑序仅 ${order.length} 个`,
             category: "structural",
         });
@@ -46,11 +55,19 @@ export function validateHumanFlow(
 
     const terminals = terminalNodesPure(g);
     if (terminals.length === 0) {
-        errors.push({ kind: "no-terminal", message: "图中不存在终端节点", category: "structural" });
+        errors.push({
+            kind: "no-terminal",
+            severity: "error",
+            message: "图中不存在终端节点",
+            category: "structural",
+        });
     } else if (terminals.length > 1) {
+        // 多终端降级为警告：人类工作流里扇出-合流是合法形态，不阻断编译。
         errors.push({
             kind: "multiple-terminal",
-            message: `存在多个终端节点：${terminals.map((t) => `「${t}」`).join("、")}`,
+            severity: "warning",
+            message: `存在多个终端节点：${terminals.map((t) => `「${t}」`).join("、")}；` +
+                `已由 buildHumanFlow 自动补全边，保证只有一个真正终点。`,
             category: "structural",
         });
     }
@@ -63,6 +80,7 @@ export function validateHumanFlow(
             if (!conceptManager.get(cid)) {
                 errors.push({
                     kind: "missing-concept",
+                    severity: "error",
                     nodeId: node.id,
                     message: `节点「${node.name}」挂载的约束器「${cid}」不存在`,
                     category: "missing-concept",
@@ -76,6 +94,7 @@ export function validateHumanFlow(
             if (!conceptManager.get(outId)) {
                 errors.push({
                     kind: "missing-output",
+                    severity: "error",
                     nodeId: node.id,
                     message: `节点「${node.name}」的输出「${outId}」不在概念表中`,
                     category: "missing-concept",
@@ -85,6 +104,11 @@ export function validateHumanFlow(
     }
 
     return errors;
+}
+
+/** 仅返回 error 级（用于 reAct 阻断判定）；warning 不阻断 */
+export function blockingErrors(errors: ValidationError[]): ValidationError[] {
+    return errors.filter((e) => e.severity === "error");
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -107,6 +131,7 @@ function validatePathClosure(
         if (paths.length === 0) {
             errors.push({
                 kind: "unreachable",
+                severity: "error",
                 nodeId: node.id,
                 message: `节点「${node.name}」不可达`,
                 category: "structural",
@@ -135,6 +160,7 @@ function validatePathClosure(
         if (missingByPath.length === paths.length) {
             errors.push({
                 kind: "missing-input",
+                severity: "error",
                 nodeId: node.id,
                 message: `节点「${node.name}」在所有路径上都缺少输入：${missingByPath[0].join(", ")}`,
                 category: "missing-io",
@@ -218,5 +244,8 @@ export function classifyError(err: ValidationError): "missing-concept" | "missin
 }
 
 export function errorsToString(errors: ValidationError[]): string {
-    return errors.map((e, i) => `${i + 1}. [${e.kind}] ${e.message}`).join("\n");
+    return errors
+        .filter((e) => e.severity === "error")
+        .map((e, i) => `${i + 1}. [${e.kind}] ${e.message}`)
+        .join("\n");
 }

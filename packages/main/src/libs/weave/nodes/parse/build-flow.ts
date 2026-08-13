@@ -1,14 +1,12 @@
 /**
  * weaver · parse · 组装 HumanFlow
  *
- * 变更：
+ * 变更（关键稳定性改进）：
+ * - DAG 拓扑补全：拓扑序最末的"汇点节点"自动作为唯一终汇；
+ *   任何有输出且未被任何下游消费的节点，自动连边到该汇点；
+ *   已有出边的节点不动。语义上相当于"未消费输出挂到总汇"，不假设任何控制流。
  * - 全局输入中带默认值的项注册为 Config（携带 defaultValue），其余为普通 Artifact；
- * - artifact/config 的 intent 不再写"X 的输入/输出"，默认置为名称本身，
- *   真正的语义作用由 applyArtifactSemantics 回填；
- * - 删除 formalDoc 字段。
- *
- * DAG 的边完全由 artifact 依赖驱动：某节点输入 artifact 若由上游节点产出，则连边。
- * Config（带默认值）= 全局输入，不产出边。
+ * - artifact/config 的 intent 默认置为名称本身，真正的语义作用由 applyArtifactSemantics 回填。
  */
 
 import type { WeaveContext } from "../../context.js";
@@ -35,7 +33,6 @@ export function buildHumanFlowFromParsed(
     const g = createGraph();
     const nodeIdByOrder = new Map<number, string>();
 
-    // 先注册配置项（带默认值的全局输入），使后续节点输入引用能命中已有 Config
     registerConfigs(ctx, globalInputs);
 
     for (const node of nodes) {
@@ -60,6 +57,22 @@ export function buildHumanFlowFromParsed(
             if (producerId && producerId !== fromId && !g.hasEdge(producerId, fromId)) {
                 addEdge(g, producerId, fromId);
             }
+        }
+    }
+
+    // ── 拓扑补全：确定唯一的"汇点节点" ──
+    const sink = determineSink(g, nodes, nodeIdByOrder);
+    if (sink) {
+        for (const node of nodes) {
+            const fromId = nodeIdByOrder.get(node.order)!;
+            if (fromId === sink) continue;
+            if (g.outDegree(fromId) > 0) continue;
+            // 未被任何下游消费的节点 → 补边到汇点
+            addEdge(g, fromId, sink);
+            ctx.ctx.info?.(
+                `[buildHumanFlowFromParsed] flow=${flowName} ` +
+                `拓扑补全：${fromId} → ${sink}`,
+            );
         }
     }
 
@@ -120,8 +133,31 @@ export function buildHumanFlowFromParsed(
 }
 
 /**
+ * 选汇点策略（按优先级）：
+ *   1. 编号最大的步骤（语义上通常是终汇，符合"按顺序"的自然阅读）；
+ *   2. 若多个同号，选出度最小的；
+ *   3. 若所有节点都尚未形成候选（理论上不可能），返回 null 不补全。
+ *
+ * 为什么不选 LLM：纯结构决策，避免概率性反复。
+ */
+function determineSink(
+    g: ReturnType<typeof createGraph>,
+    nodes: ParsedNode[],
+    nodeIdByOrder: Map<number, string>,
+): string | null {
+    if (nodes.length === 0) return null;
+    const maxOrder = Math.max(...nodes.map((n) => n.order));
+    const candidates = nodes
+        .filter((n) => n.order === maxOrder)
+        .map((n) => nodeIdByOrder.get(n.order)!)
+        .filter((id) => g.hasNode(id));
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => g.outDegree(a) - g.outDegree(b));
+    return candidates[0];
+}
+
+/**
  * 回填交付物语义作用到 intent。
- * 在 build 之后调用（此时 artifact/config 均已注册），直接就地修改概念对象。
  */
 export function applyArtifactSemantics(
     ctx: WeaveContext,
@@ -142,7 +178,7 @@ function registerConfigs(ctx: WeaveContext, globalInputs: ParsedGlobalInput[]): 
             id: gi.key,
             name: gi.key,
             aliases: [],
-            intent: gi.key, // 语义作用稍后由 applyArtifactSemantics 回填
+            intent: gi.key,
             inferred: false,
             constraintIds: [],
             shape: "scalar",
@@ -213,7 +249,7 @@ function ensureArtifact(ctx: WeaveContext, name: string): string {
         id,
         name,
         aliases: [],
-        intent: name, // 语义作用稍后由 applyArtifactSemantics 回填
+        intent: name,
         inferred: true,
         constraintIds: [],
         shape: "scalar",

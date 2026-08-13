@@ -1,10 +1,13 @@
 /**
- * weaver · parse · 提取入口
+ * weaver · parse · 提取入口（v4）
  *
- * 变更：
- * - 验证通过后运行专职子 LLM 抽取交付物语义作用（extractArtifactSemantics），
- *   回填到 artifact/config 的 intent，并随 CachedWorkflow 持久化（缓存重建复用）。
- * - 控制流与约束仍以自然语言保留在 action 中，不结构化提取。
+ * 稳定性改进（基于实际运行日志确认）：
+ *  - 多终端节点由 DAG 验证层降级为 warning，extract 主流程不再因此阻塞；
+ *  - 校验阻断判定基于 error 级（blockingErrors），warning 仅用于日志与反馈；
+ *  - section-repair 的全局反馈必须真正进入下一轮 semanticRefine（修复 bug）；
+ *  - 交付物语义作用抽取仅在最终通过轮次执行一次。
+ *
+ * 控制流与约束仍以自然语言保留在 action 中，不结构化提取。
  */
 
 import { safefmt } from "$libs/model/llm/outline.js";
@@ -12,7 +15,7 @@ import type { ModelMessage } from "ai";
 import { Output } from "ai";
 import { z } from "zod";
 import type { WeaveContext } from "../../context.js";
-import { validateHumanFlow } from "../../graph/validate.js";
+import { blockingErrors, validateHumanFlow } from "../../graph/validate.js";
 import type { HumanFlow } from "../../types.js";
 import { checkActionCompleteness } from "./action-completeness.js";
 import type { ArtifactRegistry } from "./build-flow.js";
@@ -20,6 +23,7 @@ import { applyArtifactSemantics, buildHumanFlowFromParsed } from "./build-flow.j
 import { extractArtifactSemantics } from "./extract-artifact-semantics.js";
 import type { ArtifactSemantic, ParsedGlobalInput, ParsedNode } from "./parse-types.js";
 import { renderStandardDoc } from "./render-standard.js";
+import { bucketFeedbacksByStep, repairSectionsByLLM } from "./section-repair.js";
 import { semanticRefine } from "./semantic-refine.js";
 
 // ════════════════════════════════════════════════════════════════════
@@ -55,7 +59,7 @@ export interface ExtractOptions {
 }
 
 // ════════════════════════════════════════════════════════════════════
-// safefmt 抽取 schema —— 抽取质量完全由 describe 决定
+// safefmt 抽取 schema
 // ════════════════════════════════════════════════════════════════════
 
 const GlobalInputSchema = z.object({
@@ -75,8 +79,7 @@ const GlobalInputSchema = z.object({
         .string()
         .describe(
             "当 hasDefault 为 true 时，填该配置项的【完整逐字内容】" +
-            "（例如结构化大纲模板的全文、全部标题公式、全部待回答问题）——" +
-            "必须原样保留，绝不概括、绝不省略、绝不删减；" +
+            "——必须原样保留，绝不概括、绝不省略、绝不删减；" +
             "hasDefault 为 false 时填空字符串。",
         ),
 });
@@ -89,22 +92,19 @@ const ExtractedNodeSchema = z.object({
     name: z
         .string()
         .describe(
-            "步骤名称，简洁的动宾短语，例如'确定文章主题与目标读者'。同一名称在全流程内唯一。",
+            "步骤名称，简洁的动宾短语。同一名称在全流程内唯一。",
         ),
     intent: z.string().describe("本步骤的业务目的，用一句话说明为什么要执行这一步。"),
     inputs: z
         .array(z.string())
         .describe(
             "本步骤所需的输入产物 / 配置项名称列表。每个名称直接沿用原文叫法，" +
-            "且必须与产出它的步骤 outputs 中的名称、或全局配置项名称逐字完全一致。" +
-            "凡是本步骤动作里真正会用到的模板/清单/上游产物，都要在此声明；" +
-            "凡是声明了却在动作里用不到的项，不要写。若无输入则填空数组。",
+            "且必须与产出它的步骤 outputs 中的名称、或全局配置项名称逐字完全一致。",
         ),
     outputs: z
         .array(z.string())
         .describe(
-            "本步骤产出的产物名称列表。每个名称直接沿用原文叫法，供下游步骤在 inputs 中按逐字相同的名称引用。" +
-            "若无输出则填空数组。",
+            "本步骤产出的产物名称列表。每个名称直接沿用原文叫法，供下游步骤在 inputs 中按逐字相同的名称引用。",
         ),
     action: z
         .string()
@@ -113,7 +113,7 @@ const ExtractedNodeSchema = z.object({
             "信息零丢失要求：\n" +
             "  1. 所有控制流——'若 X 则回到/返回/跳到步骤 N'、'否则继续'、'重复直到…'、'转去某流程'——" +
             "必须原样保留在本动作文本里，用自然语言表达，【不要】拆成单独字段或章节；\n" +
-            "  2. 所有质量约束/校验条件——'字数不少于…'、'读起来要自然'、'外行要能看懂'等——同样保留在动作文本里；\n" +
+            "  2. 所有质量约束/校验条件同样保留在动作文本里；\n" +
             "  3. 动作中引用的每一个产物 / 配置项名称，必须与本步骤 inputs/outputs 或全局配置项里的名称逐字一致，并用反引号包裹；\n" +
             "  4. 不得把原文的模板、公式清单、问题清单等具体内容在动作里丢弃或概括——" +
             "这类固定素材应作为全局配置项声明（见 globalInputs），并在本步骤 inputs 中按名引用。",
@@ -128,18 +128,13 @@ const WorkflowSchema = z.object({
     globalInputs: z
         .array(GlobalInputSchema)
         .describe(
-            "工作流的全局输入项与配置项：\n" +
-            "  (a) 不由任何步骤产出、需从外部提供的初始材料（hasDefault=false）；\n" +
-            "  (b) 原文中出现的可复用固定素材（模板、公式清单、问题清单、检查清单、示例库等），" +
-            "hasDefault=true 且 defaultValue 存完整逐字内容，并确保消费它的步骤在 inputs 中按同名引用。\n" +
-            "若没有则填空数组。",
+            "工作流的全局输入项与配置项：(a) 不由任何步骤产出、需从外部提供的初始材料（hasDefault=false）；" +
+            "(b) 原文中出现的可复用固定素材（模板、公式清单、问题清单、检查清单、示例库等），" +
+            "hasDefault=true 且 defaultValue 存完整逐字内容，并确保消费它的步骤在 inputs 中按同名引用。",
         ),
     nodes: z
         .array(ExtractedNodeSchema)
-        .describe(
-            "按执行顺序排列的所有步骤，不得遗漏原文中的任何步骤。" +
-            "每个步骤都必须完整填写 name / intent / inputs / outputs / action 五项。",
-        ),
+        .describe("按执行顺序排列的所有步骤，不得遗漏原文中的任何步骤。"),
 });
 
 type ExtractedWorkflow = z.infer<typeof WorkflowSchema>;
@@ -159,6 +154,7 @@ export async function extractWorkflow(
     const maxRounds = ctx.storage.config.getMaxReactRounds();
     let lastFeedback: string[] = [];
     let lastSemanticMessages: ModelMessage[] | undefined;
+    let workingDoc: string = doc;
 
     for (let round = 0; round < maxRounds; round++) {
         ctx.ctx.notify(
@@ -167,16 +163,18 @@ export async function extractWorkflow(
         );
 
         // ── 阶段 ①：语义整理（内部含 3 轮 messages 自检 reAct）──
-        const { doc: semanticDoc, messages } = await semanticRefine(
+        const refine = await semanticRefine(
             ctx,
-            doc,
+            workingDoc,
             options.goal ?? null,
             options.constraints ?? null,
             options.preferences ?? null,
             lastFeedback,
             lastSemanticMessages,
         );
-        lastSemanticMessages = messages;
+        const semanticDoc = refine.doc;
+        lastSemanticMessages = refine.messages;
+        workingDoc = semanticDoc;
 
         ctx.ctx.info?.(
             `[extract] doc ${docIndex + 1} round ${round + 1} 语义整理完成，长度 ${semanticDoc.length}`,
@@ -206,17 +204,7 @@ export async function extractWorkflow(
             continue;
         }
 
-        // ── 阶段 ④：动作完整性 + 输入自洽性校验 ──
         const actionIssues = checkActionCompleteness(cached.nodes, cached.globalInputs);
-        if (actionIssues.length > 0) {
-            lastFeedback = actionIssues;
-            ctx.ctx.notify(
-                "extract",
-                `doc ${docIndex + 1} 第 ${round + 1} 轮：动作/输入自洽性校验失败（${actionIssues.length} 个问题），回退语义整理`,
-            );
-            continue;
-        }
-
         const flow = buildHumanFlowFromParsed(
             cached.flowName,
             cached.goal,
@@ -225,7 +213,10 @@ export async function extractWorkflow(
             ctx,
         );
 
-        const validationErrors = validateHumanFlow(flow, ctx.conceptManager);
+        const validationAll = validateHumanFlow(flow, ctx.conceptManager);
+        const validationErrors = blockingErrors(validationAll);
+        const warnings = validationAll.filter((e) => e.severity === "warning");
+
         const registry = (flow as HumanFlow & { _artifactRegistry?: ArtifactRegistry })
             ._artifactRegistry;
 
@@ -243,8 +234,18 @@ export async function extractWorkflow(
             }
             : { orphans: [], dead: [], total: 0 };
 
-        // 结构 + 闭环校验全过才放行
-        if (validationErrors.length === 0 && artifactReport.orphans.length === 0) {
+        if (warnings.length > 0) {
+            ctx.ctx.info?.(
+                `[extract] doc ${docIndex + 1} round ${round + 1} 警告：${warnings.map((w) => w.message).join("；")}`,
+            );
+        }
+
+        // 仅 error 级阻断通过判定
+        if (
+            validationErrors.length === 0 &&
+            artifactReport.orphans.length === 0 &&
+            actionIssues.length === 0
+        ) {
             // ── 阶段 ⑤：交付物语义作用抽取 + 回填 intent（专职子 LLM）──
             const names = collectArtifactNames(cached);
             const artifactSemantics = await extractArtifactSemantics(ctx, semanticDoc, names);
@@ -261,14 +262,42 @@ export async function extractWorkflow(
             return { flow, standardDoc, cached, artifactReport };
         }
 
-        lastFeedback = [
-            ...validationErrors.map((e) => `[DAG验证] ${e.message}`),
-            ...formatArtifactFeedback(artifactReport),
+        // ── 失败：先把可定位到 step 的反馈分桶，做 section-level 修补 ──
+        const bucketed = bucketFeedbacksByStep(validationErrors, actionIssues);
+        const artifactFeedback = formatArtifactFeedback(artifactReport);
+        // 全局反馈 = 不能定位到 step 的 validation error + 死/孤产物 + warning
+        const allGlobal = [
+            ...bucketed.global,
+            ...artifactFeedback,
+            ...warnings.map((w) => `[结构警告] ${w.message}`),
         ];
 
+        const repair = await repairSectionsByLLM(
+            ctx,
+            { doc: semanticDoc, feedbacks: [] },
+            bucketed.stepTargets,
+        );
+
+        if (repair.changed) {
+            ctx.ctx.notify(
+                "extract",
+                `doc ${docIndex + 1} 第 ${round + 1} 轮：section 修补 ${bucketed.stepTargets.length} 个步骤，重新抽取`,
+            );
+            workingDoc = repair.doc;
+            // 关键修复：全局反馈必须传进下一轮 semanticRefine，不再丢失
+            lastFeedback = allGlobal;
+            lastSemanticMessages = undefined; // 重新从工作 doc 起步
+            continue;
+        }
+
+        // section 修补无变化或全部失败 → 回退语义整理：把所有反馈回灌
+        lastFeedback = [
+            ...bucketed.stepTargets.flatMap((t) => t.feedbacks),
+            ...allGlobal,
+        ];
         ctx.ctx.notify(
             "extract",
-            `doc ${docIndex + 1} 第 ${round + 1} 轮：验证失败（${lastFeedback.length} 个问题），回退语义整理`,
+            `doc ${docIndex + 1} 第 ${round + 1} 轮：${lastFeedback.length} 条反馈回灌语义整理`,
         );
     }
 
@@ -295,7 +324,7 @@ async function extractStructured(
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 归一化：清洗 + 连续编号 + 去空
+// 归一化
 // ════════════════════════════════════════════════════════════════════
 
 function normalize(ex: ExtractedWorkflow): CachedWorkflow {

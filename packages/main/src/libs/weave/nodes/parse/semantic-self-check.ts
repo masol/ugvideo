@@ -1,15 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * weaver · parse · 语义自检（v14）
+ * weaver · parse · 语义自检（v3）
  *
- * 变更：
- * - 同名对齐：去掉字符 jaccard 启发式，改用 fuse.js（vm 沙箱 fixedpkgs 注入，v7.5）
- *   跨步骤产物名模糊匹配：频次 =1 的低频名对频次 ≥2 的高频名索引做查询，
- *   score ≤ 0.35 视为疑似别名并报告。
- * - 保留三项内部校验（不调 LLM，纯 mdast + 正则）：
- *   1. 完整性：每步输入/输出/动作三项必填
- *   2. 可行性：动作段不能为空、不能含 TODO/未完成标记
- *   3. 名称对齐：fuse.js 模糊匹配（替代原 jaccard）
+ * 关键修正：移除 checkDagSanity（死产物检测）。
+ * 原因：工作流的最终交付物天然无下游消费，会被误判为"死产物"，导致自检永远差 1 条、
+ * 每轮浪费 3 次 LLM 调用；且该检测与"死产物非阻断（build-flow 自动补边 + 告警）"的
+ * 设计自相矛盾。DAG 结构的唯一裁判是 build-flow + validateHumanFlow。
+ *
+ * 本文件只保留纯文本层校验（不调 LLM）：
+ *   1. 完整性：每步输入/输出/动作三项必填；
+ *   2. 可行性：动作段非空、无 TODO/未完成标记；
+ *   3. 名称对齐：fuse.js 跨步骤产物名模糊匹配（低频名 vs 高频名）。
  */
 
 import type { Heading, List, ListItem, Root, RootContent } from "mdast";
@@ -141,7 +142,6 @@ function checkNameAlignment(steps: StepSection[]): string[] {
 
     const Fuse = (globalThis as any).Fuse;
     if (typeof Fuse !== "function") {
-        // fuse.js 未注入：跳过此项校验（不阻塞流程）
         return issues;
     }
 
