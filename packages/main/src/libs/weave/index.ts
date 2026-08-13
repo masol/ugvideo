@@ -55,6 +55,10 @@ export async function run(ctx: IRunnerContext): Promise<void> {
             `共 ${flows.length} 个工作流，${weaveCtx.conceptCount} 个概念`,
         );
 
+        weaveCtx.ctx.debug("flows=", JSON.stringify(flows, null, 2))
+        weaveCtx.ctx.debug("artifacts=", JSON.stringify(weaveCtx.conceptManager.artifacts.list(), null, 2))
+        weaveCtx.ctx.debug("nodes=", JSON.stringify(weaveCtx.conceptManager.nodes.list(), null, 2))
+
         // @TODO: 这里开始经human-workflow编译为agent-workflow(agent-workflow是编译过程的intermediate)
         // await compile(weaveCtx);
         // if (targetStep <= WeaveStep.Parse) {

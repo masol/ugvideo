@@ -1,5 +1,8 @@
 /**
- * weaver · DAG 验证（含路径级输入闭合性 + 跳转完整性）
+ * weaver · DAG 验证（含路径级输入闭合性）
+ *
+ * 变更：删除全部 jumper 相关校验（self-loop / target-missing / external-target /
+ * cross-graph）。控制流以自然语言内蕴在动作中，不在此结构化校验。
  */
 
 import type { DirectedGraph } from "graphology";
@@ -11,10 +14,8 @@ import { topoOrder } from "./graph-ops.js";
 export interface ValidationError {
     kind:
     | "cycle" | "orphan" | "orphan-edge" | "missing-input" | "missing-output"
-    | "multiple-terminal" | "no-terminal" | "invalid-jumper"
-    | "missing-concept" | "unreachable" | "invalid-jump-target"
-    | "jumper-target-missing"
-    | "missing-target-dag";   // ← 新增：跨图外部跳转目标图不存在
+    | "multiple-terminal" | "no-terminal"
+    | "missing-concept" | "unreachable";
     nodeId?: string;
     graphId?: string;
     message: string;
@@ -56,37 +57,6 @@ export function validateHumanFlow(
 
     const pathClosureErrors = validatePathClosure(g, flowNodes, conceptManager);
     errors.push(...pathClosureErrors);
-
-    // ── 校验所有 jumper 的 target ──
-    const nodeNames = new Set(flowNodes.map((n) => n.name));
-    for (const node of flowNodes) {
-        for (const jp of node.jumpers) {
-            if (jp.kind === "internal") {
-                if (!nodeNames.has(jp.target)) {
-                    errors.push({
-                        kind: "jumper-target-missing",
-                        nodeId: node.id,
-                        message:
-                            `节点「${node.name}」的内部跳转目标「${jp.target}」` +
-                            `不在本图节点集合中（可用节点：${[...nodeNames].join("、")}）`,
-                        category: "structural",
-                    });
-                }
-            } else {
-                // external 单图内校验：target 必须是已注册图
-                const targetGraph = conceptManager.graphs.get(jp.target);
-                if (!targetGraph) {
-                    errors.push({
-                        kind: "missing-target-dag",
-                        nodeId: node.id,
-                        graphId: flow.id,
-                        message: `节点「${node.name}」的外部跳转目标图「${jp.target}」不存在`,
-                        category: "missing-concept",
-                    });
-                }
-            }
-        }
-    }
 
     for (const node of flowNodes) {
         for (const cid of node.constraintIds) {

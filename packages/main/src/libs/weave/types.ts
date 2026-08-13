@@ -33,37 +33,41 @@ export interface Artifact extends ConceptReference {
 }
 
 /**
+ * Config —— 从 Artifact 派生的配置项
+ *
+ * 语义：一种带固定默认内容、不由任何步骤产出的交付物（如模板 / 公式清单 / 问题清单）。
+ * 复用 Artifact 的一切能力（同样注册进 ArtifactCenter，kind 仍为 'artifact'），
+ * 额外携带 defaultValue（完整逐字内容），以 isConfig 判别。
+ */
+export interface Config extends Artifact {
+    isConfig: true;
+    defaultValue: string;
+}
+
+/**
  * Constraint —— 验证机制
  *
  * 对 Artifact：验证其值是否有效。
  * 对 Node：判断节点执行是否正确（通过判断其输入/输出产物）。
+ *
+ * 注意：约束不再从人类工作流中被"提取"为独立结构——它们以自然语言形态
+ * 内蕴在节点的 actionAtom 里。此类型仅作为概念模型保留，供后续编译阶段按需使用。
  */
 export interface Constraint extends ExecutableConcept {
     kind: 'constraint';
 }
 
-/**
- * Jumper —— 标准 DAG 之外的额外跳转
- *
- * 在某个节点退出前，额外执行一个跳转动作。
- * - internal: 跳到本图内另一节点（执行完不返回）。
- * - external: 跳到另一图（target = 目标图 id），执行完自动返回原图继续。
- *
- * target:
- *   - internal →目标节点 name（解析阶段即为 id）
- *   - external → 目标图 id
- */
-export type Jumper = {
-    kind: 'internal' | 'external';
-    condition: string | null;
-    target: string;
-};
-
 export type FlowNodeKind = 'flow-node' | 'human';
 
+/**
+ * FlowNode
+ *
+ * 所有非顺序控制流（跳转、条件回退、循环）一律以自然语言保留在 actionAtom 中，
+ * 由后续编译阶段从动作文本重新解析——避免在语义整理阶段过早、易错地结构化。
+ * DAG 的边完全由 artifact 的 producer→consumer 依赖驱动。
+ */
 export interface FlowNode extends ExecutableConcept {
     kind: FlowNodeKind;
-    jumpers: Jumper[];
 }
 
 export interface HumanNode extends FlowNode {
@@ -75,7 +79,8 @@ import type { DirectedGraph } from 'graphology';
 export interface FlowGraph extends ExecutableConcept {
     kind: 'dag';
     g: DirectedGraph;
-    formalDoc: string;
+    /** 主流程标记：索引为 0 的入口文档对应图为 true，其余不设或 false */
+    isMain?: boolean;
 }
 
 export interface HumanFlow extends FlowGraph {

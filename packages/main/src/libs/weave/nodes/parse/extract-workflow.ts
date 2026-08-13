@@ -1,16 +1,10 @@
 /**
- * weaver · parse · 提取入口（v15）
+ * weaver · parse · 提取入口
  *
- * 关键回归修复：
- * - v14 把 jumpers 改为"完全可选 / 仅当 action 中明确出现'跳回/转到'才填写"，
- *   而原文中的跳转往往藏在 action 自然语言里——safefmt 不会主动识别，
- *   导致所有 jumper 都是空数组、图只有顺序边、DAG 报 multiple-terminal。
- * - 修法：恢复"jumper 必填（可为空数组）"语义，并在 zod describe 中**强制**
- *   LLM 在抽取时把 action 里所有"若 X 则回到 N / 跳到 Y / 转去工作流 Z"转写
- *   为 jumper 对象。同时在 normalize 里做一次"动作文本内跳转声明"的自检兜底
- *   （发现疑似跳转却未产出 jumper 时反馈回去）。
- * - reAct 反馈通道增加：structural 错误（multiple-terminal 等）走 system 级
- *   提醒注入 semanticRefine，绕过 messages 历史，避免被淹没。
+ * 变更：
+ * - 验证通过后运行专职子 LLM 抽取交付物语义作用（extractArtifactSemantics），
+ *   回填到 artifact/config 的 intent，并随 CachedWorkflow 持久化（缓存重建复用）。
+ * - 控制流与约束仍以自然语言保留在 action 中，不结构化提取。
  */
 
 import { safefmt } from "$libs/model/llm/outline.js";
@@ -20,9 +14,11 @@ import { z } from "zod";
 import type { WeaveContext } from "../../context.js";
 import { validateHumanFlow } from "../../graph/validate.js";
 import type { HumanFlow } from "../../types.js";
+import { checkActionCompleteness } from "./action-completeness.js";
 import type { ArtifactRegistry } from "./build-flow.js";
-import { buildHumanFlowFromParsed } from "./build-flow.js";
-import type { ParsedGlobalInput, ParsedJumper, ParsedNode } from "./parse-types.js";
+import { applyArtifactSemantics, buildHumanFlowFromParsed } from "./build-flow.js";
+import { extractArtifactSemantics } from "./extract-artifact-semantics.js";
+import type { ArtifactSemantic, ParsedGlobalInput, ParsedNode } from "./parse-types.js";
 import { renderStandardDoc } from "./render-standard.js";
 import { semanticRefine } from "./semantic-refine.js";
 
@@ -42,6 +38,7 @@ export interface CachedWorkflow {
     goal: string;
     globalInputs: ParsedGlobalInput[];
     nodes: ParsedNode[];
+    artifactSemantics: ArtifactSemantic[];
 }
 
 export interface ExtractResult {
@@ -61,38 +58,27 @@ export interface ExtractOptions {
 // safefmt 抽取 schema —— 抽取质量完全由 describe 决定
 // ════════════════════════════════════════════════════════════════════
 
-const JumperSchema = z.object({
-    kind: z
-        .enum(["internal", "external"])
-        .describe(
-            "跳转类型：internal 表示跳到本工作流内的另一个步骤；external 表示跳到另一个独立工作流。",
-        ),
-    condition: z
-        .string()
-        .describe(
-            "触发此跳转的条件描述，例如'审核不通过'、'字数不足'、'校对发现错误'。" +
-            "若为无条件（默认回退/总是执行）则填空字符串。",
-        ),
-    target: z
-        .string()
-        .describe(
-            "跳转目标：kind=internal 时填目标步骤的名称（须与某步骤 name 逐字完全一致）；" +
-            "kind=external 时填目标工作流的名称。",
-        ),
-});
-
 const GlobalInputSchema = z.object({
     key: z
         .string()
-        .describe("全局输入项的名称，直接沿用原文中的叫法，不要改名、翻译或添加任何符号。"),
+        .describe(
+            "全局输入项 / 配置项的名称，直接沿用原文中的叫法，不要改名、翻译或添加符号。",
+        ),
     hasDefault: z
         .boolean()
         .describe(
-            "该输入项是否带默认值。原文若说明'默认为…'或属于可配置项则为 true，否则 false。",
+            "该项是否为带固定内容的配置项。若原文提供了可整体复用的固定素材" +
+            "（如结构化大纲模板、标题公式清单、待回答问题清单、检查清单、示例库等），则为 true；" +
+            "若只是需从外部提供、无固定内容的初始材料，则为 false。",
         ),
     defaultValue: z
         .string()
-        .describe("当 hasDefault 为 true 时填默认值文本；hasDefault 为 false 时填空字符串。"),
+        .describe(
+            "当 hasDefault 为 true 时，填该配置项的【完整逐字内容】" +
+            "（例如结构化大纲模板的全文、全部标题公式、全部待回答问题）——" +
+            "必须原样保留，绝不概括、绝不省略、绝不删减；" +
+            "hasDefault 为 false 时填空字符串。",
+        ),
 });
 
 const ExtractedNodeSchema = z.object({
@@ -103,40 +89,34 @@ const ExtractedNodeSchema = z.object({
     name: z
         .string()
         .describe(
-            "步骤名称，简洁的动宾短语，例如'确定文章主题与目标读者'。同一名称在全流程内唯一，" +
-            "其他步骤在 jumpers 中按此 name 逐字引用。",
+            "步骤名称，简洁的动宾短语，例如'确定文章主题与目标读者'。同一名称在全流程内唯一。",
         ),
     intent: z.string().describe("本步骤的业务目的，用一句话说明为什么要执行这一步。"),
     inputs: z
         .array(z.string())
         .describe(
-            "本步骤所需的输入产物名称列表。每个名称直接沿用原文叫法，且必须与产出它的步骤 outputs 中的名称逐字完全一致。" +
-            "若无输入则填空数组。",
+            "本步骤所需的输入产物 / 配置项名称列表。每个名称直接沿用原文叫法，" +
+            "且必须与产出它的步骤 outputs 中的名称、或全局配置项名称逐字完全一致。" +
+            "凡是本步骤动作里真正会用到的模板/清单/上游产物，都要在此声明；" +
+            "凡是声明了却在动作里用不到的项，不要写。若无输入则填空数组。",
         ),
     outputs: z
         .array(z.string())
         .describe(
-            "本步骤产出的产物名称列表。每个名称直接沿用原文叫法，供下游步骤在 inputs 中按逐字完全相同的名称引用。" +
+            "本步骤产出的产物名称列表。每个名称直接沿用原文叫法，供下游步骤在 inputs 中按逐字相同的名称引用。" +
             "若无输出则填空数组。",
         ),
     action: z
         .string()
         .describe(
-            "本步骤的完整可执行动作描述，主谓宾齐全。必须完整保留原文中该步骤的所有执行细节、判断标准与条件分支。" +
-            "**重要**：如果 action 中包含任何\"若 X 则回到步骤 N / 跳到节点 Y / 若不通过则返回步骤 M\"这类" +
-            "**非顺序控制流**的描述，必须同时在 jumpers 数组中以结构化形式重复登记一次——" +
-        "绝不能让跳转声明只藏在 action 自然语言里。",
-        ),
-    jumpers: z
-        .array(JumperSchema)
-        .describe(
-            "本步骤结束时的非顺序跳转列表（必填字段，可为空数组）。\n" +
-            "必须包含以下两类情况产生的跳转（全部从 action 中转写）：\n" +
-            "  (a) 条件跳转：action 中出现'若 X 则跳回 / 转到 步骤N'、'若 X 不通过则返回节点Y'、'若不满足则回到步骤M'等条件跳转；\n" +
-            "  (b) 无条件跳转（兜底回退）：action 中出现'否则回到步骤N'、'不管结果如何都跳到步骤N'、'无条件返回'等；\n" +
-            "  (c) 跨图跳转：action 中出现'转去 / 跳到 / 委托给 其他工作流'；\n" +
-            "如果本步骤执行完毕后控制流自然进入 order+1 的下一个步骤（即没有非顺序跳转），才填 []。" +
-            "切勿因为 action 里只写了'若 X 则…'就直接忽略——必须转写到 jumpers。",
+            "本步骤的完整可执行动作描述，主谓宾齐全。必须【逐字】完整保留原文中该步骤的所有执行细节、判断标准、条件分支与循环控制。\n" +
+            "信息零丢失要求：\n" +
+            "  1. 所有控制流——'若 X 则回到/返回/跳到步骤 N'、'否则继续'、'重复直到…'、'转去某流程'——" +
+            "必须原样保留在本动作文本里，用自然语言表达，【不要】拆成单独字段或章节；\n" +
+            "  2. 所有质量约束/校验条件——'字数不少于…'、'读起来要自然'、'外行要能看懂'等——同样保留在动作文本里；\n" +
+            "  3. 动作中引用的每一个产物 / 配置项名称，必须与本步骤 inputs/outputs 或全局配置项里的名称逐字一致，并用反引号包裹；\n" +
+            "  4. 不得把原文的模板、公式清单、问题清单等具体内容在动作里丢弃或概括——" +
+            "这类固定素材应作为全局配置项声明（见 globalInputs），并在本步骤 inputs 中按名引用。",
         ),
 });
 
@@ -148,13 +128,18 @@ const WorkflowSchema = z.object({
     globalInputs: z
         .array(GlobalInputSchema)
         .describe(
-            "工作流的全局输入项：那些不由任何步骤产出、需从外部提供的材料或配置（例如首个步骤所需的初始素材）。" +
+            "工作流的全局输入项与配置项：\n" +
+            "  (a) 不由任何步骤产出、需从外部提供的初始材料（hasDefault=false）；\n" +
+            "  (b) 原文中出现的可复用固定素材（模板、公式清单、问题清单、检查清单、示例库等），" +
+            "hasDefault=true 且 defaultValue 存完整逐字内容，并确保消费它的步骤在 inputs 中按同名引用。\n" +
             "若没有则填空数组。",
         ),
     nodes: z
         .array(ExtractedNodeSchema)
-        .describe("按执行顺序排列的所有步骤，不得遗漏原文中的任何步骤。" +
-            "每个步骤都必须填写 jumpers 字段（可空数组），不允许整字段缺失。"),
+        .describe(
+            "按执行顺序排列的所有步骤，不得遗漏原文中的任何步骤。" +
+            "每个步骤都必须完整填写 name / intent / inputs / outputs / action 五项。",
+        ),
 });
 
 type ExtractedWorkflow = z.infer<typeof WorkflowSchema>;
@@ -221,6 +206,17 @@ export async function extractWorkflow(
             continue;
         }
 
+        // ── 阶段 ④：动作完整性 + 输入自洽性校验 ──
+        const actionIssues = checkActionCompleteness(cached.nodes, cached.globalInputs);
+        if (actionIssues.length > 0) {
+            lastFeedback = actionIssues;
+            ctx.ctx.notify(
+                "extract",
+                `doc ${docIndex + 1} 第 ${round + 1} 轮：动作/输入自洽性校验失败（${actionIssues.length} 个问题），回退语义整理`,
+            );
+            continue;
+        }
+
         const flow = buildHumanFlowFromParsed(
             cached.flowName,
             cached.goal,
@@ -249,6 +245,12 @@ export async function extractWorkflow(
 
         // 结构 + 闭环校验全过才放行
         if (validationErrors.length === 0 && artifactReport.orphans.length === 0) {
+            // ── 阶段 ⑤：交付物语义作用抽取 + 回填 intent（专职子 LLM）──
+            const names = collectArtifactNames(cached);
+            const artifactSemantics = await extractArtifactSemantics(ctx, semanticDoc, names);
+            applyArtifactSemantics(ctx, artifactSemantics);
+            cached.artifactSemantics = artifactSemantics;
+
             const standardDoc = renderStandardDoc(
                 cached.flowName,
                 cached.goal,
@@ -262,7 +264,6 @@ export async function extractWorkflow(
         lastFeedback = [
             ...validationErrors.map((e) => `[DAG验证] ${e.message}`),
             ...formatArtifactFeedback(artifactReport),
-            ...detectActionOnlyJumps(semanticDoc, cached),
         ];
 
         ctx.ctx.notify(
@@ -308,10 +309,6 @@ function normalize(ex: ExtractedWorkflow): CachedWorkflow {
             inputs: cleanNames(n.inputs),
             outputs: cleanNames(n.outputs),
             action: (n.action ?? "").trim(),
-            // jumper 永远写入（即使空数组）——保证 DAG 连通性所需信息不丢
-            jumpers: (n.jumpers ?? [])
-                .map(toParsedJumper)
-                .filter((j) => j.target !== "" || j.condition !== null),
             sourceLines: { start: 0, end: 0 },
         }))
         .filter((n) => n.name.length > 0)
@@ -331,7 +328,7 @@ function normalize(ex: ExtractedWorkflow): CachedWorkflow {
     const flowName = (ex.flowName ?? "").trim() || "工作流";
     const goal = (ex.goal ?? "").trim();
 
-    return { flowName, goal, globalInputs, nodes };
+    return { flowName, goal, globalInputs, nodes, artifactSemantics: [] };
 }
 
 function cleanNames(arr: string[] | undefined): string[] {
@@ -346,55 +343,14 @@ function cleanNames(arr: string[] | undefined): string[] {
     return out;
 }
 
-function toParsedJumper(j: {
-    kind: "internal" | "external";
-    condition: string;
-    target: string;
-}): ParsedJumper {
-    const condition = (j.condition ?? "").trim();
-    return {
-        kind: j.kind === "external" ? "external" : "internal",
-        condition: condition ? condition : null,
-        target: (j.target ?? "").trim(),
-    };
-}
-
-// ════════════════════════════════════════════════════════════════════
-// 兜底：检测动作段里"只写在自然语言里"的跳转声明
-// （safefmt 没识别为 jumper 时，提示下一轮回灌 LLM 修正）
-// ════════════════════════════════════════════════════════════════════
-
-const JUMP_HINT_PATTERNS = [
-    /若[^。\n]*则[^。\n]*(?:回到|返回|跳到|跳转至|回到)步骤\s*\d/iu,
-    /若[^。\n]*不(?:通过|满足|合格)[^。\n]*(?:回到|返回|跳到)/iu,
-    /(?:否则|不管|无论)[^。\n]*(?:回到|返回|跳到)步骤\s*\d/iu,
-    /(?:回到|返回|跳到|跳转至)\s*步骤\s*\d/iu,
-    /(?:转去|跳到|跳转至|委托给)\s*(?:工作流|流程)\s*\S+/iu,
-];
-
-function detectActionOnlyJumps(semanticDoc: string, cached: CachedWorkflow): string[] {
-    const issues: string[] = [];
-    const nodeNamesWithJumpers = new Set<string>();
-
-    for (const node of cached.nodes) {
-        for (const jp of node.jumpers) {
-            if (jp.target) nodeNamesWithJumpers.add(node.name);
-        }
+function collectArtifactNames(cached: CachedWorkflow): string[] {
+    const set = new Set<string>();
+    for (const gi of cached.globalInputs) set.add(gi.key);
+    for (const n of cached.nodes) {
+        for (const i of n.inputs) set.add(i);
+        for (const o of n.outputs) set.add(o);
     }
-
-    for (const node of cached.nodes) {
-        if (nodeNamesWithJumpers.has(node.name)) continue;
-        if (!node.action) continue;
-        const hit = JUMP_HINT_PATTERNS.some((re) => re.test(node.action));
-        if (hit) {
-            issues.push(
-                `[结构校验] 步骤「${node.name}」的动作段中疑似包含跳转声明（"若 X 则回到步骤 N" / "跳到工作流 Y"），` +
-                `但抽取出的 jumpers 字段为空数组。请在结构化抽取时将所有跳转转写为 jumper 对象（kind=internal/external、condition、target）。`,
-            );
-        }
-    }
-    void semanticDoc;
-    return issues;
+    return [...set];
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -407,7 +363,7 @@ function formatArtifactFeedback(report: ArtifactReport): string[] {
         lines.push(
             `[DAG验证] 以下产物被消费但无任何步骤产出（孤儿）：${report.orphans
                 .map((o) => `「${o.name}」被 [${o.consumedBy.join(", ")}] 消费`)
-                .join("、")}。请检查：是否漏写了产出该产物的步骤？或该产物本应作为全局输入？`,
+                .join("、")}。请检查：是否漏写了产出该产物的步骤？或该产物本应作为全局输入/配置项？`,
         );
     }
     if (report.dead.length > 0) {

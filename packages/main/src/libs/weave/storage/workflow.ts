@@ -1,8 +1,9 @@
 /**
  * weaver · Workflow Storage
  *
- * 关键变更（v14）：
- * - 新增结构化抽取缓存：extracted:<doc_index>（CachedWorkflow JSON）
+ * 变更：删除 formalDoc 存取（saveFormalDocAll/getFormalDocAll，无调用方）。
+ *
+ * - 结构化抽取缓存：extracted:<doc_index>（CachedWorkflow JSON，含 artifactSemantics）
  *   缓存命中时由代码确定性重建 flow，不再重跑 LLM。
  * - standard_doc:<doc_index> 保留，供人类阅读与首行图名定位。
  */
@@ -38,15 +39,6 @@ export class WorkflowStorage extends BaseStorage {
 
     getExtractedWorkflow(docIndex: number): CachedWorkflow | null {
         return this.get<CachedWorkflow>(`extracted:${docIndex}`);
-    }
-
-    /** 形式化文档（节点 ② 的产出） */
-    saveFormalDocAll(doc: string): void {
-        this.set("formal_doc:all", doc);
-    }
-
-    getFormalDocAll(): string | null {
-        return this.get<string>("formal_doc:all");
     }
 
     /** 标准输出文档（节点 ③ 的产出） */

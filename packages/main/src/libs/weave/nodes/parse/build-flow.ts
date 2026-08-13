@@ -1,17 +1,20 @@
 /**
  * weaver · parse · 组装 HumanFlow
  *
- * 核心改动：
- * - DAG构建从"保底顺序连接"改为"artifact依赖驱动"
- * - 每个artifact明确记录producer（产出节点）和consumers（消费节点）
- * - 只有当某节点的输入artifact确实由上游节点产出时，才建立边
- * - 配置项（带默认值的artifact）= 全局输入，无需特殊处理
+ * 变更：
+ * - 全局输入中带默认值的项注册为 Config（携带 defaultValue），其余为普通 Artifact；
+ * - artifact/config 的 intent 不再写"X 的输入/输出"，默认置为名称本身，
+ *   真正的语义作用由 applyArtifactSemantics 回填；
+ * - 删除 formalDoc 字段。
+ *
+ * DAG 的边完全由 artifact 依赖驱动：某节点输入 artifact 若由上游节点产出，则连边。
+ * Config（带默认值）= 全局输入，不产出边。
  */
 
 import type { WeaveContext } from "../../context.js";
 import { addEdge, addNode, createGraph } from "../../graph/gdag.js";
-import type { Artifact, HumanFlow, HumanNode, Jumper } from "../../types.js";
-import type { ParsedGlobalInput, ParsedJumper, ParsedNode } from "./parse-types.js";
+import type { Artifact, Config, HumanFlow, HumanNode } from "../../types.js";
+import type { ArtifactSemantic, ParsedGlobalInput, ParsedNode } from "./parse-types.js";
 
 export interface ArtifactRegistry {
     producer: Map<string, string>;
@@ -31,19 +34,20 @@ export function buildHumanFlowFromParsed(
     const mgr = ctx.conceptManager;
     const g = createGraph();
     const nodeIdByOrder = new Map<number, string>();
-    const nodeNameByOrder = new Map<number, string>();
+
+    // 先注册配置项（带默认值的全局输入），使后续节点输入引用能命中已有 Config
+    registerConfigs(ctx, globalInputs);
 
     for (const node of nodes) {
         const nodeId = node.name;
         nodeIdByOrder.set(node.order, nodeId);
-        nodeNameByOrder.set(node.order, node.name);
         addNode(g, nodeId);
 
         for (const inputName of node.inputs) {
-            ensureArtifact(ctx, inputName, `${node.name} 的输入`);
+            ensureArtifact(ctx, inputName);
         }
         for (const outputName of node.outputs) {
-            ensureArtifact(ctx, outputName, `${node.name} 的输出`);
+            ensureArtifact(ctx, outputName);
         }
     }
 
@@ -56,13 +60,6 @@ export function buildHumanFlowFromParsed(
             if (producerId && producerId !== fromId && !g.hasEdge(producerId, fromId)) {
                 addEdge(g, producerId, fromId);
             }
-        }
-    }
-
-    for (const node of nodes) {
-        const fromId = nodeIdByOrder.get(node.order)!;
-        if (node.jumpers.length > 0) {
-            applyJumpers(g, node, fromId, nodeNameByOrder);
         }
     }
 
@@ -112,7 +109,6 @@ export function buildHumanFlowFromParsed(
         inputs: flowInputIds,
         outputs: flowOutputIds,
         g,
-        formalDoc: "",
         _pendingNodes: nodes.map((node) =>
             buildHumanNodeFromParsed(node, nodeIdByOrder.get(node.order)!),
         ),
@@ -121,6 +117,40 @@ export function buildHumanFlowFromParsed(
         _pendingNodes: HumanNode[];
         _artifactRegistry: ArtifactRegistry;
     };
+}
+
+/**
+ * 回填交付物语义作用到 intent。
+ * 在 build 之后调用（此时 artifact/config 均已注册），直接就地修改概念对象。
+ */
+export function applyArtifactSemantics(
+    ctx: WeaveContext,
+    semantics: ArtifactSemantic[],
+): void {
+    for (const s of semantics) {
+        const a = ctx.conceptManager.artifacts.getByName(s.name);
+        if (a && s.role.trim()) a.intent = s.role.trim();
+    }
+}
+
+function registerConfigs(ctx: WeaveContext, globalInputs: ParsedGlobalInput[]): void {
+    for (const gi of globalInputs) {
+        if (!gi.hasDefault) continue;
+        if (ctx.conceptManager.artifacts.getByName(gi.key)) continue;
+        ctx.conceptManager.artifacts.register({
+            kind: "artifact",
+            id: gi.key,
+            name: gi.key,
+            aliases: [],
+            intent: gi.key, // 语义作用稍后由 applyArtifactSemantics 回填
+            inferred: false,
+            constraintIds: [],
+            shape: "scalar",
+            semanticFields: [],
+            isConfig: true,
+            defaultValue: gi.defaultValue ?? "",
+        } as Config);
+    }
 }
 
 function buildArtifactRegistry(
@@ -174,11 +204,7 @@ function buildArtifactRegistry(
     return { producer, consumers, all, orphans, dead };
 }
 
-function ensureArtifact(
-    ctx: WeaveContext,
-    name: string,
-    intent: string,
-): string {
+function ensureArtifact(ctx: WeaveContext, name: string): string {
     const existing = ctx.conceptManager.artifacts.getByName(name);
     if (existing) return existing.id;
     const id = name;
@@ -187,7 +213,7 @@ function ensureArtifact(
         id,
         name,
         aliases: [],
-        intent,
+        intent: name, // 语义作用稍后由 applyArtifactSemantics 回填
         inferred: true,
         constraintIds: [],
         shape: "scalar",
@@ -196,36 +222,7 @@ function ensureArtifact(
     return id;
 }
 
-function applyJumpers(
-    g: ReturnType<typeof createGraph>,
-    node: ParsedNode,
-    fromId: string,
-    nodeNameByOrder: Map<number, string>,
-): void {
-    for (const jp of node.jumpers) {
-        if (jp.kind === "external") continue;
-        if (!jp.target) continue;
-
-        let targetId: string | undefined;
-        const entry = [...nodeNameByOrder.entries()].find(([, n]) => n === jp.target);
-        if (entry) {
-            targetId = nodeNameByOrder.get(entry[0]);
-        } else {
-            const numMatch = jp.target.match(/步骤\s*(\d+)/);
-            if (numMatch) targetId = nodeNameByOrder.get(parseInt(numMatch[1], 10));
-        }
-        if (targetId && targetId !== fromId && !g.hasEdge(fromId, targetId)) {
-            addEdge(g, fromId, targetId);
-        }
-    }
-}
-
 function buildHumanNodeFromParsed(node: ParsedNode, nodeId: string): HumanNode {
-    const jumpers: Jumper[] = node.jumpers.map((jp: ParsedJumper) => ({
-        kind: jp.kind,
-        condition: jp.condition,
-        target: jp.target,
-    }));
     return {
         kind: "human",
         id: nodeId,
@@ -237,6 +234,5 @@ function buildHumanNodeFromParsed(node: ParsedNode, nodeId: string): HumanNode {
         actionAtom: node.action,
         inputs: node.inputs,
         outputs: node.outputs,
-        jumpers,
     };
 }

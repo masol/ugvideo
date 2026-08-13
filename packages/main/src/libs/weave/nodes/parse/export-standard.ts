@@ -1,19 +1,17 @@
 /**
- * weaver · 导出标准格式
+ * weaver · 导出标准格式（HumanFlow → markdown）
+ *
+ * 变更：删除跳转段导出。
  */
 
 import type { WeaveContext } from "../../context.js";
-import type { HumanFlow, HumanNode, Jumper } from "../../types.js";
+import type { HumanFlow, HumanNode } from "../../types.js";
 import {
     KW_ACTION,
-    KW_CONDITION,
-    KW_EXTERNAL_TARGET,
     KW_GLOBAL_INPUTS,
     KW_INPUTS,
-    KW_INTERNAL_TARGET,
-    KW_JUMPS,
     KW_OUTPUTS,
-    KW_PURPOSE
+    KW_PURPOSE,
 } from "./keywords.js";
 
 export function exportToStandardFormat(
@@ -71,25 +69,8 @@ export function exportToStandardFormat(
         lines.push(`- ${KW_OUTPUTS[0]}：${outputNames}`);
 
         lines.push(`- ${KW_ACTION[0]}：${node.actionAtom}`);
-
-        if (node.jumpers.length > 0) {
-            lines.push(`- ${KW_JUMPS[0]}：`);
-            for (const jp of node.jumpers) {
-                lines.push(renderJumperLine(jp));
-            }
-        }
         lines.push("");
     }
 
     return lines.join("\n");
-}
-
-function renderJumperLine(jp: Jumper): string {
-    if (jp.kind === "external") {
-        return `  - ${KW_CONDITION[0]}：${jp.condition ?? ""}\n    ${KW_EXTERNAL_TARGET[0]}：${jp.target}`;
-    }
-    if (jp.condition) {
-        return `  - ${KW_CONDITION[0]}：${jp.condition}\n    ${KW_INTERNAL_TARGET[0]}：${jp.target}`;
-    }
-    return `  - 否则：\n    ${KW_INTERNAL_TARGET[0]}：${jp.target}`;
 }
