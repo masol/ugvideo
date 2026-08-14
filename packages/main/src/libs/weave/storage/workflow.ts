@@ -1,7 +1,7 @@
 /**
- * weaver · Workflow Storage（v2）
+ * weaver · Workflow Storage（v4）
  *
- * 变更：新增 aligned_standard_doc，独立存储归一化后的标准文档
+ * 变更（v4）：分离 function_plan（元信息）与 function_code（TS 代码）
  */
 
 import type { CachedWorkflow } from "../nodes/parse/extract-workflow.js";
@@ -27,7 +27,6 @@ export class WorkflowStorage extends BaseStorage {
         return this.get<string>(`standard_doc:${docIndex}`);
     }
 
-    // 🔧 新增：归一化后的标准文档（不覆盖 standard_doc）
     saveAlignedStandardDoc(docIndex: number, markdown: string): void {
         this.set(`aligned_standard_doc:${docIndex}`, markdown);
     }
@@ -113,39 +112,33 @@ export class WorkflowStorage extends BaseStorage {
     }
 
     // ══════════════════════════════════════════════════════════════
-    // Agent IR（第三阶段）
+    // 第三阶段：Function Plan（元信息）+ Function Code（TS 代码）
     // ══════════════════════════════════════════════════════════════
 
-    saveAgentIR(nodeId: string, markdown: string): void {
-        this.set(`agent_ir:${nodeId}`, markdown);
+    /** 保存函数元信息（api_kind、constraints、externalFunctions 等） */
+    saveFunctionPlan(nodeId: string, plan: import("../nodes/compile/parse-types.js").FunctionPlan): void {
+        this.set(`function_plan:${nodeId}`, plan);
     }
 
-    getAgentIR(nodeId: string): string | null {
-        return this.get<string>(`agent_ir:${nodeId}`);
+    getFunctionPlan(nodeId: string): import("../nodes/compile/parse-types.js").FunctionPlan | null {
+        return this.get<import("../nodes/compile/parse-types.js").FunctionPlan>(`function_plan:${nodeId}`);
     }
 
-    saveAgentIRIndex(nodeIds: string[]): void {
-        this.set("agent_ir_index", nodeIds);
+    /** 保存函数代码（纯 TS 代码字符串） */
+    saveFunctionCode(nodeId: string, code: string): void {
+        this.set(`function_code:${nodeId}`, code);
     }
 
-    getAgentIRIndex(): string[] | null {
-        return this.get<string[]>("agent_ir_index");
+    getFunctionCode(nodeId: string): string | null {
+        return this.get<string>(`function_code:${nodeId}`);
     }
 
-    saveResolvedIR(nodeId: string, markdown: string): void {
-        this.set(`resolved_ir:${nodeId}`, markdown);
+    saveFunctionPlanIndex(nodeIds: string[]): void {
+        this.set("function_plan_index", nodeIds);
     }
 
-    getResolvedIR(nodeId: string): string | null {
-        return this.get<string>(`resolved_ir:${nodeId}`);
-    }
-
-    saveResolvedIRIndex(nodeIds: string[]): void {
-        this.set("resolved_ir_index", nodeIds);
-    }
-
-    getResolvedIRIndex(): string[] | null {
-        return this.get<string[]>("resolved_ir_index");
+    getFunctionPlanIndex(): string[] | null {
+        return this.get<string[]>("function_plan_index");
     }
 
     // ══════════════════════════════════════════════════════════════

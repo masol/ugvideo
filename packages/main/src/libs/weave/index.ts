@@ -8,14 +8,15 @@ import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { getErrorMessage } from "radashi";
 import { createWeaveContext } from "./context.js";
+import { compileWorkflow } from "./nodes/compile/index.js";
 import { parseWorkflow } from "./nodes/parse/index.js";
 import { preprocessArtifacts } from "./nodes/preprocess-artifacts/index.js";
 
 const STEP = {
     Parse: 1,
     Preprocess: 2,
-    Decompose: 3,
-    Resolve: 4,
+    Compile: 3,
+    Codegen: 4,
     Dump: 5,
 } as const;
 
@@ -91,6 +92,14 @@ export async function run(ctx: IRunnerContext): Promise<void> {
             ctx.notify("weaver 完成（target=preprocess）", "artifact 关系已整理");
             return;
         }
+
+        await compileWorkflow(weaveCtx);
+        if (targetStep <= STEP.Compile) {
+            const flows = weaveCtx.conceptManager.listHumanFlows();
+            ctx.notify("weaver 完成（target=compile)", `共 ${flows.length} 个工作流`);
+            return;
+        }
+
 
         // 后续阶段暂未启用
         ctx.notify(
