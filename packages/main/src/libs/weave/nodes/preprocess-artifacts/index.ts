@@ -1,7 +1,8 @@
 /**
- * weaver · node ② preprocess-artifacts
+ * weaver · node ② preprocess-artifacts（v5.2）
  *
- * v5：三层兜底 + messages history 回灌
+ * 变更（v5.2）：
+ * - 在成功分支结尾，重新导出归一化后的 standard_doc
  */
 
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
@@ -11,9 +12,12 @@ import type {
     Artifact,
     ArtifactLineageMap,
     ArtifactRelation,
+    Config,
     HumanFlow,
+    HumanNode,
 } from "../../types.js";
 import type { FrozenNamesConstraint } from "../parse/parse-types.js";
+import { renderStandardDoc } from "../parse/render-standard.js";
 import { reconcileWithFuse, reconcileWithStandardDoc } from "./artifact-reconcile.js";
 import {
     blockingIssues,
@@ -223,13 +227,41 @@ export async function preprocessArtifacts(
     // ── 落盘 ──
     store.saveArtifactRelations(relations);
     store.saveArtifactLineage(lineage);
-
-    const lineageMd = exportLineageMarkdown(relations, lineage, mainFlow.name);
+    const lineageMd = exportLineageMarkdown(relations, lineage, mainFlow.name, ctx);
     store.saveLineageDoc(lineageMd);
-
     const lineageJson = exportLineageJSON(relations, lineage, mainFlow.name);
     store.saveLineageSnapshot(lineageJson);
-
+    // ══════════════════════════════════════════════════════════════
+    // 🔧 重新导出归一化后的标准文档（不覆盖 standard_doc）
+    // ══════════════════════════════════════════════════════════════
+    const nodes = mainFlow.g.nodes()
+        .map((id) => ctx.conceptManager.nodes.get(id))
+        .filter((n): n is HumanNode => n !== null);
+    const alignedStandardDoc = renderStandardDoc(
+        mainFlow.name,
+        mainFlow.intent,
+        mainFlow.inputs.map((id) => {
+            const a = ctx.conceptManager.artifacts.get(id);
+            const isConfig = (a as Artifact & { isConfig?: boolean })?.isConfig === true;
+            return {
+                key: a?.name ?? id,
+                hasDefault: isConfig,
+                defaultValue: isConfig ? (a as Config).defaultValue : undefined,
+            };
+        }),
+        nodes.map((n, i) => ({
+            order: i + 1,
+            name: n.name,
+            intent: n.intent,
+            inputs: n.inputs.map((id) => ctx.conceptManager.artifacts.get(id)?.name ?? id),
+            outputs: n.outputs.map((id) => ctx.conceptManager.artifacts.get(id)?.name ?? id),
+            action: n.actionAtom,
+            sourceLines: { start: 0, end: 0 },
+        })),
+    );
+    // 改为新方法，不覆盖原 standard_doc
+    store.saveAlignedStandardDoc(0, alignedStandardDoc);
+    ctx.ctx.info("[preprocessArtifacts] 已导出 aligned_standard_doc:0");
     ctx.ctx.notify(
         "preprocess 完成",
         `${Object.keys(relations).length} 个 artifact 的关系已整理` +
@@ -237,7 +269,6 @@ export async function preprocessArtifacts(
             ? `；lineage 主链 ${lineage.finalLineage.length} 节点`
             : ""),
     );
-
     return { success: true, relations, lineage };
 }
 

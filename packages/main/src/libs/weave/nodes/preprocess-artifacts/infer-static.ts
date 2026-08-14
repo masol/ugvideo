@@ -1,11 +1,8 @@
 /**
- * weaver · preprocess-artifacts · 静态推导
+ * weaver · preprocess-artifacts · 静态推导（v2）
  *
- * 不调 LLM。基于 DAG 边、节点 inputs/outputs、artifact 自身属性，
- * 推导可确定的关系（不捏造值）。
- *
- * 关键设计：检测到 duplicate-producer 时直接阻断 preprocess（要求 parse 重跑）。
- * 不再在 preprocess 阶段通过改名"修"——凭空造名是噪声。
+ * 变更（v2）：
+ * - 修复 duplicate-producer 检测：记录所有 producer（不再丢失第一个）
  */
 
 import type { WeaveContext } from "../../context.js";
@@ -40,25 +37,28 @@ export function inferStaticRelations(
         .map((id) => ctx.conceptManager.nodes.get(id))
         .filter((n): n is HumanNode => n !== null);
 
-    const producer = new Map<string, string>();
+    const producerMap = new Map<string, string[]>();
     const consumers = new Map<string, Set<string>>();
-    const duplicateProducers = new Map<string, string[]>();
 
+    // ── 关键修正：记录所有 producer ──
     for (const node of nodes) {
         for (const outId of node.outputs) {
             const name = artifactByName.get(outId)?.name ?? outId;
-            if (producer.has(name)) {
-                const arr = duplicateProducers.get(name) ?? [producer.get(name)!];
-                arr.push(node.id);
-                duplicateProducers.set(name, arr);
-            } else {
-                producer.set(name, node.id);
-            }
+            const arr = producerMap.get(name) ?? [];
+            arr.push(node.id);
+            producerMap.set(name, arr);
         }
         for (const inId of node.inputs) {
             const name = artifactByName.get(inId)?.name ?? inId;
             if (!consumers.has(name)) consumers.set(name, new Set());
             consumers.get(name)!.add(node.id);
+        }
+    }
+
+    const duplicateProducers = new Map<string, string[]>();
+    for (const [name, producers] of producerMap) {
+        if (producers.length > 1) {
+            duplicateProducers.set(name, producers);
         }
     }
 
@@ -96,15 +96,16 @@ export function inferStaticRelations(
     }
 
     const terminalArtifacts: string[] = [];
-    for (const [name, prod] of producer) {
-        void (prod)
-        const cs = consumers.get(name);
-        if (!cs || cs.size === 0) terminalArtifacts.push(name);
+    for (const [name, producers] of producerMap) {
+        if (producers.length === 1) {
+            const cs = consumers.get(name);
+            if (!cs || cs.size === 0) terminalArtifacts.push(name);
+        }
     }
 
     const orphanArtifacts: string[] = [];
     for (const [name, cs] of consumers) {
-        if (cs.size > 0 && !producer.has(name)) {
+        if (cs.size > 0 && !producerMap.has(name)) {
             const isFlowInput = flow.inputs.includes(name);
             if (!isFlowInput) orphanArtifacts.push(name);
         }

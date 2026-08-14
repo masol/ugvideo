@@ -111,7 +111,7 @@ export function validateRelations(
                     kind: "inverse-mismatch",
                     severity: "warning",
                     artifactName: name,
-                    message: `「${name}」partOf 「${parent}」，但「${parent}」的 composedOf 不含「${name}」`,
+                    message: `「${name}」partOf「${parent}」，但「${parent}」的 composedOf 不含「${name}」`,
                 });
             }
         }
@@ -123,35 +123,38 @@ export function validateRelations(
                     kind: "inverse-mismatch",
                     severity: "warning",
                     artifactName: name,
-                    message: `「${name}」composedOf 「${child}」，但「${child}」的 partOf 不含「${name}」`,
+                    message: `「${name}」composedOf「${child}」，但「${child}」的 partOf 不含「${name}」`,
                 });
             }
         }
     }
 
     // ── 3. 与 DAG 对齐 ──
-    const producerCount = new Map<string, number>();
+    const producerCount = new Map<string, string[]>();
     const consumerCount = new Map<string, number>();
     for (const node of nodes) {
         for (const outId of node.outputs) {
-            producerCount.set(outId, (producerCount.get(outId) ?? 0) + 1);
+            const arr = producerCount.get(outId) ?? [];
+            arr.push(node.id);
+            producerCount.set(outId, arr);
         }
         for (const inId of node.inputs) {
             consumerCount.set(inId, (consumerCount.get(inId) ?? 0) + 1);
         }
     }
 
-    //3a. duplicate-producer：error，要求 parse 重跑
-    for (const [name, count] of producerCount) {
-        if (count > 1) {
+    // 3a. duplicate-producer：error，要求 parse 重跑
+    for (const [name, producers] of producerCount) {
+        if (producers.length > 1) {
             issues.push({
                 kind: "duplicate-producer",
                 severity: "error",
                 artifactName: name,
                 message:
-                    `产物「${name}」被 ${count} 个节点产出，违反"一产物一产出"原则。` +
-                    `这不是 preprocess 阶段能修的——请回到原始文档，拆分为不同的 artifact 名` +
-                    `（如「草稿骨架」「含开头草稿」「含主体草稿」「终版草稿」）。`,
+                    `产物「${name}」被 ${producers.length} 个节点产出（${producers.join("、")}），` +
+                    `违反"一产物一产出"原则。这不是 preprocess 阶段能修的——` +
+                    `请回到原始文档，将产出该产物的步骤拆分为不同 artifact 名` +
+                    `（如「草稿骨架」「含开头草稿」「终版草稿」）。`,
             });
         }
     }

@@ -1,13 +1,18 @@
 /**
- * weaver · preprocess-artifacts · 导出 markdown 血缘图 + JSON 快照
+ * weaver · preprocess-artifacts · 导出 markdown 血缘图 + JSON 快照（v2）
+ *
+ * 变更（v2）：
+ * - Config 在 lineage 中标记为"[Config]"，与普通 artifact 区分
  */
 
-import type { ArtifactLineageMap, ArtifactRelation } from "../../types.js";
+import type { WeaveContext } from "../../context.js";
+import type { Artifact, ArtifactLineageMap, ArtifactRelation } from "../../types.js";
 
 export function exportLineageMarkdown(
     relations: Record<string, ArtifactRelation>,
     lineage: ArtifactLineageMap,
     flowName: string,
+    ctx?: WeaveContext,
 ): string {
     const lines: string[] = [];
 
@@ -41,7 +46,13 @@ export function exportLineageMarkdown(
         const lin = lineage.byArtifact[name];
         const rel = relations[name] ?? {};
 
-        lines.push(`### ${name}`);
+        const isConfig = ctx
+            ? (ctx.conceptManager.artifacts.getByName(name) as Artifact & { isConfig?: boolean })
+                ?.isConfig === true
+            : false;
+
+        const title = isConfig ? `### ${name} [Config]` : `### ${name}`;
+        lines.push(title);
         lines.push("");
         lines.push(`- **深度**: ${lin.depth}`);
         lines.push(`- **产出节点**: ${lin.producedBy ?? "（无/外部输入）"}`);

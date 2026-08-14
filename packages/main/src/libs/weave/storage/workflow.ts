@@ -1,5 +1,7 @@
 /**
- * weaver · Workflow Storage
+ * weaver · Workflow Storage（v2）
+ *
+ * 变更：新增 aligned_standard_doc，独立存储归一化后的标准文档
  */
 
 import type { CachedWorkflow } from "../nodes/parse/extract-workflow.js";
@@ -23,6 +25,15 @@ export class WorkflowStorage extends BaseStorage {
 
     getStandardDoc(docIndex: number): string | null {
         return this.get<string>(`standard_doc:${docIndex}`);
+    }
+
+    // 🔧 新增：归一化后的标准文档（不覆盖 standard_doc）
+    saveAlignedStandardDoc(docIndex: number, markdown: string): void {
+        this.set(`aligned_standard_doc:${docIndex}`, markdown);
+    }
+
+    getAlignedStandardDoc(docIndex: number): string | null {
+        return this.get<string>(`aligned_standard_doc:${docIndex}`);
     }
 
     saveRepairedStandardDoc(docIndex: number, markdown: string): void {

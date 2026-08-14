@@ -1,12 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * weaver · parse · 提取入口（v6.1）
+ * weaver · parse · 提取入口（v6.4）
  *
- * 变更（v6.1）：
- * - 修复死产物判定：由 DAG 终端节点（outDegree=0）产出的 artifact 是最终
- *   交付物，不应被视为阻断性死产物——只记warning。
- *   只有非终端节点产出的、无下游消费的 artifact 才是真正的死产物（图边缺失）。
- * - 其余逻辑与 v6.0 一致（frozenNames / applyFrozenNames 等）。
+ * 变更（v6.4）：
+ * - 终产物判定改为基于步骤 order（而非 DAG 拓扑结构）
+ * - 终产物 = 由 order 最大的步骤产出的 artifact
+ * - 这些 artifact 不视为"死产物"，无需下游消费
  */
 
 import { safefmt } from "$libs/model/llm/outline.js";
@@ -53,7 +52,7 @@ export interface ExtractOptions {
 }
 
 const GlobalInputSchema = z.object({
-    key: z.string().describe("全局输入项/ 配置项的名称，直接沿用原文中的叫法。"),
+    key: z.string().describe("全局输入项/配置项的名称，直接沿用原文中的叫法。"),
     hasDefault: z.boolean().describe("是否为带固定内容的配置项。"),
     defaultValue: z.string().describe("配置项的【完整逐字内容】。hasDefault=false 时填空字符串。"),
 });
@@ -62,13 +61,13 @@ const ExtractedNodeSchema = z.object({
     order: z.number().int().describe("步骤序号，从 1 开始的连续整数，不得跳号或重复。"),
     name: z.string().describe("步骤名称，简洁的动宾短语，全流程内唯一。"),
     intent: z.string().describe("本步骤的业务目的。"),
-    inputs: z.array(z.string()).describe("输入产物 / 配置项名称列表，逐字一致。"),
+    inputs: z.array(z.string()).describe("输入产物/配置项名称列表，逐字一致。"),
     outputs: z.array(z.string()).describe("产出产物名称列表，逐字一致。"),
     action: z
         .string()
         .describe(
             "完整可执行动作描述，主谓宾齐全，保留所有控制流与质量约束。" +
-            "动作中引用的产物 / 配置项名称必须与本步骤 inputs/outputs 或全局配置项里的名称逐字一致，并用反引号包裹。",
+            "动作中引用的产物/配置项名称必须与本步骤 inputs/outputs 或全局配置项里的名称逐字一致，并用反引号包裹。",
         ),
 });
 
@@ -128,11 +127,6 @@ export async function extractWorkflow(
             continue;
         }
 
-        // 关键：name 归一化到 frozen names
-        if (options.frozenNames) {
-            applyFrozenNames(extracted, options.frozenNames);
-        }
-
         const cached = normalize(extracted);
         if (cached.nodes.length === 0) {
             lastFeedback = ["[结构化抽取] 未抽取到任何有效步骤，请确保文档中的每个步骤都清晰可辨。"];
@@ -141,6 +135,10 @@ export async function extractWorkflow(
                 `doc ${docIndex + 1}第 ${round + 1} 轮：无有效步骤，回退语义整理`,
             );
             continue;
+        }
+
+        if (options.frozenNames) {
+            applyFrozenNamesToNormalized(cached, options.frozenNames);
         }
 
         const actionIssues = checkActionCompleteness(cached.nodes, cached.globalInputs);
@@ -196,36 +194,28 @@ export async function extractWorkflow(
             );
         }
 
-        //── 关键修复：区分"真正死产物"与"终产物"──
+        // ══════════════════════════════════════════════════════════════
+        // 通用规则：终产物判定
         //
-        // 终端节点（DAG 中outDegree=0 的节点）产出的 artifact 就是
-        // 工作流的最终交付物，天然无下游消费——不应视为死产物。
-        // 只有非终端节点产出的、无任何消费者的 artifact 才是真正的死产物
-        // （说明 DAG 边缺失，LLM 漏声明了输入）。
-        const terminalNodeIds = new Set<string>();
-        flow.g.forEachNode((id) => {
-            if (flow.g.outDegree(id) === 0) terminalNodeIds.add(id);
-        });
+        // 终产物 = 由 order 最大的步骤产出的 artifact
+        // 这些 artifact 是工作流的最终交付物，天然无需下游消费
+        // 判定依据是"步骤顺序"，而非"DAG 拓扑"——这样拓扑补全不会干扰判定
+        // �═════════════════════════════════════════════════════════════
+        const terminalArtifactNames = new Set<string>();
+        const maxOrder = cached.nodes.reduce((m, n) => Math.max(m, n.order), 0);
+        const terminalNodes = cached.nodes.filter((n) => n.order === maxOrder);
+        for (const tn of terminalNodes) {
+            for (const outId of tn.outputs) terminalArtifactNames.add(outId);
+        }
 
         const genuineDeadArtifacts = artifactReport.dead.filter(
-            (d) => !terminalNodeIds.has(d.producedBy),
+            (d) => !terminalArtifactNames.has(d.name),
         );
-
-        const terminalArtifacts = artifactReport.dead.filter(
-            (d) => terminalNodeIds.has(d.producedBy),
-        );
-
-        if (terminalArtifacts.length > 0) {
-            ctx.ctx.info?.(
-                `[extract] doc ${docIndex + 1} round ${round + 1} 终产物（非阻断）：` +
-                terminalArtifacts.map((d) => `「${d.name}」`).join("、"),
-            );
-        }
 
         if (
             stepFixable.length === 0 &&
             artifactReport.orphans.length === 0 &&
-            genuineDeadArtifacts.length === 0 &&   // ← 仅阻断"真正死产物"
+            genuineDeadArtifacts.length === 0 &&
             actionIssues.length === 0
         ) {
             const names = collectArtifactNames(cached);
@@ -243,11 +233,12 @@ export async function extractWorkflow(
             return { flow, standardDoc, cached, artifactReport };
         }
 
-        // ── 只把真正死产物的反馈发给 LLM ──
+        // ── 反馈 ──
         const bucketed = bucketFeedbacksByStep(stepFixable, actionIssues);
         const artifactFeedback = formatArtifactFeedback({
             ...artifactReport,
-            dead: genuineDeadArtifacts,  // 终产物不灌回 LLM
+            dead: genuineDeadArtifacts,
+            nodes: cached.nodes,
         });
         const allGlobal = [...bucketed.global, ...artifactFeedback];
 
@@ -270,7 +261,8 @@ export async function extractWorkflow(
         lastFeedback = [
             ...bucketed.stepTargets.flatMap((t) => t.feedbacks),
             ...allGlobal,
-        ]; ctx.ctx.notify(
+        ];
+        ctx.ctx.notify(
             "extract",
             `doc ${docIndex + 1} 第 ${round + 1} 轮：${lastFeedback.length} 条反馈回灌语义整理`,
         );
@@ -281,9 +273,9 @@ export async function extractWorkflow(
     );
 }
 
-//════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 // 错误分类
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 
 function isStructuralError(e: ValidationError): boolean {
     return (
@@ -294,9 +286,9 @@ function isStructuralError(e: ValidationError): boolean {
     );
 }
 
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 // safefmt 抽取
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 
 async function extractStructured(
     ctx: WeaveContext,
@@ -311,12 +303,12 @@ async function extractStructured(
     return result.value.output;
 }
 
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 // frozen names 归一化
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 
-function applyFrozenNames(
-    extracted: ExtractedWorkflow,
+function applyFrozenNamesToNormalized(
+    cached: CachedWorkflow,
     frozen: FrozenNamesConstraint,
 ): void {
     const Fuse = (globalThis as any).Fuse;
@@ -338,17 +330,18 @@ function applyFrozenNames(
         return s;
     };
 
-    for (const node of extracted.nodes) {
+    for (const node of cached.nodes) {
         node.inputs = node.inputs.map(replace);
         node.outputs = node.outputs.map(replace);
-    } for (const gi of extracted.globalInputs) {
+    }
+    for (const gi of cached.globalInputs) {
         gi.key = replace(gi.key);
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 // 归一化
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
 
 function sanitizeName(raw: unknown): string {
     if (typeof raw !== "string") return "";
@@ -398,7 +391,8 @@ function normalize(ex: ExtractedWorkflow): CachedWorkflow {
             intent: sanitizeActionText(n.intent),
             inputs: sanitizeNames(n.inputs),
             outputs: sanitizeNames(n.outputs),
-            action: sanitizeActionText(n.action), sourceLines: { start: 0, end: 0 },
+            action: sanitizeActionText(n.action),
+            sourceLines: { start: 0, end: 0 },
         }))
         .filter((n) => n.name.length > 0)
         .map((n, i) => ({ ...n, order: i + 1 }));
@@ -425,12 +419,15 @@ function collectArtifactNames(cached: CachedWorkflow): string[] {
     return [...set];
 }
 
-// ════════════════════════════════════════════════════════════════════
-// 辅助
-// ════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════
+// 反馈格式化
+// ══════════════════════════════════════════════════════════════════
 
-function formatArtifactFeedback(report: ArtifactReport): string[] {
+function formatArtifactFeedback(
+    report: ArtifactReport & { nodes?: ParsedNode[] },
+): string[] {
     const lines: string[] = [];
+
     if (report.orphans.length > 0) {
         lines.push(
             `[DAG验证] 以下产物被消费但无任何步骤产出（孤儿）：${report.orphans
@@ -438,17 +435,35 @@ function formatArtifactFeedback(report: ArtifactReport): string[] {
                 .join("、")}。请检查：是否漏写了产出该产物的步骤？或该产物本应作为全局输入/配置项？`,
         );
     }
+
     if (report.dead.length > 0) {
+        const nodes = report.nodes ?? [];
+        const suggestions = report.dead.map((d) => {
+            const producer = nodes.find((n) => n.name === d.producedBy);
+            const producerOrder = producer?.order ?? 0;
+            const downstreamCandidates = nodes
+                .filter((n) => n.order > producerOrder)
+                .map((n) => n.name)
+                .slice(0, 3);
+
+            return (
+                `「${d.name}」由步骤 [${d.producedBy}] 产出但无任何下游步骤在 inputs 中引用。` +
+                `建议：在后续步骤（${downstreamCandidates.join("、") || "无合适候选"}）的「输入」中显式添加 \`${d.name}\`，` +
+                `并在「动作」段描述如何使用。如果该 artifact 确实不应被任何下游消费（如最终交付物），` +
+                `请确认它出现在工作流输出登记中；如果是临时草稿可丢弃，请从产出步骤的 outputs 中移除该 artifact 名。`
+            );
+        });
+
         lines.push(
-            `[DAG验证] 以下产物被产出但无任何步骤消费（死产物）：${report.dead
-                .map((d) => `「${d.name}」由步骤 [${d.producedBy}] 产出`)
-                .join("、")}。` +
-            `死产物意味着图中缺少消费该产物的依赖边。请检查：` +
-            `(a) 是否有下游步骤在动作中使用了该产物但未将其列入inputs？` +
-            `若是，请补充到该下游步骤的输入列表；` +
-            `(b) 若该产物是工作流的中间产出，请确认下游步骤确实引用了它。` +
-            `（注意：工作流最终交付物不算死产物，无需下游消费。）`,
+            `[DAG验证] 以下产物被产出但无任何步骤消费（死产物）：\n${suggestions
+                .map((s, i) => `${i + 1}. ${s}`)
+                .join("\n")}\n` +
+            `死产物意味着图中缺少消费该产物的依赖边。请逐条按上述建议修正：\n` +
+            `(a) 在下游合适步骤的「输入」中显式列出该 artifact；\n` +
+            `(b) 若该产物是工作流的最终交付物，请在工作流输出中登记；\n` +
+            `(c) 若该产物确无用途，从产出步骤的 outputs 中移除。`,
         );
     }
+
     return lines;
 }
