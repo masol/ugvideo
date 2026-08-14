@@ -1,14 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * weaver · parse · section-level 定向修补（v2）
+ * weaver · parse · section-level 定向修补（v3）
  *
- * 变更：
- *  - 接收 ValidationError（带 severity）→ 只对 error 级别的反馈做定向修补；
- *    warning 仅记录日志，不触发 LLM 修补（避免无意义轮转）。
- *  - 增加"产物引用计数"反馈：dead（产出但未消费）的步骤要在动作中显式消费。
- *
- * 把"整篇重抽"降级为"按 step.name 定向修补"——对 build-flow + validateHumanFlow 抛出的
- * 结构性错误按 step.name 分桶；只让 LLM 重写有问题步骤段，再由代码 splice 回去。
+ * 变更（v3）：
+ * - target.stepName 在 parsed sections 中找不到时，记录 info 日志（原静默失败）。
+ * - 接受已分离过的 stepFixable feedbacks（structural 类已在上层过滤掉）。
  */
 
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
@@ -17,32 +13,20 @@ import type { WeaveContext } from "../../context.js";
 import type { ValidationError } from "../../graph/validate.js";
 
 export interface StepFixTarget {
-    /** 受影响步骤的 name（在 ## N. xxx 标题中出现的名称） */
     stepName: string;
-    /** 聚类到该步骤的所有反馈 */
     feedbacks: string[];
 }
 
 export interface SectionRepairInput {
-    /** 当前 markdown 全文 */
     doc: string;
-    /** 仅由 build-flow / validate 错误构造的反馈 */
     feedbacks: string[];
 }
 
 export interface SectionRepairResult {
-    /** 修补后的 markdown */
     doc: string;
-    /** 是否发生了修改 */
     changed: boolean;
 }
 
-/**
- * 从 validation errors + 动作完整性反馈中，按 stepName 分桶。
- *  - 只接受 severity === 'error' 的 validation error；
- *  - warning 进入 global 桶（已在 extract-workflow 主流程作为 info 日志记录）；
- *  - 无法定位 step 的 error（cycle / unreachable / missing-input 等不挂 nodeId）进入 global。
- */
 export function bucketFeedbacksByStep(
     errors: ValidationError[],
     actionFeedbacks: string[],
@@ -99,7 +83,12 @@ export async function repairSectionsByLLM(
     const repaired = new Map<string, string>();
     for (const target of targets) {
         const sec = byHeading.get(target.stepName);
-        if (!sec) continue;
+        if (!sec) {
+            ctx.ctx.info?.(
+                `[repairSectionsByLLM] 步骤「${target.stepName}」在文档中未找到匹配段（可能被语义整理改名），跳过修补`,
+            );
+            continue;
+        }
 
         const prompt = buildRepairPrompt(sec.raw, target.feedbacks);
         try {
@@ -113,6 +102,10 @@ export async function repairSectionsByLLM(
                 repaired.set(target.stepName, cleaned);
                 ctx.ctx.info?.(
                     `[repairSectionsByLLM] 已修补步骤「${target.stepName}」`,
+                );
+            } else {
+                ctx.ctx.info?.(
+                    `[repairSectionsByLLM] 步骤「${target.stepName}」LLM 输出无法解析为标准 section，保留原段`,
                 );
             }
         } catch (e: any) {

@@ -2,10 +2,9 @@
  * weaver · node ① parse
  *
  * 变更：
- * - index 0 的文档对应图注册时置 isMain=true；
- * - 缓存重建路径回填交付物语义作用（applyArtifactSemantics）。
- *
- * 缓存命中路径：从结构化 JSON 确定性重建 flow + 由代码渲染标准 doc 并回灌缓存。
+ * - 缓存命中分支回灌当前 goal（buildHumanFlowFromParsed 用 goal 作为 flow.intent，
+ *   goal 修改后缓存重建必须反映最新值）；
+ * - checkExpiry 后的日志措辞修正（空 docs 时不打印"命中缓存"）。
  */
 
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
@@ -20,12 +19,12 @@ export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
     const docs = ctx.inputDocs;
     const outputKey = ctx.storage.workflow.latestKey("parsed_docs_index");
 
-    const shouldSkip = !checkExpiry(ctx.ctx, {
+    const outputIsFresh = checkExpiry(ctx.ctx, {
         inputKeys: "script",
         outputKeys: outputKey,
     });
 
-    if (shouldSkip) {
+    if (outputIsFresh && docs.length > 0) {
         const cachedIndex = ctx.storage.workflow.getParsedDocsIndex();
         if (cachedIndex && cachedIndex.length === docs.length) {
             const cachedAll: CachedWorkflow[] = [];
@@ -40,12 +39,15 @@ export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
             }
 
             if (complete) {
+                // 回灌当前 goal（缓存中的 goal 可能已被用户修改）
+                const currentGoal = ctx.storage.workflow.getGoal();
                 ctx.ctx.notify("parse", `命中缓存，共 ${cachedAll.length} 个文档`);
                 for (let i = 0; i < cachedAll.length; i++) {
                     const c = cachedAll[i];
+                    const effectiveGoal = currentGoal ?? c.goal;
                     const flow = buildHumanFlowFromParsed(
                         c.flowName,
-                        c.goal,
+                        effectiveGoal,
                         c.globalInputs,
                         c.nodes,
                         ctx,
@@ -54,7 +56,7 @@ export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
                     applyArtifactSemantics(ctx, c.artifactSemantics ?? []);
                     const standardDoc = renderStandardDoc(
                         c.flowName,
-                        c.goal,
+                        effectiveGoal,
                         c.globalInputs,
                         c.nodes,
                     );
@@ -64,6 +66,11 @@ export async function parseWorkflow(ctx: WeaveContext): Promise<void> {
                 return;
             }
         }
+    }
+
+    if (docs.length === 0) {
+        ctx.ctx.notify("parse", "无输入文档，跳过");
+        return;
     }
 
     ctx.ctx.notify("parse", `开始解析 ${docs.length} 个原始文档`);

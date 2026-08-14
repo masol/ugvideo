@@ -1,16 +1,22 @@
 /**
- * weaver · parse · 提取入口（v5.1）
+ * weaver · parse · 提取入口（v5.2）
  *
- * 本次仅修复 normalize() 中 ParsedGlobalInput 类型不兼容的 TS 编译错误；
- * 其余语义、自检、sanitizer、修补逻辑均与 v5 完全一致。
+ * 变更（v5.2）：
+ * - structural 类validation error（cycle / unreachable / no-terminal / multiple-terminal）
+ *   不再灌回 semanticRefine（语义整理改不动图结构，属噪声反馈）；仅记info 日志。
+ * - 移除 lastSemanticMessages：每轮 semanticRefine 始终 fresh start（undefined），
+ *   避免跨轮 messages 链累积导致 prompt 膨胀与上下文漂移；
+ *   externalFeedback 已足够告知模型上一轮出了什么问题，无需保留历史对话链。
+ * - 【v5.2 新增】死产物（artifactReport.dead）从 warning 升级为阻断条件：
+ *   死产物意味着 graph 边缺失（下游消费未在 outputs 中表达），
+ *   触发外层 reAct 让 section-repair 自我修复。
  */
 
 import { safefmt } from "$libs/model/llm/outline.js";
-import type { ModelMessage } from "ai";
 import { Output } from "ai";
 import { z } from "zod";
 import type { WeaveContext } from "../../context.js";
-import { blockingErrors, validateHumanFlow } from "../../graph/validate.js";
+import { blockingErrors, validateHumanFlow, type ValidationError } from "../../graph/validate.js";
 import type { HumanFlow } from "../../types.js";
 import { checkActionCompleteness } from "./action-completeness.js";
 import type { ArtifactRegistry } from "./build-flow.js";
@@ -99,7 +105,6 @@ export async function extractWorkflow(
 
     const maxRounds = ctx.storage.config.getMaxReactRounds();
     let lastFeedback: string[] = [];
-    let lastSemanticMessages: ModelMessage[] | undefined;
     let workingDoc: string = doc;
 
     for (let round = 0; round < maxRounds; round++) {
@@ -108,6 +113,9 @@ export async function extractWorkflow(
             `doc ${docIndex + 1} 第 ${round + 1}/${maxRounds} 轮：语义整理`,
         );
 
+        // 每轮始终 fresh start（undefined）：
+        // 避免跨轮 messages 链累积导致 prompt 膨胀与上下文漂移。
+        // externalFeedback（lastFeedback）已足够告知模型上一轮的问题所在。
         const refine = await semanticRefine(
             ctx,
             workingDoc,
@@ -115,10 +123,9 @@ export async function extractWorkflow(
             options.constraints ?? null,
             options.preferences ?? null,
             lastFeedback,
-            lastSemanticMessages,
+            undefined,
         );
         const semanticDoc = refine.doc;
-        lastSemanticMessages = refine.messages;
         workingDoc = semanticDoc;
 
         ctx.ctx.info?.(
@@ -132,7 +139,7 @@ export async function extractWorkflow(
             ];
             ctx.ctx.notify(
                 "extract",
-                `doc ${docIndex + 1} 第 ${round + 1} 轮：结构化抽取失败，回退语义整理`,
+                `doc ${docIndex + 1}第 ${round + 1} 轮：结构化抽取失败，回退语义整理`,
             );
             continue;
         }
@@ -160,6 +167,22 @@ export async function extractWorkflow(
         const validationErrors = blockingErrors(validationAll);
         const warnings = validationAll.filter((e) => e.severity === "warning");
 
+        // 分离 structural 与 step-fixable 反馈：
+        // structural（cycle / unreachable / no-terminal / multiple-terminal）由图结构决定，
+        // 语义整理改不动，只记日志，不灌回prompt（避免噪声膨胀）。
+        const stepFixable: ValidationError[] = [];
+        const structuralOnly: ValidationError[] = [];
+        for (const e of validationErrors) {
+            if (isStructuralError(e)) structuralOnly.push(e);
+            else stepFixable.push(e);
+        }
+        if (structuralOnly.length > 0) {
+            ctx.ctx.info?.(
+                `[extract] doc ${docIndex + 1} round ${round + 1} structural 错误（不可由语义整理修复）：` +
+                structuralOnly.map((e) => e.message).join("；"),
+            );
+        }
+
         const registry = (flow as HumanFlow & { _artifactRegistry?: ArtifactRegistry })
             ._artifactRegistry;
 
@@ -183,9 +206,15 @@ export async function extractWorkflow(
             );
         }
 
+        // 死产物（dead artifact）升级为阻断条件：
+        // dead意味着某产物有producer 却无任何下游 consumer——图边缺失。
+        // 通常原因：LLM 在actionAtom 里写了"合并/拼接 A 和 B 得到 C"，
+        // 但 A 或 B 没有被下游步骤的 inputs引用，导致依赖边没有生成。
+        // 与 orphans 对等处理：同样纳入外层 reAct 阻断、触发 section-repair。
         if (
-            validationErrors.length === 0 &&
+            stepFixable.length === 0 &&
             artifactReport.orphans.length === 0 &&
+            artifactReport.dead.length === 0 &&
             actionIssues.length === 0
         ) {
             const names = collectArtifactNames(cached);
@@ -203,13 +232,11 @@ export async function extractWorkflow(
             return { flow, standardDoc, cached, artifactReport };
         }
 
-        const bucketed = bucketFeedbacksByStep(validationErrors, actionIssues);
+        const bucketed = bucketFeedbacksByStep(stepFixable, actionIssues);
         const artifactFeedback = formatArtifactFeedback(artifactReport);
         const allGlobal = [
             ...bucketed.global,
-            ...artifactFeedback,
-            ...warnings.map((w) => `[结构警告] ${w.message}`),
-        ];
+            ...artifactFeedback,];
 
         const repair = await repairSectionsByLLM(
             ctx,
@@ -220,11 +247,10 @@ export async function extractWorkflow(
         if (repair.changed) {
             ctx.ctx.notify(
                 "extract",
-                `doc ${docIndex + 1} 第 ${round + 1} 轮：section 修补 ${bucketed.stepTargets.length} 个步骤，重新抽取`,
+                `doc ${docIndex + 1} 第 ${round + 1} 轮：section修补${bucketed.stepTargets.length} 个步骤，重新抽取`,
             );
             workingDoc = repair.doc;
             lastFeedback = allGlobal;
-            lastSemanticMessages = undefined;
             continue;
         }
 
@@ -239,7 +265,20 @@ export async function extractWorkflow(
     }
 
     throw new Error(
-        `[extract] doc ${docIndex} 经 ${maxRounds} 轮 reAct 仍未通过验证：\n${lastFeedback.join("\n")}`,
+        `[extract] doc ${docIndex} 经${maxRounds} 轮reAct 仍未通过验证：\n${lastFeedback.join("\n")}`,
+    );
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 错误分类
+// ════════════════════════════════════════════════════════════════════
+
+function isStructuralError(e: ValidationError): boolean {
+    return (
+        e.kind === "cycle" ||
+        e.kind === "unreachable" ||
+        e.kind === "no-terminal" ||
+        e.kind === "multiple-terminal"
     );
 }
 
@@ -261,17 +300,9 @@ async function extractStructured(
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 归一化（含 name sanitizer）
+// 归一化（含name sanitizer）
 // ════════════════════════════════════════════════════════════════════
 
-/**
- * 清净化产物 / 节点 / 全局输入名称：
- *  - 去掉前后空白；
- *  - 去掉所有反引号（U+0060），包括 markdown 反引号转义 "\`"；
- *  - 去掉常见的引号变体（避免 LLM 把 `"`/`'`/`「`/`」`/`《`/`》` 一并塞进 name）；
- *  - 空名直接丢弃；
- *  - 长度上限 50（防御性，避免 KV key 异常膨胀）。
- */
 function sanitizeName(raw: unknown): string {
     if (typeof raw !== "string") return "";
     let s = raw.trim();
@@ -300,11 +331,6 @@ function sanitizeActionText(raw: unknown): string {
     return raw.trim();
 }
 
-/**
- * 把 raw globalInput 转成 ParsedGlobalInput；过滤掉空 key。
- * 直接返回 ParsedGlobalInput，不构造 inline object，避免 defaultValue 显式 undefined
- * 与 ParsedGlobalInput.defaultValue 可选字段类型不兼容。
- */
 function toParsedGlobalInput(raw: { key?: unknown; hasDefault?: unknown; defaultValue?: unknown }): ParsedGlobalInput | null {
     const key = sanitizeName(raw.key);
     if (!key) return null;
@@ -325,8 +351,7 @@ function normalize(ex: ExtractedWorkflow): CachedWorkflow {
             intent: sanitizeActionText(n.intent),
             inputs: sanitizeNames(n.inputs),
             outputs: sanitizeNames(n.outputs),
-            action: sanitizeActionText(n.action),
-            sourceLines: { start: 0, end: 0 },
+            action: sanitizeActionText(n.action), sourceLines: { start: 0, end: 0 },
         }))
         .filter((n) => n.name.length > 0)
         .map((n, i) => ({ ...n, order: i + 1 }));
@@ -362,15 +387,19 @@ function formatArtifactFeedback(report: ArtifactReport): string[] {
     if (report.orphans.length > 0) {
         lines.push(
             `[DAG验证] 以下产物被消费但无任何步骤产出（孤儿）：${report.orphans
-                .map((o) => `「${o.name}」被 [${o.consumedBy.join(", ")}] 消费`)
+                .map((o) => `「${o.name}」被[${o.consumedBy.join(", ")}] 消费`)
                 .join("、")}。请检查：是否漏写了产出该产物的步骤？或该产物本应作为全局输入/配置项？`,
         );
     }
     if (report.dead.length > 0) {
         lines.push(
             `[DAG验证] 以下产物被产出但无任何步骤消费（死产物）：${report.dead
-                .map((d) => `「${d.name}」由 [${d.producedBy}] 产出`)
-                .join("、")}。请检查：是否漏写了消费该产物的步骤？或下游步骤引用它时用了不同的名称？`,
+                .map((d) => `「${d.name}」由步骤 [${d.producedBy}] 产出`)
+                .join("、")}。` +
+            `死产物意味着图中缺少消费该产物的依赖边。请检查：` +
+            `(a) 是否有下游步骤在动作中使用了该产物但未将其列入 inputs？若是，请补充到该下游步骤的输入列表；` +
+            `(b) 若该产物确实是最终交付物（整个工作流的最终输出），请确认有且仅有一个步骤将其列为 outputs，` +
+            `且该步骤是整个工作流的最后一步。`,
         );
     }
     return lines;
