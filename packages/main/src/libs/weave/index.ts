@@ -1,10 +1,7 @@
 /**
  * weaver · 工作流主入口
  *
- * 三阶段编排：
- *   ① parse           (targetStep >= 1)
- *   ② emit-formal-doc  (targetStep >= 2)
- * ③ emit-standard-doc (targetStep >= 3)
+ * v3：根层 parse ↔ preprocess reAct 编排
  */
 
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
@@ -12,19 +9,16 @@ import type { IRunnerContext } from "$types/blueprint/context.js";
 import { getErrorMessage } from "radashi";
 import { createWeaveContext } from "./context.js";
 import { parseWorkflow } from "./nodes/parse/index.js";
+import { preprocessArtifacts } from "./nodes/preprocess-artifacts/index.js";
 
-
-/** 阶段编号常量 */
-const WeaveStep = {
+const STEP = {
     Parse: 1,
-    FormalDoc: 2,
-    StandardDoc: 3,
+    Preprocess: 2,
+    Decompose: 3,
+    Resolve: 4,
+    Dump: 5,
 } as const;
 
-/**
- * target 解析：将 "N/M" 形式转为数字步骤（1-based）。
- * 缺省或非法 → Infinity（执行到底）。
- */
 function parseTargetStep(raw: string | null | undefined): number {
     if (!raw) return Infinity;
     const m = raw.trim().match(/^(\d+)\/(\d+)$/);
@@ -43,40 +37,66 @@ export async function run(ctx: IRunnerContext): Promise<void> {
     const targetStep = parseTargetStep(prjdb.get<string>("target"));
 
     try {
-        // ① parse
-        await parseWorkflow(weaveCtx);
-        const flows = weaveCtx.conceptManager.listHumanFlows();
-        if (targetStep <= WeaveStep.Parse) {
-            ctx.notify('weaver 完成（target=parse）', `共 ${flows.length} 个工作流`);
+        // ══════════════════════════════════════════════════════════════
+        // 根层 reAct：parse ↔ preprocess 双向反馈循环
+        // ══════════════════════════════════════════════════════════════
+
+        const ROOT_MAX_ROUNDS = weaveCtx.storage.config.getMaxReactRounds();//3;
+        let preprocessResult: Awaited<ReturnType<typeof preprocessArtifacts>> | null = null;
+
+        for (let rootRound = 0; rootRound < ROOT_MAX_ROUNDS; rootRound++) {
+            ctx.notify("weaver", `根层第 ${rootRound + 1}/${ROOT_MAX_ROUNDS} 轮`);
+
+            // ── ① parse ──
+            const frozenNames = preprocessResult?.requiresParseRerun?.frozenNames ?? null;
+            const forceRerun = rootRound > 0;
+
+            ctx.notify(
+                "parse",
+                rootRound === 0
+                    ? "开始解析"
+                    : `重跑解析（冻结 ${frozenNames?.names.length ?? 0} 个 artifact 名）`,
+            );
+
+            weaveCtx.conceptManager.clear();
+            await parseWorkflow(weaveCtx, { frozenNames, forceRerun });
+
+            if (targetStep <= STEP.Parse) {
+                const flows = weaveCtx.conceptManager.listHumanFlows();
+                ctx.notify("weaver 完成（target=parse）", `共 ${flows.length} 个工作流`);
+                return;
+            }
+
+            // ── ② preprocess ──
+            preprocessResult = await preprocessArtifacts(weaveCtx);
+
+            if (preprocessResult.success) {
+                ctx.notify("weaver", "parse + preprocess 通过，进入下一阶段");
+                break;
+            }
+
+            if (preprocessResult.requiresParseRerun) {
+                ctx.notify(
+                    "weaver",
+                    `preprocess 要求 parse 重跑（${preprocessResult.requiresParseRerun.feedback.length} 条反馈）`,
+                );
+                continue;
+            }
+
+            // 不应到达此处
+            break;
+        }
+
+        if (targetStep <= STEP.Preprocess) {
+            ctx.notify("weaver 完成（target=preprocess）", "artifact 关系已整理");
             return;
         }
-        weaveCtx.ctx.notify(
+
+        // 后续阶段暂未启用
+        ctx.notify(
             "weaver 完成",
-            `共 ${flows.length} 个工作流，${weaveCtx.conceptCount} 个概念`,
+            `共 ${weaveCtx.conceptManager.count()} 个概念`,
         );
-
-        weaveCtx.ctx.debug("flows=", JSON.stringify(flows, null, 2))
-        weaveCtx.ctx.debug("artifacts=", JSON.stringify(weaveCtx.conceptManager.artifacts.list(), null, 2))
-        weaveCtx.ctx.debug("nodes=", JSON.stringify(weaveCtx.conceptManager.nodes.list(), null, 2))
-
-        // @TODO: 这里开始经human-workflow编译为agent-workflow(agent-workflow是编译过程的intermediate)
-        // await compile(weaveCtx);
-        // if (targetStep <= WeaveStep.Parse) {
-        //     weaveCtx.notify('weaver 完成（target=parse）', `共 ${flows.length} 个工作流`);
-        //     return;
-        // }
-
-
-        // @TODO: 开始将agent-workflow编译为代码。
-        // await generate(weaveCtx);
-        // if (targetStep <= WeaveStep.Parse) {
-        //     weaveCtx.notify('weaver 完成（target=parse）', `共 ${flows.length} 个工作流`);
-        //     return;
-        // }
-
-        // @TOD: 开始将编译后的代码导出为项目类型。
-        // await dump(weaveCtx);
-
     } catch (err) {
         weaveCtx.ctx.notify("weaver 失败", getErrorMessage(err));
         throw err;

@@ -1,20 +1,15 @@
 /**
- * weaver · parse · 语义整理
+ * weaver · parse · 语义整理（v6）
  *
- * 变更：再次确认基础约定（与上一版一致；本版只把"section-level 修补后的 doc"
- * 也能正确重新整理——见 messages 拼接策略）。
- *
- * 核心约定：
- * - 控制流与约束一律以自然语言保留在「动作」段内。
- * - 配置素材提升为全局输入配置项，默认值存完整逐字内容。
- * - 每个声明的「输入」必须在「动作」中被引用。
- * - 反馈始终基于最新一轮 assistant 输出（messages 串联），不回灌历史文档。
+ * 变更：接受 FrozenNamesConstraint 参数，在 instructions / prompt 中
+ *       强制 LLM 使用一致名字。
  */
 
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import type { ModelMessage } from "ai";
 import { generateText } from "ai";
 import type { WeaveContext } from "../../context.js";
+import type { FrozenNamesConstraint } from "./parse-types.js";
 import { semanticSelfCheck } from "./semantic-self-check.js";
 
 export interface SemanticRefineResult {
@@ -30,6 +25,7 @@ export async function semanticRefine(
     preferences: string | null,
     externalFeedback: string[],
     previousMessages?: ModelMessage[],
+    frozenNames?: FrozenNamesConstraint | null,
 ): Promise<SemanticRefineResult> {
     const contextBlock = buildContextBlock(goal, constraints, preferences);
     const initialPrompt = `${contextBlock}\n\n## 原始工作流文档\n${doc}`.trim();
@@ -59,7 +55,7 @@ export async function semanticRefine(
     for (let round = 1; round <= MAX_INTERNAL_ROUNDS; round++) {
         const { text: semanticDoc } = await generateText({
             model: getSmartModel(undefined, ctx.ctx),
-            instructions: REFINE_INSTRUCTIONS,
+            instructions: buildInstructions(frozenNames),
             messages,
         });
 
@@ -114,9 +110,37 @@ function buildContextBlock(
     return lines.length > 0 ? lines.join("\n\n") : "";
 }
 
-const REFINE_INSTRUCTIONS = `你是工作流语义整理专家，负责把用户写的原始工作流文档整理为**清晰的自然语言 markdown**，让每个步骤的输入/输出/动作一目了然，且**任何原文信息都不丢失**。
+/**
+ * 构造 instructions：若提供 frozen names，强约束 LLM 使用一致名字。
+ */
+function buildInstructions(frozen?: FrozenNamesConstraint | null): string {
+    const base = `你是工作流语义整理专家，负责把用户写的原始工作流文档整理为清晰的自然语言 markdown，让每个步骤的输入/输出/动作一目了然，且任何原文信息都不丢失。`;
 
-## 一、你要做什么
+    if (!frozen || frozen.names.length === 0) {
+        return base + STANDARD_BODY;
+    }
+
+    const nameList = frozen.names.map((n, i) => `${i + 1}. ${n}`).join("\n");
+    const hintBlock = Object.entries(frozen.hints)
+        .map(([name, hint]) => `- \`${name}\`：${hint}`)
+        .join("\n");
+
+    return (
+        base +
+        `## 严格约束：artifact命名
+
+上游阶段已锁定以下产物名，本轮整理**必须逐字使用**这些名字，禁止任何同义替换、缩写、变体：
+
+${nameList}
+
+${hintBlock ? `各名字含义说明：\n${hintBlock}\n` : ""}
+
+违反此约束将导致下游校验失败。` +
+        STANDARD_BODY
+    );
+}
+
+const STANDARD_BODY = `## 一、你要做什么
 
 1. **识别所有步骤**：原始文档中的步骤可能是段落、列表项、有序列表等形式，逐一识别，每个步骤对应一个二级标题。
 2. **保留原文二级标题**：原文若有"## 1. xxx"就保留；没有则根据上下文给出合理步骤名。

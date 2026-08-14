@@ -6,7 +6,6 @@
  */
 
 import { BaseStorage } from "./base.js";
-import type { ParseMode } from "./index.js";
 
 export class ConfigStorage extends BaseStorage {
     protected NS = "#weave:config:";
@@ -23,10 +22,5 @@ export class ConfigStorage extends BaseStorage {
         if (!raw) return 50;
         const n = parseInt(raw, 10);
         return Number.isFinite(n) && n > 0 ? n : 50;
-    }
-
-    getParseMode(): ParseMode {
-        const raw = this.get<string>("parseMode");
-        return raw === "strict" ? "strict" : "normal";
     }
 }

@@ -181,7 +181,6 @@ function registerConfigs(ctx: WeaveContext, globalInputs: ParsedGlobalInput[]): 
             intent: gi.key,
             inferred: false,
             constraintIds: [],
-            shape: "scalar",
             semanticFields: [],
             isConfig: true,
             defaultValue: gi.defaultValue ?? "",
@@ -252,7 +251,6 @@ function ensureArtifact(ctx: WeaveContext, name: string): string {
         intent: name,
         inferred: true,
         constraintIds: [],
-        shape: "scalar",
         semanticFields: [],
     } as Artifact);
     return id;

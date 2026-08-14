@@ -1,15 +1,12 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * weaver · parse · 提取入口（v5.2）
+ * weaver · parse · 提取入口（v6.1）
  *
- * 变更（v5.2）：
- * - structural 类validation error（cycle / unreachable / no-terminal / multiple-terminal）
- *   不再灌回 semanticRefine（语义整理改不动图结构，属噪声反馈）；仅记info 日志。
- * - 移除 lastSemanticMessages：每轮 semanticRefine 始终 fresh start（undefined），
- *   避免跨轮 messages 链累积导致 prompt 膨胀与上下文漂移；
- *   externalFeedback 已足够告知模型上一轮出了什么问题，无需保留历史对话链。
- * - 【v5.2 新增】死产物（artifactReport.dead）从 warning 升级为阻断条件：
- *   死产物意味着 graph 边缺失（下游消费未在 outputs 中表达），
- *   触发外层 reAct 让 section-repair 自我修复。
+ * 变更（v6.1）：
+ * - 修复死产物判定：由 DAG 终端节点（outDegree=0）产出的 artifact 是最终
+ *   交付物，不应被视为阻断性死产物——只记warning。
+ *   只有非终端节点产出的、无下游消费的 artifact 才是真正的死产物（图边缺失）。
+ * - 其余逻辑与 v6.0 一致（frozenNames / applyFrozenNames 等）。
  */
 
 import { safefmt } from "$libs/model/llm/outline.js";
@@ -22,14 +19,10 @@ import { checkActionCompleteness } from "./action-completeness.js";
 import type { ArtifactRegistry } from "./build-flow.js";
 import { applyArtifactSemantics, buildHumanFlowFromParsed } from "./build-flow.js";
 import { extractArtifactSemantics } from "./extract-artifact-semantics.js";
-import type { ArtifactSemantic, ParsedGlobalInput, ParsedNode } from "./parse-types.js";
+import type { ArtifactSemantic, FrozenNamesConstraint, ParsedGlobalInput, ParsedNode } from "./parse-types.js";
 import { renderStandardDoc } from "./render-standard.js";
 import { bucketFeedbacksByStep, repairSectionsByLLM } from "./section-repair.js";
 import { semanticRefine } from "./semantic-refine.js";
-
-// ════════════════════════════════════════════════════════════════════
-// 类型定义
-// ════════════════════════════════════════════════════════════════════
 
 export interface ArtifactReport {
     orphans: { name: string; consumedBy: string[] }[];
@@ -56,14 +49,11 @@ export interface ExtractOptions {
     goal?: string | null;
     constraints?: string | null;
     preferences?: string | null;
+    frozenNames?: FrozenNamesConstraint | null;
 }
 
-// ════════════════════════════════════════════════════════════════════
-// safefmt 抽取 schema
-// ════════════════════════════════════════════════════════════════════
-
 const GlobalInputSchema = z.object({
-    key: z.string().describe("全局输入项 / 配置项的名称，直接沿用原文中的叫法。"),
+    key: z.string().describe("全局输入项/ 配置项的名称，直接沿用原文中的叫法。"),
     hasDefault: z.boolean().describe("是否为带固定内容的配置项。"),
     defaultValue: z.string().describe("配置项的【完整逐字内容】。hasDefault=false 时填空字符串。"),
 });
@@ -91,10 +81,6 @@ const WorkflowSchema = z.object({
 
 type ExtractedWorkflow = z.infer<typeof WorkflowSchema>;
 
-// ════════════════════════════════════════════════════════════════════
-// 入口
-// ════════════════════════════════════════════════════════════════════
-
 export async function extractWorkflow(
     ctx: WeaveContext,
     doc: string,
@@ -113,9 +99,6 @@ export async function extractWorkflow(
             `doc ${docIndex + 1} 第 ${round + 1}/${maxRounds} 轮：语义整理`,
         );
 
-        // 每轮始终 fresh start（undefined）：
-        // 避免跨轮 messages 链累积导致 prompt 膨胀与上下文漂移。
-        // externalFeedback（lastFeedback）已足够告知模型上一轮的问题所在。
         const refine = await semanticRefine(
             ctx,
             workingDoc,
@@ -124,6 +107,7 @@ export async function extractWorkflow(
             options.preferences ?? null,
             lastFeedback,
             undefined,
+            options.frozenNames ?? null,
         );
         const semanticDoc = refine.doc;
         workingDoc = semanticDoc;
@@ -144,12 +128,17 @@ export async function extractWorkflow(
             continue;
         }
 
+        // 关键：name 归一化到 frozen names
+        if (options.frozenNames) {
+            applyFrozenNames(extracted, options.frozenNames);
+        }
+
         const cached = normalize(extracted);
         if (cached.nodes.length === 0) {
             lastFeedback = ["[结构化抽取] 未抽取到任何有效步骤，请确保文档中的每个步骤都清晰可辨。"];
             ctx.ctx.notify(
                 "extract",
-                `doc ${docIndex + 1} 第 ${round + 1} 轮：无有效步骤，回退语义整理`,
+                `doc ${docIndex + 1}第 ${round + 1} 轮：无有效步骤，回退语义整理`,
             );
             continue;
         }
@@ -163,13 +152,14 @@ export async function extractWorkflow(
             ctx,
         );
 
-        const validationAll = validateHumanFlow(flow, ctx.conceptManager);
+        const validationAll = validateHumanFlow(
+            flow,
+            ctx.conceptManager,
+            ctx.storage.config.getMaxPathsPerNode(),
+        );
         const validationErrors = blockingErrors(validationAll);
         const warnings = validationAll.filter((e) => e.severity === "warning");
 
-        // 分离 structural 与 step-fixable 反馈：
-        // structural（cycle / unreachable / no-terminal / multiple-terminal）由图结构决定，
-        // 语义整理改不动，只记日志，不灌回prompt（避免噪声膨胀）。
         const stepFixable: ValidationError[] = [];
         const structuralOnly: ValidationError[] = [];
         for (const e of validationErrors) {
@@ -178,7 +168,7 @@ export async function extractWorkflow(
         }
         if (structuralOnly.length > 0) {
             ctx.ctx.info?.(
-                `[extract] doc ${docIndex + 1} round ${round + 1} structural 错误（不可由语义整理修复）：` +
+                `[extract] doc ${docIndex + 1} round ${round + 1} structural错误（不可由语义整理修复）：` +
                 structuralOnly.map((e) => e.message).join("；"),
             );
         }
@@ -206,15 +196,36 @@ export async function extractWorkflow(
             );
         }
 
-        // 死产物（dead artifact）升级为阻断条件：
-        // dead意味着某产物有producer 却无任何下游 consumer——图边缺失。
-        // 通常原因：LLM 在actionAtom 里写了"合并/拼接 A 和 B 得到 C"，
-        // 但 A 或 B 没有被下游步骤的 inputs引用，导致依赖边没有生成。
-        // 与 orphans 对等处理：同样纳入外层 reAct 阻断、触发 section-repair。
+        //── 关键修复：区分"真正死产物"与"终产物"──
+        //
+        // 终端节点（DAG 中outDegree=0 的节点）产出的 artifact 就是
+        // 工作流的最终交付物，天然无下游消费——不应视为死产物。
+        // 只有非终端节点产出的、无任何消费者的 artifact 才是真正的死产物
+        // （说明 DAG 边缺失，LLM 漏声明了输入）。
+        const terminalNodeIds = new Set<string>();
+        flow.g.forEachNode((id) => {
+            if (flow.g.outDegree(id) === 0) terminalNodeIds.add(id);
+        });
+
+        const genuineDeadArtifacts = artifactReport.dead.filter(
+            (d) => !terminalNodeIds.has(d.producedBy),
+        );
+
+        const terminalArtifacts = artifactReport.dead.filter(
+            (d) => terminalNodeIds.has(d.producedBy),
+        );
+
+        if (terminalArtifacts.length > 0) {
+            ctx.ctx.info?.(
+                `[extract] doc ${docIndex + 1} round ${round + 1} 终产物（非阻断）：` +
+                terminalArtifacts.map((d) => `「${d.name}」`).join("、"),
+            );
+        }
+
         if (
             stepFixable.length === 0 &&
             artifactReport.orphans.length === 0 &&
-            artifactReport.dead.length === 0 &&
+            genuineDeadArtifacts.length === 0 &&   // ← 仅阻断"真正死产物"
             actionIssues.length === 0
         ) {
             const names = collectArtifactNames(cached);
@@ -232,11 +243,13 @@ export async function extractWorkflow(
             return { flow, standardDoc, cached, artifactReport };
         }
 
+        // ── 只把真正死产物的反馈发给 LLM ──
         const bucketed = bucketFeedbacksByStep(stepFixable, actionIssues);
-        const artifactFeedback = formatArtifactFeedback(artifactReport);
-        const allGlobal = [
-            ...bucketed.global,
-            ...artifactFeedback,];
+        const artifactFeedback = formatArtifactFeedback({
+            ...artifactReport,
+            dead: genuineDeadArtifacts,  // 终产物不灌回 LLM
+        });
+        const allGlobal = [...bucketed.global, ...artifactFeedback];
 
         const repair = await repairSectionsByLLM(
             ctx,
@@ -257,8 +270,7 @@ export async function extractWorkflow(
         lastFeedback = [
             ...bucketed.stepTargets.flatMap((t) => t.feedbacks),
             ...allGlobal,
-        ];
-        ctx.ctx.notify(
+        ]; ctx.ctx.notify(
             "extract",
             `doc ${docIndex + 1} 第 ${round + 1} 轮：${lastFeedback.length} 条反馈回灌语义整理`,
         );
@@ -269,7 +281,7 @@ export async function extractWorkflow(
     );
 }
 
-// ════════════════════════════════════════════════════════════════════
+//════════════════════════════════════════════════════════════════════
 // 错误分类
 // ════════════════════════════════════════════════════════════════════
 
@@ -300,7 +312,42 @@ async function extractStructured(
 }
 
 // ════════════════════════════════════════════════════════════════════
-// 归一化（含name sanitizer）
+// frozen names 归一化
+// ════════════════════════════════════════════════════════════════════
+
+function applyFrozenNames(
+    extracted: ExtractedWorkflow,
+    frozen: FrozenNamesConstraint,
+): void {
+    const Fuse = (globalThis as any).Fuse;
+    if (typeof Fuse !== "function") return;
+
+    const frozenNames = frozen.names;
+    const frozenFuse = new Fuse(frozenNames, {
+        threshold: 0.4,
+        includeScore: true,
+        ignoreLocation: true,
+    });
+
+    const replace = (s: string): string => {
+        if (frozenNames.includes(s)) return s;
+        const hits = frozenFuse.search(s);
+        if (hits.length > 0 && hits[0].score !== undefined && hits[0].score <= 0.4) {
+            return hits[0].item;
+        }
+        return s;
+    };
+
+    for (const node of extracted.nodes) {
+        node.inputs = node.inputs.map(replace);
+        node.outputs = node.outputs.map(replace);
+    } for (const gi of extracted.globalInputs) {
+        gi.key = replace(gi.key);
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 归一化
 // ════════════════════════════════════════════════════════════════════
 
 function sanitizeName(raw: unknown): string {
@@ -397,9 +444,10 @@ function formatArtifactFeedback(report: ArtifactReport): string[] {
                 .map((d) => `「${d.name}」由步骤 [${d.producedBy}] 产出`)
                 .join("、")}。` +
             `死产物意味着图中缺少消费该产物的依赖边。请检查：` +
-            `(a) 是否有下游步骤在动作中使用了该产物但未将其列入 inputs？若是，请补充到该下游步骤的输入列表；` +
-            `(b) 若该产物确实是最终交付物（整个工作流的最终输出），请确认有且仅有一个步骤将其列为 outputs，` +
-            `且该步骤是整个工作流的最后一步。`,
+            `(a) 是否有下游步骤在动作中使用了该产物但未将其列入inputs？` +
+            `若是，请补充到该下游步骤的输入列表；` +
+            `(b) 若该产物是工作流的中间产出，请确认下游步骤确实引用了它。` +
+            `（注意：工作流最终交付物不算死产物，无需下游消费。）`,
         );
     }
     return lines;

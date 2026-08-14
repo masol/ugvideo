@@ -131,7 +131,7 @@
                                 "binding": {
                                     "key": "maxReactRounds"
                                 },
-                                "label": "转标准格式最大轮次",
+                                "label": "转标准格式最大收敛次数",
                                 "editor": "inline",
                                 "placeholder": "4",
                                 "inputType": "number"
@@ -139,12 +139,12 @@
                             {
                                 "type": "field",
                                 "binding": {
-                                    "key": "config:stability_threshold"
+                                    "key": "maxPathsPerNode"
                                 },
-                                "label": "稳定性阈值",
+                                "label": "DAG最大路径长度",
                                 "editor": "inline",
-                                "placeholder": "例如：连续3次评分≥95%",
-                                "emptyHint": "满足此条件时视为稳定，自动终止迭代"
+                                "placeholder": "50",
+                                "inputType": "number"
                             },
                             {
                                 "type": "button-group",

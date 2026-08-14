@@ -1,10 +1,5 @@
 /**
  * weaver · DAG 验证（含路径级输入闭合性）
- *
- * 变更：
- * - 多终端节点（multiple-terminal）降级为警告而非错误——人类工作流中扇出-合流
- *   结构普遍存在（例：多部分并行写后汇总到结尾），强校验会卡死 reAct 循环；
- * - 控制流 / 约束 / 跳转均以自然语言内蕴在动作中，不再结构化校验。
  */
 
 import type { DirectedGraph } from "graphology";
@@ -29,6 +24,7 @@ export interface ValidationError {
 export function validateHumanFlow(
     flow: HumanFlow,
     conceptManager: ConceptManager,
+    maxPathsPerNode?: number,
 ): ValidationError[] {
     const errors: ValidationError[] = [];
     const g = flow.g;
@@ -62,7 +58,6 @@ export function validateHumanFlow(
             category: "structural",
         });
     } else if (terminals.length > 1) {
-        // 多终端降级为警告：人类工作流里扇出-合流是合法形态，不阻断编译。
         errors.push({
             kind: "multiple-terminal",
             severity: "warning",
@@ -72,7 +67,12 @@ export function validateHumanFlow(
         });
     }
 
-    const pathClosureErrors = validatePathClosure(g, flowNodes, conceptManager);
+    const pathClosureErrors = validatePathClosure(
+        g,
+        flowNodes,
+        conceptManager,
+        maxPathsPerNode ?? 50,
+    );
     errors.push(...pathClosureErrors);
 
     for (const node of flowNodes) {
@@ -106,7 +106,6 @@ export function validateHumanFlow(
     return errors;
 }
 
-/** 仅返回 error 级（用于 reAct 阻断判定）；warning 不阻断 */
 export function blockingErrors(errors: ValidationError[]): ValidationError[] {
     return errors.filter((e) => e.severity === "error");
 }
@@ -115,19 +114,18 @@ export function blockingErrors(errors: ValidationError[]): ValidationError[] {
 // 路径级输入闭合性校验
 // ════════════════════════════════════════════════════════════════════
 
-const MAX_PATHS_PER_NODE = 50;
-
 function validatePathClosure(
     g: DirectedGraph,
     flowNodes: FlowNode[],
     conceptManager: ConceptManager,
+    maxPathsPerNode: number,
 ): ValidationError[] {
     const errors: ValidationError[] = [];
     const nodeById = new Map(flowNodes.map((n) => [n.id, n]));
     const initial = initialNodesPure(g);
 
     for (const node of flowNodes) {
-        const paths = enumeratePathsTo(g, initial, node.id, MAX_PATHS_PER_NODE);
+        const paths = enumeratePathsTo(g, initial, node.id, maxPathsPerNode);
         if (paths.length === 0) {
             errors.push({
                 kind: "unreachable",

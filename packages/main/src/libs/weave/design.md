@@ -1,16 +1,14 @@
-# weaver v11 —— 人类工作流 → 形式化 HumanFlow 编译器
+# weaver v12 ——人类工作流 →形式化 AgentFlow 编译器
 
-> **核心改动（v10 → v11）**：
+> **核心改动（v11 → v12）**：
 >
-> 1. 删除 `Edge` 类型——边由 `FlowNode.jumpers: Jumper[]` 表达。
-> 2. `ExternalEdge` → `Jumper`，统一为 `{ kind: 'internal' | 'external', condition, target }`——但 external 额外带 `targetGraphName / targetNodeName / returnAfter`。
-> 3. 删除 `ConstraintRelation`——Constraint 是验证机制，语义由 `constraintIds` 字段承载。
-> 4. 删除 `Artifact.dataSchema` / `AlignedAction`——当前不需要，后续另行设计。
-> 5. 删除 `AlignedAction.aligned` 字段。
-> 6. 解析阶段用 `name` 作为 `id`，KV 中实际存储也是 name——避免双重 id。
-> 7. 标准格式关键字提取到独立文件，支持中英文。
-> 8. 跳转解析从"正则匹配整句"改为"句法驱动（条件行 + 目标行成对）"。
-> 9. `validatorIds` → `constraintIds`（命名更准确）。
+> 1. **第二阶段编排**：在① parse 之后，新增 ② preprocess-artifacts → ③ decompose> → ④ resolve → ⑤ dump四个节点，逐步把 HumanFlow 编译为 Resolved Agent IR。
+> 2. **Artifact 关系表**：每个 artifact 增加 `relations: ArtifactRelation` 字段
+>    （partOf / composedOf / arrayOf / refinedFrom），由 ② 节点整理。
+> 3. **删除未实现常量**：WeaveStep.FormalDoc / StandardDoc（YAGNI）、ParseMode
+>    类型与 ConfigStorage.getParseMode（无调用方）。
+> 4. **MAX_PATHS_PER_NODE**：从硬编码改为通过 `ctx.storage.config.getMaxPathsPerNode()`
+>    读取。
 
 ---
 
@@ -19,121 +17,124 @@
 ```
 人写工作流文档（NL，数组）
     │
-    ▼  ═══════ 外层 reAct：并行分析所有工作流 ═══════
-    │       │
-    │       │ 失败 → 中层 ① 重新提取（带反馈）
-    │       ▼
-    │  ┌──── 中层 reAct（单工作流细化循环）────────┐
-    │  │ ① parse           初提取 HumanFlow       │
-    │  │ ② emit-formal-doc 形式化文档              │
-    │  │ ③ emit-standard-doc 标准输出文档          │
-    │  │     ↓ 失败 │
-    │  │     → 带反馈回 ① │
-    │  └────────────────────────────────────────────┘
+    ▼  ═══════ 第一阶段：HumanFlow 解析 ═══════
+    │  ① parse（语义整理 + 结构化抽取 + DAG 校验）
     ▼
+HumanFlow (主流程 + 若干子流程)
+    │
+    ▼  ═══════ 第二阶段：AgentFlow 编译 ═══════
+    │  ② preprocess-artifacts  整理 artifact 语义关系
+    │  ③ decompose            actionAtom → Agent IR（自然语言指令序列）
+    │  ④ resolve              invoke →拟合现有 skill/tool
+    │  ⑤ dump                 导出 Resolved Agent IR
+    ▼
+Resolved Agent IR（单一 markdown，下一阶段 codegen 的输入）
 ```
 
 ---
 
 ## 2. 核心数据结构
 
-### 2.1 ConceptReference
+### 2.1 ConceptReference（同 v11，略）
+
+### 2.2 ArtifactRelation（v12 新增）
 
 ```typescript
-interface ConceptReference {
-  kind: ConceptKind;
-  id: string; // 解析阶段 = name
-  name: string;
-  aliases: string[];
-  intent: string;
-  inferred: boolean;
-  originRef?: OriginRef;
-  constraintIds: string[];
+interface ArtifactRelation {
+  /** 当前 artifact 是哪些 artifact 的组成部分（被哪些 artifact 包含） */
+  partOf: string[];
+  /** 当前 artifact 由哪些 artifact 拼装而成（其组成元素） */
+  composedOf: string[];
+  /** 若 shape='array'，元素类型对应的 artifact 名 */
+  arrayOf: string | null;
+  /** 由哪些 artifact 提炼而来 */
+  refinedFrom: string[];
 }
 
-interface OriginRef {
-  sourceText: string;
-  paragraphRange: [number, number];
-}
-```
-
-### 2.2 ExecutableConcept
-
-```typescript
-interface ExecutableConcept extends ConceptReference {
-  actionAtom: string;
-  inputs: string[];
-  outputs: string[];
-}
-```
-
-### 2.3 Artifact
-
-```typescript
 interface Artifact extends ConceptReference {
   kind: "artifact";
   shape: "scalar" | "array";
   semanticFields: string[];
+  relations: ArtifactRelation;
 }
 ```
 
-### 2.4 Constraint —— 验证机制
+### 2.3 Agent IR 指令集（v12 新增）
 
-```typescript
-/**
- * 对 Artifact：验证其值是否有效。
- * 对 Node：判断节点执行是否正确（通过输入/输出产物）。
- */
-interface Constraint extends ExecutableConcept {
-  kind: "constraint";
-}
 ```
-
-### 2.5 Jumper —— 标准 DAG 之外的额外跳转
-
-```typescript
-type Jumper = {
-  kind: "internal" | "external";
-  condition: string | null; // null = 无条件
-  target: string; // internal → 节点 name；external → 目标图 id
-};
-```
-
-语义：
-
-internal：跳到本图内 target 节点，不返回原节点之后的流程。
-external：跳到 target 图（执行其入口节点），执行完自动返回原图继续。
-
-### 2.6 FlowNode
-
-```typescript
-interface FlowNode extends ExecutableConcept {
-  kind: "flow-node" | "human";
-  jumpers: Jumper[]; // 标准 DAG 之外的额外跳转
-}
-
-interface HumanNode extends FlowNode {
-  kind: "human";
-}
-```
-
-### 2.7 FlowGraph
-
-```typescript
-interface FlowGraph extends ExecutableConcept {
-  kind: "dag";
-  g: DirectedGraph;
-  formalDoc: string; // 由 emit-formal-doc 节点写入
-}
-
-interface HumanFlow extends FlowGraph {
-  isHumanWorld: true;
-}
+[invoke]  <verb> on `<artifact>` → `<output>` (resolved: skill:<id>)
+[compose] merge `<a>` + `<b>` → `<c>`
+[parallel]
+[when]    `<condition>`
+[goto]    <step_number>
+[await]   human approval on `<artifact>`
+[then]
 ```
 
 ---
 
-## 3. 目录结构
+## 3. 各节点职责
+
+### 3.1 ① parse（同 v11，不动）
+
+产出 `HumanFlow`（主流程标记 `isMain=true`）。
+
+### 3.2 ② preprocess-artifacts**输入**：
+
+- 主工作流所有 FlowNode 的 inputs/outputs/actionAtom
+- 全局 FlowGraph.intent
+
+**产出**：
+
+- 每个 artifact.relations 原地写入
+- KV: `#weave:wf:artifact_relations`
+
+**实现**：
+
+1. 静态推导 refinedFrom（扫描相邻节点的输入输出）
+2. LLM 补全剩余关系（partOf / composedOf / arrayOf）
+
+### 3.3 ③ decompose
+
+**输入**（按 FlowNode 独立处理）：
+
+- 单个 FlowNode 的 intent / inputs / outputs / actionAtom
+- FlowGraph.intent（全局目标）
+- 扩展输入：前置节点 outputs + 全局 inputs
+- artifact_relations（针对 inputs/outputs 涉及的 artifact）
+
+**产出**（每个 FlowNode 一份 markdown）：
+
+- KV: `#weave:wf:agent_ir:<node_id>`
+- KV: `#weave:wf:agent_ir_index`（node_id 列表）
+
+**实现**：单 LLM 调用，instructions 固定为 DECOMPOSE_INSTRUCTIONS。
+
+### 3.4 ④ resolve
+
+**输入**：
+
+- Agent IR markdown
+- DecisionStorage 中的所有 skill / tool
+
+**产出**（每个 FlowNode 一份 markdown）：
+
+- KV: `#weave:wf:resolved_ir:<node_id>`
+- KV: `#weave:wf:resolved_ir_index`
+
+**实现**：单 LLM 调用，让模型在每个 [invoke] 行末尾追加匹配标注。
+
+### 3.5 ⑤ dump
+
+**输入**：主工作流所有节点的 Resolved IR**产出**：
+
+- KV: `#weave:wf:standard_output_doc`（单一 markdown，含全部节点的 Resolved IR）
+
+**实现**：纯字符串拼接，无 LLM。
+
+---
+
+## 4. 目录结构
 
 ```
 packages/main/src/libs/innerflow/weaver/
@@ -148,25 +149,25 @@ packages/main/src/libs/innerflow/weaver/
       artifact-center.ts
       graph-center.ts
       node-center.ts
-      others-center.ts # Constraint
+      others-center.ts
 
   graph/
-    gdag.ts # graphology 封装
-    graph-ops.ts            # 纯图算法
-    validate.ts             # DAG 验证（含路径级输入闭合性）
+    gdag.ts
+    graph-ops.ts
+    validate.ts
 
   nodes/
-    parse/
-      index.ts              # ① parse
-      standard.ts           # 标准格式 → HumanFlow
-      keywords.ts           # 中英文关键字
-      export-standard.ts    # HumanFlow → 标准格式
-      fill-gaps.ts          # LLM 缺口补全（TODO）
-
- emit-formal-doc/
-      index.ts              # ② emit-formal-doc
- emit-standard-doc/
-      index.ts              # ③ emit-standard-doc
+    parse/ # ① parse
+      index.ts
+      ...
+ preprocess-artifacts/        # ② 新增
+      index.ts
+    decompose/                   # ③ 新增
+      index.ts
+    resolve/                     # ④ 新增
+      index.ts
+    dump/                        # ⑤ 新增
+      index.ts
 
   storage/
     base.ts
@@ -177,3 +178,19 @@ packages/main/src/libs/innerflow/weaver/
     workflow.ts
     index.ts
 ```
+
+---
+
+## 5. 阶段编号
+
+```typescript
+const STEP = {
+  Parse: 1,
+  Preprocess: 2,
+  Decompose: 3,
+  Resolve: 4,
+  Dump: 5,
+};
+```
+
+由 `target` 配置（"N/M" 形式）控制执行到哪一步。

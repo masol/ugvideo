@@ -1,8 +1,5 @@
 /**
  * weaver · 解析阶段的结构化类型
- *
- * 变更：新增 ArtifactSemantic（交付物语义作用，供 intent 回填 + 缓存持久化）。
- * 控制流/约束以自然语言内蕴在 action 中，不再单独结构化。
  */
 
 export interface ParsedGlobalInput {
@@ -26,10 +23,15 @@ export interface ParsedNode {
     sourceLines: SourceLines;
 }
 
-/** 单个交付物在整个工作流中的语义作用（由专职子 LLM 分析产出） */
 export interface ArtifactSemantic {
-    /** 交付物名称，与 artifact/config 的 name 逐字一致 */
     name: string;
-    /** 该交付物在全局工作流中承载的语义作用（不含"是某步骤输入/输出"这类连接关系） */
     role: string;
+}
+
+/** preprocess 阶段冻结 artifact 名，parse 重跑时禁止模型改名 */
+export interface FrozenNamesConstraint {
+    /** 冻结的 artifact 名称列表 */
+    names: string[];
+    /** 每个名称的语义提示（帮助模型理解为何冻结这个名字） */
+    hints: Record<string, string>;
 }
