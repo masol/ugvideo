@@ -30,10 +30,10 @@ export async function parseWorkflow(
     const docs = ctx.inputDocs;
     const outputKey = ctx.storage.workflow.latestKey("parsed_docs_index");
 
-    // 若有 frozen names，强制重跑以应用名字约束
+    // checkExpiry 返回 true = 需要重算；outputIsFresh = 其反面
     const outputIsFresh = !options.forceRerun &&
         !options.frozenNames &&
-        checkExpiry(ctx.ctx, {
+        !checkExpiry(ctx.ctx, {
             inputKeys: "script",
             outputKeys: outputKey,
         });
