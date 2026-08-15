@@ -14,9 +14,22 @@ export function renderPlanMarkdown(plan: FunctionPlan, code: string): string {
     lines.push(plan.apiKind);
     lines.push("");
 
-    if (plan.summary) {
-        lines.push(`## Summary`);
-        lines.push(plan.summary);
+    if (plan.instructions.length > 0) {
+        lines.push("## Instructions");
+        lines.push("");
+        for (const inst of plan.instructions) {
+            lines.push(`- id: ${inst.id}`);
+            lines.push(`  content: ${inst.content}`);
+            lines.push("");
+        }
+    }
+
+    if (plan.externalFunctions.length > 0) {
+        lines.push("## External Functions");
+        lines.push("");
+        for (const fn of plan.externalFunctions) {
+            lines.push(`- \`${fn.name}\`: ${fn.purpose}`);
+        }
         lines.push("");
     }
 
@@ -26,24 +39,6 @@ export function renderPlanMarkdown(plan: FunctionPlan, code: string): string {
     lines.push(code);
     lines.push("```");
     lines.push("");
-
-    if (plan.constraints.length > 0) {
-        lines.push("## Constraints");
-        lines.push("");
-        for (const c of plan.constraints) {
-            lines.push(`- ${c.id}: ${c.description}`);
-        }
-        lines.push("");
-    }
-
-    if (plan.externalFunctions.length > 0) {
-        lines.push("## External Functions");
-        lines.push("");
-        for (const fn of plan.externalFunctions) {
-            lines.push(`- \`${fn.name}\`: ${fn.purpose || "（待补充功能描述）"}`);
-        }
-        lines.push("");
-    }
 
     return lines.join("\n");
 }

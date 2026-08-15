@@ -1,18 +1,20 @@
 /**
  * weaver · node ③ compile
  *
- * 职责：把每个 HumanNode 的 actionAtom + 全局上下文编译为 TS 伪代码。
- * reAct 主收敛：messages 累积 + 两类校验反馈（语义等价 + 伪代码一致性）。
+ * 职责：把每个 HumanNode 的 actionAtom 编译为 TS 伪代码（reAct 结构）。
  *
- * 变更（v2）：
- * - 分离存储：function_plan（元信息）+ function_code（TS 代码）
- * - 删除冗余：relations 不再传递到 compile 阶段
+ * 设计哲学：伪代码是骨架，不是最终代码。一轮生成 + 轻量结构检查即可。
+ * 结构检查不过才重试，最多 maxRounds 轮。语义正确性由编译指令的上下文保证
+ * （action 原文直接出现在 prompt 里），不再用第二个 LLM 做互相否定的校验。
+ *
+ * 存储分离：
+ *   - #weave:wf:function_plan:<nodeId> — 元信息（api_kind、instructions、externalFunctions）
+ *   - #weave:wf:function_code:<nodeId> — TS 伪代码
  *
  * 缓存策略：
- *   - 顶层门控：function_plan_index 存在且 artifact_relations 未变 → 跳过整个 compile
- *   - 逐节点缓存：仅当 function_plan_index 已存在（上次全量成功）时才生效
- *   - function_plan_index 只在所有节点都在 maxRounds 内通过校验后才写入
- *   - 任何节点超出 maxRounds → 不写 function_plan_index → 下次重跑时全部重算
+ *   - 顶层门控：function_plan_index 存在且 artifact_relations 未变 → 跳过
+ *   - 逐节点缓存：仅当 function_plan_index 已存在时才生效
+ *   - 任何节点超出 maxRounds → 不写 function_plan_index → 下次全量重算
  */
 
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
@@ -27,10 +29,11 @@ import type {
     HumanNode,
 } from "../../types.js";
 import { buildFunctionPlan, type BuildPlanInput } from "./build-function-plan.js";
-import type { FunctionPlan } from "./parse-types.js";
-import { renderPlanMarkdown } from "./render-plan-inline.js";
-import { verifyFunctionPlan } from "./verify-dag.js";
-import { verifySemanticEquivalence } from "./verify-semantic.js";
+import type { AttemptRecord, FunctionPlan } from "./parse-types.js";
+import { verifyFunctionPlan } from "./verify-structure.js";
+
+/** 连续 N 轮反馈完全一致则早停 */
+const STAGNATION_LIMIT = 2;
 
 export async function compileWorkflow(ctx: WeaveContext): Promise<void> {
     const store = ctx.storage.workflow;
@@ -54,16 +57,16 @@ export async function compileWorkflow(ctx: WeaveContext): Promise<void> {
         .map((id) => ctx.conceptManager.nodes.get(id))
         .filter((n): n is HumanNode => n !== null);
 
-    ctx.ctx.notify("compile", `开始编译 ${allNodes.length} 个步骤（全节点并发）`);
+    ctx.ctx.notify("compile", `开始编译 ${allNodes.length} 个步骤`);
 
     const maxRounds = ctx.storage.config.getMaxReactRounds();
     const concurrency = Math.max(configService().get("concurrency") || 4, 2);
     const prevIndexExists = store.getFunctionPlanIndex() != null;
 
     const nodeIds: string[] = [];
+    const unconvergedNodeIds: string[] = [];
     let anyExceeded = false;
 
-    // 全节点并发（compile 阶段不依赖前驱节点的 FunctionPlan）
     await pMap(allNodes, async (node) => {
         const { plan, code, exceeded } = await compileNode(
             ctx,
@@ -76,17 +79,20 @@ export async function compileWorkflow(ctx: WeaveContext): Promise<void> {
         store.saveFunctionPlan(node.id, plan);
         store.saveFunctionCode(node.id, code);
         nodeIds.push(node.id);
-        if (exceeded) anyExceeded = true;
+        if (exceeded) {
+            unconvergedNodeIds.push(node.id);
+            anyExceeded = true;
+        }
     }, { concurrency });
 
     if (anyExceeded) {
         ctx.ctx.notify(
-            "compile 完成（含超时节点）",
-            `${nodeIds.length} 个步骤已编译，但部分节点超出轮次限制，下次将重算`,
+            "compile 完成（含未收敛节点）",
+            `${nodeIds.length} 个步骤已编译，未收敛：${unconvergedNodeIds.join("、")}`,
         );
     } else {
         store.saveFunctionPlanIndex(nodeIds);
-        ctx.ctx.notify("compile 完成", `${nodeIds.length} 个步骤已编译为 Execution Plan`);
+        ctx.ctx.notify("compile 完成", `${nodeIds.length} 个步骤全部收敛`);
     }
 }
 
@@ -106,13 +112,11 @@ async function compileNode(
 ): Promise<CompileNodeResult> {
     const store = ctx.storage.workflow;
 
-    // 逐节点缓存：仅当上次全量成功时才信任缓存
     if (prevIndexExists) {
         const planKey = store.latestKey(`function_plan:${node.id}`);
-        const codeKey = store.latestKey(`function_code:${node.id}`);
         if (!checkExpiry(ctx.ctx, {
             inputKeys: store.latestKey("artifact_relations"),
-            outputKeys: [planKey, codeKey],
+            outputKeys: planKey,
         })) {
             const cachedPlan = store.getFunctionPlan(node.id);
             const cachedCode = store.getFunctionCode(node.id);
@@ -137,6 +141,9 @@ async function compileNode(
     let lastFeedback: string[] = [];
     let lastPlan: FunctionPlan | null = null;
     let lastCode: string = "";
+    const attemptHistory: AttemptRecord[] = [];
+    let stagnationCount = 0;
+    let previousFeedbackKey = "";
 
     for (let round = 0; round < maxRounds; round++) {
         ctx.ctx.notify(
@@ -155,28 +162,53 @@ async function compileNode(
         lastPlan = result.plan;
         lastCode = result.code;
 
-        // ── 多验证器：语义等价 + 伪代码一致性 ──
-        const planMd = renderPlanMarkdown(result.plan, result.code);
-        const semanticFb = await verifySemanticEquivalence(ctx, node.actionAtom, planMd);
-        const codeResult = verifyFunctionPlan(result.plan, result.code, node.inputs, node.outputs);
+        // 轻量结构校验（纯规则，无 LLM）
+        const codeResult = verifyFunctionPlan(result.plan, result.code, node.inputs);
 
-        const blockingFeedback = [...semanticFb, ...codeResult.feedback];
-
-        if (blockingFeedback.length === 0) {
-            ctx.ctx.info(`[compile] 步骤「${node.name}」第 ${round + 1} 轮校验通过`);
+        if (codeResult.valid) {
+            ctx.ctx.info(`[compile] 步骤「${node.name}」第 ${round + 1} 轮通过`);
             return { plan: result.plan, code: result.code, exceeded: false };
         }
 
-        lastFeedback = blockingFeedback;
-        ctx.ctx.info(
-            `[compile] 步骤「${node.name}」第 ${round + 1} 轮：${blockingFeedback.length} 条阻断反馈`,
-        );
+        // 记录历史
+        const tagged = codeResult.feedback.map((f) => ({ kind: "structure" as const, msg: f }));
+        attemptHistory.push({ round: round + 1, feedbacks: tagged });
+
+        // 日志
+        for (const fb of codeResult.feedback.slice(0, 3)) {
+            ctx.ctx.info(`[compile] 「${node.name}」R${round + 1} ${fb}`);
+        }
+
+        // 早停：反馈未变化
+        const currentFeedbackKey = codeResult.feedback.join("|");
+        if (currentFeedbackKey === previousFeedbackKey) {
+            stagnationCount++;
+            if (stagnationCount >= STAGNATION_LIMIT) {
+                ctx.ctx.info(
+                    `[compile] 步骤「${node.name}」反馈连续未变化，早停`,
+                );
+                break;
+            }
+        } else {
+            stagnationCount = 0;
+            previousFeedbackKey = currentFeedbackKey;
+        }
+
+        lastFeedback = codeResult.feedback;
     }
 
+    // 降级落盘
+    const unconvergedPlan: FunctionPlan = {
+        ...lastPlan!,
+        unconverged: true,
+        lastFeedbackKinds: ["structure"],
+        attemptHistory,
+    };
+
     ctx.ctx.info(
-        `[compile] 步骤「${node.name}」经 ${maxRounds} 轮仍有反馈，落盘当前结果`,
+        `[compile] 步骤「${node.name}」未收敛（${lastFeedback.length} 条）：${lastFeedback[0] ?? ""}`,
     );
-    return { plan: lastPlan!, code: lastCode, exceeded: true };
+    return { plan: unconvergedPlan, code: lastCode, exceeded: true };
 }
 
 // ══════════════════════════════════════════════════════════════════

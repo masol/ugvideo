@@ -1,5 +1,7 @@
 /**
  * weaver · compile · LLM 主思考 + markdown 解析抽取 TS 伪代码
+ *
+ * v3：简化反馈回灌逻辑——只有结构反馈（纯规则），无语义 LLM 反馈。
  */
 
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
@@ -8,9 +10,9 @@ import type { WeaveContext } from "../../context.js";
 import type { FlowNode } from "../../types.js";
 import type {
     ApiKind,
-    Constraint,
     ExternalFunction,
     FunctionPlan,
+    InstructionDef,
 } from "./parse-types.js";
 import COMPILE_INSTRUCTIONS from "./prompts/compile-instructions.txt?raw";
 
@@ -66,12 +68,11 @@ export async function buildFunctionPlan(
         messages.push({
             role: "user",
             content: [
-                `## 上一轮编译结果在校验后发现了以下问题，必须修正：`,
+                `## 上一轮输出的格式有问题，请修正后重新输出完整的 Execution Plan：`,
                 ``,
                 ...feedback.map((f, i) => `${i + 1}. ${f}`),
                 ``,
-                `请基于上一轮的分析，针对上述问题修正后，重新输出完整的 Execution Plan markdown。`,
-                `（中文变量名必须与动作文本逐字一致；不要引入原文未提及的概念；必须保留所有控制流与并行关系）`,
+                `请重新输出完整的 Execution Plan markdown（从 # Execution Plan for ... 开始）。`,
             ].join("\n"),
         });
     }
@@ -89,7 +90,7 @@ export async function buildFunctionPlan(
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Markdown → FunctionPlan + Code（纯字符串解析）
+// Markdown → FunctionPlan + Code
 // ══════════════════════════════════════════════════════════════════
 
 function parsePlanFromMarkdown(
@@ -98,17 +99,15 @@ function parsePlanFromMarkdown(
 ): { plan: FunctionPlan; code: string } {
     const apiKind = parseApiKind(text);
     const code = parseCodeBlock(text);
-    const summary = parseSummary(text);
-    const constraints = parseConstraintsSection(text);
-    const externalFunctions = parseExternalFunctionsSection(text, code);
+    const instructions = parseInstructionsSection(text);
+    const externalFunctions = parseExternalFunctionsSection(text);
 
     const plan: FunctionPlan = {
         sourceNodeId: input.node.id,
         sourceNodeName: input.node.name,
         apiKind,
-        constraints,
+        instructions,
         externalFunctions,
-        summary,
     };
 
     return { plan, code };
@@ -124,57 +123,51 @@ function parseCodeBlock(text: string): string {
     return m?.[1] ?? "";
 }
 
-function parseSummary(text: string): string | undefined {
-    const m = text.match(/##\s*Summary\s*\n([\s\S]*?)(?=\n##|$)/i);
-    return m?.[1]?.trim() || undefined;
-}
-
-function parseConstraintsSection(text: string): Constraint[] {
-    const constraints: Constraint[] = [];
-    const m = text.match(/##\s*Constraints\s*\n([\s\S]*?)(?=\n##|$)/i);
-    if (!m) return constraints;
+function parseInstructionsSection(text: string): InstructionDef[] {
+    const defs: InstructionDef[] = [];
+    const m = text.match(/##\s*Instructions\s*\n([\s\S]*?)(?=\n##|$)/i);
+    if (!m) return defs;
 
     const lines = m[1].split("\n");
-    let id = 0;
+    let currentId: string | null = null;
+    let currentContent: string[] = [];
+
     for (const line of lines) {
-        const lm = line.match(/^-\s*(?:C\d+:?\s*)?(.+)$/);
-        if (!lm) continue;
-        id++;
-        constraints.push({
-            id: `C${id}`,
-            description: lm[1].trim(),
-        });
+        const idMatch = line.match(/^-\s*id:\s*(.+)$/);
+        if (idMatch) {
+            if (currentId) {
+                defs.push({ id: currentId, content: currentContent.join("\n").trim() });
+            }
+            currentId = idMatch[1].trim();
+            currentContent = [];
+            continue;
+        }
+        const contentMatch = line.match(/^\s+content:\s*(.+)$/);
+        if (contentMatch && currentId) {
+            currentContent.push(contentMatch[1].trim());
+            continue;
+        }
+        if (currentId && line.trim()) {
+            currentContent.push(line.trim());
+        }
     }
-    return constraints;
+    if (currentId) {
+        defs.push({ id: currentId, content: currentContent.join("\n").trim() });
+    }
+
+    return defs;
 }
 
-function parseExternalFunctionsSection(text: string, code: string): ExternalFunction[] {
+function parseExternalFunctionsSection(text: string): ExternalFunction[] {
     const functions: ExternalFunction[] = [];
-
-    // 从 External Functions 段落提取
     const m = text.match(/##\s*External\s+Functions?\s*\n([\s\S]*?)(?=\n##|$)/i);
-    if (m) {
-        const lines = m[1].split("\n");
-        for (const line of lines) {
-            const lm = line.match(/^-\s*`([^`]+)`(?::\s*(.+))?$/);
-            if (!lm) continue;
-            const name = lm[1];
-            const purpose = lm[2]?.trim() || "";
-            if (!functions.find((f) => f.name === name)) {
-                functions.push({ name, purpose, signature: "" });
-            }
-        }
-    }
+    if (!m) return functions;
 
-    // 从代码中的 @external 注释提取
-    const matches = [...code.matchAll(/\/\/\s*@external:\s*(\S+)(?:\s+(.+))?/g)];
-    for (const match of matches) {
-        const name = match[1];
-        const purpose = match[2]?.trim() || "";
-        if (!functions.find((f) => f.name === name)) {
-            functions.push({ name, purpose, signature: "" });
-        }
+    const lines = m[1].split("\n");
+    for (const line of lines) {
+        const lm = line.match(/^-\s*`([^`]+)`(?::\s*(.+))?$/);
+        if (!lm) continue;
+        functions.push({ name: lm[1], purpose: lm[2]?.trim() || "" });
     }
-
     return functions;
 }

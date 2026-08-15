@@ -115,7 +115,6 @@ export class WorkflowStorage extends BaseStorage {
     // 第三阶段：Function Plan（元信息）+ Function Code（TS 代码）
     // ══════════════════════════════════════════════════════════════
 
-    /** 保存函数元信息（api_kind、constraints、externalFunctions 等） */
     saveFunctionPlan(nodeId: string, plan: import("../nodes/compile/parse-types.js").FunctionPlan): void {
         this.set(`function_plan:${nodeId}`, plan);
     }
@@ -124,7 +123,6 @@ export class WorkflowStorage extends BaseStorage {
         return this.get<import("../nodes/compile/parse-types.js").FunctionPlan>(`function_plan:${nodeId}`);
     }
 
-    /** 保存函数代码（纯 TS 代码字符串） */
     saveFunctionCode(nodeId: string, code: string): void {
         this.set(`function_code:${nodeId}`, code);
     }
