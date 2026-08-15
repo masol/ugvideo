@@ -1,5 +1,5 @@
 /**
- * weaver · compile · 约束器（v7.1）
+ * weaver · compile · 约束器（v9）
  *
  * 4 层校验：
  *   1. compilation   —— terser + vm.Script 必须通过；
@@ -10,9 +10,10 @@
  * 并行提示（非阻断）：
  *   - detectParallelism 扫描顶层 await；
  *
- * v7.1 变更：
- *   - 修复 extractMainBody / skipString 对模板字符串 `${...}` 的处理：
- *     模板字符串内的 ${} 嵌套花括号不再被外层 depth 计数器误计。
+ * v9 变更：
+ *   - 移除 "verify 必须定义在 main 之外" 的强制约束：verify 可与 main 同处
+ *     一个闭包，靠 JS 函数声明 hoisting + 闭包捕获 instructions / 输入对象。
+ *   - verifyReActShape 改用多标记独立检测，兼容 messages 构造中模板字符串含 ${}。
  */
 
 import type { FlowNode } from "../../types.js";
@@ -201,8 +202,8 @@ export async function verifyFunctionPlan(
 function verifyReActShape(body: string, fullCode: string): { ok: boolean; missing: string[] } {
     const checks: [() => boolean, string][] = [
         [
-            () => /const\s+messages\s*=\s*\[\s*\{[^}]*role\s*:\s*['"`]user['"`]/.test(body),
-            "const messages = [{role: 'user', ...}]",
+            () => /const\s+messages\s*=/.test(body) && /role\s*:\s*['"`]user['"`]/.test(body),
+            "const messages = [...]包含 role: 'user'",
         ],
         [
             () => /for\s*\(\s*let\s+\w+\s*=\s*0\s*;\s*\w+\s*<\s*\d+\s*;\s*\w+\+\+\s*\)/.test(body),
@@ -213,7 +214,7 @@ function verifyReActShape(body: string, fullCode: string): { ok: boolean; missin
             "await llm.generate(...) 主思考",
         ],
         [
-            () => /messages\.push\s*\(\s*\{\s*role\s*:\s*['"`]assistant['"`]/.test(body),
+            () => /messages\.push\s*\(/.test(body) && /role\s*:\s*['"`]assistant['"`]/.test(body),
             "messages.push({role: 'assistant', ...}) 追加主思考",
         ],
         [
@@ -256,16 +257,12 @@ function hasVerifyPattern(body: string, fullCode: string): boolean {
 // 代码解析工具函数
 // ════════════════════════════════════════════════════════════════
 
-/**
- * 去除注释（单行 // 和多行 /* * /），保留字符串内容。
- */
 function stripComments(code: string): string {
     let result = "";
     let i = 0;
     while (i < code.length) {
         const ch = code[i];
 
-        // 字符串
         if (ch === '"' || ch === "'") {
             const end = scanSimpleString(code, i);
             result += code.slice(i, end);
@@ -273,7 +270,6 @@ function stripComments(code: string): string {
             continue;
         }
 
-        // 模板字符串
         if (ch === "`") {
             const end = scanTemplateString(code, i);
             result += code.slice(i, end);
@@ -281,14 +277,12 @@ function stripComments(code: string): string {
             continue;
         }
 
-        // 单行注释
         if (ch === "/" && i + 1 < code.length && code[i + 1] === "/") {
             const nl = code.indexOf("\n", i);
             i = nl === -1 ? code.length : nl;
             continue;
         }
 
-        // 多行注释
         if (ch === "/" && i + 1 < code.length && code[i + 1] === "*") {
             const end = code.indexOf("*/", i + 2);
             i = end === -1 ? code.length : end + 2;
@@ -301,10 +295,6 @@ function stripComments(code: string): string {
     return result;
 }
 
-/**
- * 提取 main 函数体。
- * 正确处理字符串（单引号、双引号、模板字符串含 ${} 嵌套）内的花括号。
- */
 function extractMainBody(code: string): string | null {
     const m = code.match(/async\s+function\s+main\s*\([^)]*\)\s*\{/);
     if (!m) return null;
@@ -314,7 +304,6 @@ function extractMainBody(code: string): string | null {
     while (i < code.length && depth > 0) {
         const ch = code[i];
 
-        // 跳过字符串
         if (ch === '"' || ch === "'") {
             i = scanSimpleString(code, i);
             continue;
@@ -323,9 +312,6 @@ function extractMainBody(code: string): string | null {
             i = scanTemplateString(code, i);
             continue;
         }
-
-        // 跳过正则（简化：/ 后不是 / 或 * 且前面是合法的正则上下文）
-        // 这里不做完整正则检测，只处理花括号和字符串即可覆盖绝大多数情况
 
         if (ch === "{") {
             depth++;
@@ -338,9 +324,6 @@ function extractMainBody(code: string): string | null {
     return code.slice(start, i - 1);
 }
 
-/**
- * 扫描简单字符串（单引号或双引号），返回结束位置（引号之后）。
- */
 function scanSimpleString(code: string, start: number): number {
     const quote = code[start];
     let i = start + 1;
@@ -357,12 +340,8 @@ function scanSimpleString(code: string, start: number): number {
     return i;
 }
 
-/**
- * 扫描模板字符串（反引号），正确处理 ${...} 嵌套（含嵌套模板字符串）。
- * 返回结束位置（结束反引号之后）。
- */
 function scanTemplateString(code: string, start: number): number {
-    let i = start + 1; // 跳过开头的 `
+    let i = start + 1;
     while (i < code.length) {
         const ch = code[i];
 
@@ -372,13 +351,11 @@ function scanTemplateString(code: string, start: number): number {
         }
 
         if (ch === "`") {
-            // 模板字符串结束
             return i + 1;
         }
 
         if (ch === "$" && i + 1 < code.length && code[i + 1] === "{") {
-            // 进入 ${...} 表达式
-            i += 2; // 跳过 ${
+            i += 2;
             let exprDepth = 1;
             while (i < code.length && exprDepth > 0) {
                 const ec = code[i];
@@ -392,12 +369,11 @@ function scanTemplateString(code: string, start: number): number {
                 } else if (ec === "}") {
                     exprDepth--;
                     if (exprDepth === 0) {
-                        i++; // 跳过闭合的 }
+                        i++;
                         break;
                     }
                     i++;
                 } else if (ec === "`") {
-                    // 嵌套模板字符串
                     i = scanTemplateString(code, i);
                 } else if (ec === '"' || ec === "'") {
                     i = scanSimpleString(code, i);
