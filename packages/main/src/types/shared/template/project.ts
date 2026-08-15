@@ -37,6 +37,7 @@ export const blueprintFiltersSchema = z.object({
 
 export type BlueprintFilters = z.infer<typeof blueprintFiltersSchema>;
 
+export const projectApiSchema = z.enum(["icon"]);
 /**
  * 媒体资源字段名列表 —— 用于在编辑器侧识别"素材"下拉。
  *
@@ -50,6 +51,11 @@ export const projectActivityDataSchema = z.object({
     icon: z.string(),
     status: z.string().optional(),
     statusText: z.string(),
+    /**
+     * 需要客户端反向注入的api.
+     * 当前有效值只有 "icon"。
+     */
+    api: z.array(projectApiSchema).optional(),
     activities: z.array(leftSidebarItemJSONSchema),
     header: z.object({
         title: z.string(),

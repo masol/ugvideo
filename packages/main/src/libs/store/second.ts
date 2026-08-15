@@ -1,6 +1,6 @@
 // 第二存储持久化池，无需备份/恢复的放在这里。
 
-import { getCurrentProject } from '$libs/utils/api.js';
+import { getCurrentProject } from '$libs/utils/api/index.js';
 import { broadcast } from '$libs/utils/rpcevt.js';
 import { SecondConfig } from '$types/appconfig.js';
 import type { RecentProject } from '$types/index.js';

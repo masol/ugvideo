@@ -1,5 +1,5 @@
 // electron/store/configStore.ts
-import { getCurrentProject } from '$libs/utils/api.js';
+import { getCurrentProject } from '$libs/utils/api/index.js';
 import { broadcast } from '$libs/utils/rpcevt.js';
 import type { ITelemetryService } from '$libs/utils/telemetry/telemetry.interface.js';
 import { AppConfig } from '$types/appconfig.js';

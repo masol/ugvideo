@@ -1,6 +1,9 @@
 {
     "icon": "IconSquarePlus",
     "statusText": "工作流工坊",
+    "api": [
+        "icon"
+    ],
     "header": {
         "title": "工作流工坊",
         "detail": "用自然语言描述人类工作流，Unigen 自动构建、迭代、导出可执行 AI 工作流"

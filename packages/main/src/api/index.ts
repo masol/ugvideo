@@ -1,13 +1,14 @@
 import { onError, ORPCError, os } from "@orpc/server";
-import window from './common/window.js';
-import plugin from './common/plugin.js';
 import { RPCHandler } from "@orpc/server/message-port";
+import plugin from './common/plugin.js';
+import window from './common/window.js';
 // import Logger from "electron-log/main.js";
-import { RpcContext } from "./type.js";
 import { alsMiddleware } from "./als.js";
-import config from './common/cfg.js'
-import system from './common/sys.js'
-import project from './project/index.js'
+import config from './common/cfg.js';
+import rapi from './common/rapi.js';
+import system from './common/sys.js';
+import project from './project/index.js';
+import { RpcContext } from "./type.js";
 
 // ==========================================
 // 3. 构建应用路由器（将中间件链条挂载到顶层）
@@ -19,7 +20,8 @@ const appRouter = os
         window,
         config,
         system,
-        project
+        project,
+        rapi
     });
 
 export type AppRouter = typeof appRouter;
