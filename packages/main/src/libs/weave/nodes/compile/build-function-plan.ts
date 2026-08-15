@@ -1,19 +1,18 @@
 /**
- * weaver · compile · LLM 主思考 + markdown 解析抽取 TS 伪代码
+ * weaver · compile · LLM 主思考 + markdown 解析抽取可执行 JavaScript
  *
- * v3：简化反馈回灌逻辑——只有结构反馈（纯规则），无语义 LLM 反馈。
+ * v6：
+ *   - 产物为 JavaScript（不再用 TS 伪代码），verify 阶段做 terser + vm.Script 校验；
+ *   - 注入 API 清单（非 tool 调用），verify 阶段静态扫描调用合规性；
+ *   - 解析代码块 regex 支持 ```js / ```javascript / ```typescript / 裸 ``` 兜底。
  */
 
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
 import { generateText, type ModelMessage } from "ai";
 import type { WeaveContext } from "../../context.js";
 import type { FlowNode } from "../../types.js";
-import type {
-    ApiKind,
-    ExternalFunction,
-    FunctionPlan,
-    InstructionDef,
-} from "./parse-types.js";
+import { buildApiCatalog, type ApiCatalog } from "./api-catalog.js";
+import type { ApiKind, FunctionPlan, InstructionDef } from "./parse-types.js";
 import COMPILE_INSTRUCTIONS from "./prompts/compile-instructions.txt?raw";
 
 export interface BuildPlanInput {
@@ -22,12 +21,14 @@ export interface BuildPlanInput {
     artifactContext: string;
     predecessorOutputs: string[];
     flowInputs: string[];
+    availableTools: string[];
 }
 
 export interface BuildPlanResult {
     plan: FunctionPlan;
     code: string;
     messages: ModelMessage[];
+    catalog: ApiCatalog;
 }
 
 export async function buildFunctionPlan(
@@ -37,6 +38,7 @@ export async function buildFunctionPlan(
     feedback?: string[],
 ): Promise<BuildPlanResult> {
     const messages: ModelMessage[] = previousMessages ? [...previousMessages] : [];
+    const catalog = buildApiCatalog(input.availableTools);
 
     if (messages.length === 0) {
         const initialPrompt = [
@@ -46,8 +48,8 @@ export async function buildFunctionPlan(
             `## 当前步骤`,
             `- 名称：${input.node.name}`,
             `- 目的：${input.node.intent}`,
-            `- 声明输入：${input.node.inputs.map((i) => `\`${i}\``).join("、") || "（无）"}`,
-            `- 声明输出：${input.node.outputs.map((o) => `\`${o}\``).join("、") || "（无）"}`,
+            `- 声明输入（入参对象 key）：${input.node.inputs.map((i) => `\`${i}\``).join("、") || "（无）"}`,
+            `- 声明输出（返回对象 key）：${input.node.outputs.map((o) => `\`${o}\``).join("、") || "（无）"}`,
             `- 动作描述：${input.node.actionAtom}`,
             ``,
             `## 可用产物上下文`,
@@ -59,7 +61,9 @@ export async function buildFunctionPlan(
             `## 全局输入`,
             input.flowInputs.map((n) => `- \`${n}\``).join("\n") || "（无）",
             ``,
-            `请把该步骤的动作描述编译为 TypeScript 伪代码（Execution Plan）。`,
+            `请把该步骤的"动作描述"编译为可执行 JavaScript（Execution Plan）。`,
+            `请严格按 system prompt 中的产物形态输出：`,
+            `# Execution Plan ... + ## api_kind + ## Instructions + ## Pseudocode（\`\`\`js 代码块\`\`\`）。`,
         ].join("\n");
         messages.push({ role: "user", content: initialPrompt });
     }
@@ -68,30 +72,41 @@ export async function buildFunctionPlan(
         messages.push({
             role: "user",
             content: [
-                `## 上一轮输出的格式有问题，请修正后重新输出完整的 Execution Plan：`,
+                `## 上一轮代码未通过校验，请逐条修正后重新输出完整 Execution Plan：`,
                 ``,
                 ...feedback.map((f, i) => `${i + 1}. ${f}`),
                 ``,
-                `请重新输出完整的 Execution Plan markdown（从 # Execution Plan for ... 开始）。`,
+                `要求：`,
+                `- 重新输出完整的 Execution Plan（从 \`# Execution Plan for ...\` 开始，到 ## Pseudocode 代码块结束）；`,
+                `- 代码块必须是可以直接由 terser minify + vm.Script 编译通过的 JavaScript；`,
+                `- 只调用 system prompt 中声明的 llm.* 与 tool.*。`,
             ].join("\n"),
         });
     }
 
+    const systemBlock = [
+        COMPILE_INSTRUCTIONS,
+        ``,
+        `---`,
+        ``,
+        catalog.renderAsSystemBlock(),
+    ].join("\n");
+
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx.ctx),
-        instructions: COMPILE_INSTRUCTIONS,
+        instructions: systemBlock,
         messages,
     });
 
     messages.push({ role: "assistant", content: text });
 
     const { plan, code } = parsePlanFromMarkdown(text, input);
-    return { plan, code, messages };
+    return { plan, code, messages, catalog };
 }
 
-// ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
 // Markdown → FunctionPlan + Code
-// ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
 
 function parsePlanFromMarkdown(
     text: string,
@@ -100,27 +115,29 @@ function parsePlanFromMarkdown(
     const apiKind = parseApiKind(text);
     const code = parseCodeBlock(text);
     const instructions = parseInstructionsSection(text);
-    const externalFunctions = parseExternalFunctionsSection(text);
 
     const plan: FunctionPlan = {
         sourceNodeId: input.node.id,
         sourceNodeName: input.node.name,
         apiKind,
+        language: "js",
         instructions,
-        externalFunctions,
     };
-
     return { plan, code };
 }
 
 function parseApiKind(text: string): ApiKind {
-    const m = text.match(/##\s*api_kind\s*\n(\w+)/i);
-    return (m?.[1] as ApiKind) ?? "code";
+    const m = text.match(/##\s*api_kind[^\n]*\n+[`'"\s]*([a-zA-Z]+)[`'"\s]*/i);
+    return (m?.[1]?.toLowerCase() as ApiKind) ?? "code";
 }
 
 function parseCodeBlock(text: string): string {
-    const m = text.match(/```(?:typescript|ts)\n([\s\S]*?)\n```/);
-    return m?.[1] ?? "";
+    return (
+        text.match(/```(?:js|javascript)\n([\s\S]*?)\n```/)?.[1] ??
+        text.match(/```typescript\n([\s\S]*?)\n```/)?.[1] ??
+        text.match(/```\n([\s\S]*?)\n```/)?.[1] ??
+        ""
+    );
 }
 
 function parseInstructionsSection(text: string): InstructionDef[] {
@@ -154,20 +171,5 @@ function parseInstructionsSection(text: string): InstructionDef[] {
     if (currentId) {
         defs.push({ id: currentId, content: currentContent.join("\n").trim() });
     }
-
     return defs;
-}
-
-function parseExternalFunctionsSection(text: string): ExternalFunction[] {
-    const functions: ExternalFunction[] = [];
-    const m = text.match(/##\s*External\s+Functions?\s*\n([\s\S]*?)(?=\n##|$)/i);
-    if (!m) return functions;
-
-    const lines = m[1].split("\n");
-    for (const line of lines) {
-        const lm = line.match(/^-\s*`([^`]+)`(?::\s*(.+))?$/);
-        if (!lm) continue;
-        functions.push({ name: lm[1], purpose: lm[2]?.trim() || "" });
-    }
-    return functions;
 }

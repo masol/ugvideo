@@ -24,18 +24,9 @@ export function renderPlanMarkdown(plan: FunctionPlan, code: string): string {
         }
     }
 
-    if (plan.externalFunctions.length > 0) {
-        lines.push("## External Functions");
-        lines.push("");
-        for (const fn of plan.externalFunctions) {
-            lines.push(`- \`${fn.name}\`: ${fn.purpose}`);
-        }
-        lines.push("");
-    }
-
     lines.push("## Pseudocode");
     lines.push("");
-    lines.push("```typescript");
+    lines.push("```js");
     lines.push(code);
     lines.push("```");
     lines.push("");
