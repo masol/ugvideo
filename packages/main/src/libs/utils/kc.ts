@@ -98,8 +98,8 @@ class KnowledgeCenter {
      * @param relativePath 相对 subDir 的相对路径（含文件名）
      * @param content      要写入的字符串内容
      */
-    public async writeFile(subDir: string, relativePath: string, content: string): Promise<void> {
-        const fullPath: string = join(this.kcPath, subDir, relativePath);
+    public async writeFile(content: string, ...subPaths: string[]): Promise<void> {
+        const fullPath: string = join(this.kcPath, ...subPaths);
         await mkdir(dirname(fullPath), { recursive: true });
         await writeFile(fullPath, content, 'utf-8');
     }

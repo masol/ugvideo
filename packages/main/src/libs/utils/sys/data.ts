@@ -42,6 +42,10 @@ class DataCenter {
         return this.tplMetas?.find(tpl => tpl.id == type) || null;
     }
 
+    public typePath(...args: string[]): string {
+        return join(this.dataPath, TplMetasDirName, ...args);
+    }
+
     /**
      * 以文本形式读取 data 目录下的文件。
      * - 优先读取 userData/data 下的同名文件；

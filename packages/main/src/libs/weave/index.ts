@@ -1,7 +1,7 @@
 /**
  * weaver · 工作流主入口
  *
- * v5：新增 meta 阶段
+ * v6：新增 dump 阶段
  */
 
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
@@ -9,6 +9,7 @@ import type { IRunnerContext } from "$types/blueprint/context.js";
 import { getErrorMessage } from "radashi";
 import { createWeaveContext } from "./context.js";
 import { compileWorkflow } from "./nodes/compile/index.js";
+import { dumpWorkflow } from "./nodes/dump/index.js";
 import { generateInstructions } from "./nodes/generate-instructions/index.js";
 import { metaWorkflow } from "./nodes/meta/index.js";
 import { parseWorkflow } from "./nodes/parse/index.js";
@@ -113,6 +114,9 @@ export async function run(ctx: IRunnerContext): Promise<void> {
             ctx.notify("weaver 完成（target=meta）", "UI 描述与映射表已生成");
             return;
         }
+
+        // ── ⑥ dump ──
+        await dumpWorkflow(weaveCtx);
 
         ctx.notify(
             "weaver 完成",
