@@ -1,7 +1,7 @@
 /**
- * weaver · Workflow Storage（v7）
+ * weaver · Workflow Storage（v8）
  *
- * 变更（v7）：新增 generate-instructions 阶段的存储方法。
+ * 变更（v8）：新增 meta 阶段的存储方法。
  */
 
 import type { CachedWorkflow } from "../nodes/parse/extract-workflow.js";
@@ -16,7 +16,9 @@ type LineageSnapshotAny = import("../nodes/preprocess-artifacts/export-lineage.j
 export class WorkflowStorage extends BaseStorage {
     protected NS = "#weave:wf:";
 
+    // ════════════════════════════════════════════════════════════════
     // 解析阶段
+    // ════════════════════════════════════════════════════════════════
 
     saveParsedDocsIndex(docIds: string[]): void {
         this.set("parsed_docs_index", docIds);
@@ -72,7 +74,9 @@ export class WorkflowStorage extends BaseStorage {
         this.set("frozen_artifact_names", []);
     }
 
+    // ════════════════════════════════════════════════════════════════
     // preprocess 阶段
+    // ════════════════════════════════════════════════════════════════
 
     saveArtifactRelations(relations: Record<string, ArtifactRelation>): void {
         this.set("artifact_relations", relations);
@@ -102,7 +106,9 @@ export class WorkflowStorage extends BaseStorage {
         return this.get<LineageSnapshotAny>("lineage_snapshot");
     }
 
+    // ════════════════════════════════════════════════════════════════
     // compile 阶段
+    // ════════════════════════════════════════════════════════════════
 
     saveFunctionPlan(nodeId: string, plan: FunctionPlanAny): void {
         this.set(`function_plan:${nodeId}`, plan);
@@ -125,7 +131,10 @@ export class WorkflowStorage extends BaseStorage {
         return this.get<string[]>("function_plan_index");
     }
 
+    // ════════════════════════════════════════════════════════════════
     // generate-instructions 阶段
+    // ════════════════════════════════════════════════════════════════
+
     saveGeneratedInstruction(compositeKey: string, content: string): void {
         this.set(`gi:${compositeKey}`, content);
     }
@@ -140,7 +149,49 @@ export class WorkflowStorage extends BaseStorage {
         return this.get<string[]>("gi_index");
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // meta 阶段
+    // ════════════════════════════════════════════════════════════════
+
+    saveMetaJson(text: string): void {
+        this.set("meta_json", text);
+    }
+    getMetaJson(): string | null {
+        return this.get<string>("meta_json");
+    }
+
+    saveTypeJson(text: string): void {
+        this.set("type_json", text);
+    }
+    getTypeJson(): string | null {
+        return this.get<string>("type_json");
+    }
+
+    saveSafeNameMap(map: Record<string, string>): void {
+        this.set("safe_name_map", map);
+    }
+    getSafeNameMap(): Record<string, string> | null {
+        return this.get<Record<string, string>>("safe_name_map");
+    }
+
+    saveStableMetaId(id: string): void {
+        this.set("stable_meta_id", id);
+    }
+    getStableMetaId(): string | null {
+        return this.get<string>("stable_meta_id");
+    }
+
+    saveIconCache(cache: Record<string, string>): void {
+        this.set("icon_cache", cache);
+    }
+    getIconCache(): Record<string, string> | null {
+        return this.get<Record<string, string>>("icon_cache");
+    }
+
+    // ════════════════════════════════════════════════════════════════
     // 可选上下文
+    // ════════════════════════════════════════════════════════════════
+
     getGoal(): string | null {
         return this.get<string>("goal");
     }

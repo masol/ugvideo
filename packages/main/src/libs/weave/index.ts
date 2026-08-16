@@ -1,7 +1,7 @@
 /**
  * weaver · 工作流主入口
  *
- * v4：新增 generate-instructions 阶段
+ * v5：新增 meta 阶段
  */
 
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
@@ -10,6 +10,7 @@ import { getErrorMessage } from "radashi";
 import { createWeaveContext } from "./context.js";
 import { compileWorkflow } from "./nodes/compile/index.js";
 import { generateInstructions } from "./nodes/generate-instructions/index.js";
+import { metaWorkflow } from "./nodes/meta/index.js";
 import { parseWorkflow } from "./nodes/parse/index.js";
 import { preprocessArtifacts } from "./nodes/preprocess-artifacts/index.js";
 
@@ -18,7 +19,8 @@ const STEP = {
     Preprocess: 2,
     Compile: 3,
     GenerateInstructions: 4,
-    Dump: 5,
+    Meta: 5,
+    Dump: 6,
 } as const;
 
 function parseTargetStep(raw: string | null | undefined): number {
@@ -39,10 +41,7 @@ export async function run(ctx: IRunnerContext): Promise<void> {
     const targetStep = parseTargetStep(prjdb.get<string>("target"));
 
     try {
-        // ══════════════════════════════════════════════════════════════
-        // 根层 reAct：parse ↔ preprocess 双向反馈循环
-        // ══════════════════════════════════════════════════════════════
-
+        // ═══════ 根层 reAct：parse ↔ preprocess 双向反馈循环 ═══════
         const ROOT_MAX_ROUNDS = weaveCtx.storage.config.getMaxReactRounds();
         let preprocessResult: Awaited<ReturnType<typeof preprocessArtifacts>> | null = null;
 
@@ -105,6 +104,13 @@ export async function run(ctx: IRunnerContext): Promise<void> {
         await generateInstructions(weaveCtx);
         if (targetStep <= STEP.GenerateInstructions) {
             ctx.notify("weaver 完成（target=generate-instructions）", "所有提示词已生成");
+            return;
+        }
+
+        // ── ⑤ meta ──
+        await metaWorkflow(weaveCtx);
+        if (targetStep <= STEP.Meta) {
+            ctx.notify("weaver 完成（target=meta）", "UI 描述与映射表已生成");
             return;
         }
 

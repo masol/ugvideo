@@ -39,6 +39,7 @@ class IconQuery {
      * - 省略 kind 时校验全部类别。
      */
     isValid(name: string, kind?: IconKind): boolean {
+        Logger.debug(`[icon API] check ${name} is valid: ${this.iconNames.has(name)}`)
         if (!name) return false;
 
         if (kind === 'icon') return this.iconNames.has(name);
