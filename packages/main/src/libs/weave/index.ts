@@ -1,7 +1,7 @@
 /**
  * weaver · 工作流主入口
  *
- * v3：根层 parse ↔ preprocess reAct 编排
+ * v4：新增 generate-instructions 阶段
  */
 
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
@@ -9,6 +9,7 @@ import type { IRunnerContext } from "$types/blueprint/context.js";
 import { getErrorMessage } from "radashi";
 import { createWeaveContext } from "./context.js";
 import { compileWorkflow } from "./nodes/compile/index.js";
+import { generateInstructions } from "./nodes/generate-instructions/index.js";
 import { parseWorkflow } from "./nodes/parse/index.js";
 import { preprocessArtifacts } from "./nodes/preprocess-artifacts/index.js";
 
@@ -16,7 +17,7 @@ const STEP = {
     Parse: 1,
     Preprocess: 2,
     Compile: 3,
-    Codegen: 4,
+    GenerateInstructions: 4,
     Dump: 5,
 } as const;
 
@@ -42,7 +43,7 @@ export async function run(ctx: IRunnerContext): Promise<void> {
         // 根层 reAct：parse ↔ preprocess 双向反馈循环
         // ══════════════════════════════════════════════════════════════
 
-        const ROOT_MAX_ROUNDS = weaveCtx.storage.config.getMaxReactRounds();//3;
+        const ROOT_MAX_ROUNDS = weaveCtx.storage.config.getMaxReactRounds();
         let preprocessResult: Awaited<ReturnType<typeof preprocessArtifacts>> | null = null;
 
         for (let rootRound = 0; rootRound < ROOT_MAX_ROUNDS; rootRound++) {
@@ -84,7 +85,6 @@ export async function run(ctx: IRunnerContext): Promise<void> {
                 continue;
             }
 
-            // 不应到达此处
             break;
         }
 
@@ -93,15 +93,21 @@ export async function run(ctx: IRunnerContext): Promise<void> {
             return;
         }
 
+        // ── ③ compile ──
         await compileWorkflow(weaveCtx);
         if (targetStep <= STEP.Compile) {
             const flows = weaveCtx.conceptManager.listHumanFlows();
-            ctx.notify("weaver 完成（target=compile)", `共 ${flows.length} 个工作流`);
+            ctx.notify("weaver 完成（target=compile）", `共 ${flows.length} 个工作流`);
             return;
         }
 
+        // ── ④ generate-instructions ──
+        await generateInstructions(weaveCtx);
+        if (targetStep <= STEP.GenerateInstructions) {
+            ctx.notify("weaver 完成（target=generate-instructions）", "所有提示词已生成");
+            return;
+        }
 
-        // 后续阶段暂未启用
         ctx.notify(
             "weaver 完成",
             `共 ${weaveCtx.conceptManager.count()} 个概念`,

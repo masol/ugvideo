@@ -1,11 +1,7 @@
 /**
- * weaver · Workflow Storage（v6）
+ * weaver · Workflow Storage（v7）
  *
- * 变更（v6）：回到覆盖写语义（不引入 revision）。
- *  - 所有方法保持覆盖写；
- *  - 最新 key 由 latestKey（来自 BaseStorage）直接返回基础 key 后缀；
- *
- * 命名空间固定为 #weave:wf:，与项目其它存储层（#weave:config:、#weave:vocab:）一致。
+ * 变更（v7）：新增 generate-instructions 阶段的存储方法。
  */
 
 import type { CachedWorkflow } from "../nodes/parse/extract-workflow.js";
@@ -106,7 +102,7 @@ export class WorkflowStorage extends BaseStorage {
         return this.get<LineageSnapshotAny>("lineage_snapshot");
     }
 
-    // compile 阶段（元信息 + 可执行代码，覆盖写）
+    // compile 阶段
 
     saveFunctionPlan(nodeId: string, plan: FunctionPlanAny): void {
         this.set(`function_plan:${nodeId}`, plan);
@@ -129,8 +125,22 @@ export class WorkflowStorage extends BaseStorage {
         return this.get<string[]>("function_plan_index");
     }
 
-    // 可选上下文
+    // generate-instructions 阶段
+    saveGeneratedInstruction(compositeKey: string, content: string): void {
+        this.set(`gi:${compositeKey}`, content);
+    }
+    getGeneratedInstruction(compositeKey: string): string | null {
+        return this.get<string>(`gi:${compositeKey}`);
+    }
 
+    saveGeneratedInstructionsIndex(compositeKeys: string[]): void {
+        this.set("gi_index", compositeKeys);
+    }
+    getGeneratedInstructionsIndex(): string[] | null {
+        return this.get<string[]>("gi_index");
+    }
+
+    // 可选上下文
     getGoal(): string | null {
         return this.get<string>("goal");
     }
