@@ -169,6 +169,11 @@ declare global {
     get<T = string>(key: string): T | null;
 
     /**
+     * 直接获取原始数据(无更新时间).
+    */
+    getInput(name="script"):string;
+
+    /**
      * 直接保存到原始数据(自动更新更新时间).
      */
     set(key: string, value: unknown, opt?: {

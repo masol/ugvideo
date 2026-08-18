@@ -1,5 +1,11 @@
 /**
  * weaver · dump · 拼接节点完整可执行代码（main + glossary 调用尾部）
+ *
+ * v2 变更：
+ * - 配置项（Config）输入使用 safeNameMap 中 cfg:XXX 的值作 key（无 # 前缀），
+ *   与普通 artifact（#<name>）区分——配置项是项目级 KV，由 glossary.get(safeId) 直接读取。
+ * - 对于无法在 safeNameMap 中找到的 cfg 映射，降级为 #<name>（与之前行为一致），
+ *   保证功能不丢失。
  */
 
 import type { HumanNode } from "../../types.js";
@@ -23,9 +29,17 @@ export function buildNodeCode(
     // 将 inputs 构造之后的逻辑封装为 run 函数
     lines.push("async function run() {");
     lines.push("  // inputs 构造");
+    lines.push("  // - 普通 artifact：使用 `#<name>` 作 key（项目级 KV）");
+    lines.push("  // - 配置项（Config）：使用 safeNameMap 中 cfg:XXX 的值作 key（无 # 前缀），");
+    lines.push("  //   运行期由 dump 阶段把 defaultValue 写入 res/<id>.kv 供 glossary.get 读取");
     lines.push("  const inputs = {");
     for (const name of node.inputs) {
-        lines.push(`    ${JSON.stringify(name)}: glossary.get(${JSON.stringify("#" + name)}),`);
+        const cfgSafeId = safeNameMap[`cfg:${name}`];
+        if (cfgSafeId) {
+            lines.push(`    ${JSON.stringify(name)}: glossary.get(${JSON.stringify(cfgSafeId)}),`);
+        } else {
+            lines.push(`    ${JSON.stringify(name)}: glossary.get(${JSON.stringify("#" + name)}),`);
+        }
     }
     lines.push("  };");
     lines.push("");
@@ -54,7 +68,13 @@ export function buildNodeCode(
     lines.push("");
 
     // checkExpiry
-    const inputKeys = node.inputs.map((name) => `'#${name}'`).join(", ");
+    const inputKeys = node.inputs
+        .map((name) => {
+            const cfgSafeId = safeNameMap[`cfg:${name}`];
+            if (cfgSafeId) return `'${cfgSafeId}'`;
+            return `'#${name}'`;
+        })
+        .join(", ");
     const outputKeys = node.outputs.map((name) => `'#${name}'`).join(", ");
     const resourceKeys = instructionCompositeKeys
         .map((ck) => {

@@ -291,6 +291,39 @@ const 结果 = await pMap(items, async (item) => {
 - 自然语言段落：用 `llm.safefmt` 抽取（zod schema 配合）；
 - 必须在 main 函数体内有显式解析步骤，不要把整段输入直接喂给后续 prompt。
 
+# regex 安全约定（极重要，避免编译失败）
+
+代码中出现裸 regex（`/.../`）时，必须满足以下任一安全措施：
+
+1. **优先用 unified AST / split**：
+   - markdown 结构化抽取：必须 `unified().use(remarkParse).parse(text)`，**禁止**写裸 regex 匹配 markdown 标题/列表/代码块；
+   - 简单行分割：用 `text.split(/\n/)` + `trim`，**不要**写复杂的裸 regex。
+
+2. **必须写完整**：
+   - 裸 regex 必须配对的 `/` 闭合（开闭两个斜杠都不能漏）；
+   - 字符组 `[]`、分组 `()`、量词 `{}` 必须配对；
+   - **禁止**在 regex 内出现未配对的 `[` `(` `{` 或右括号数多于左括号。
+
+3. **模板字符串禁写复杂 regex**：
+   - 模板字符串内的 `${...}` 表达式中**禁止**写 regex 字面量（容易被截断导致编译失败）；
+   - 必须用 regex 时，**先在外部 const 声明**，再在模板字符串里引用变量名。
+
+4. **try/catch 兜底**：
+   - 动态构造的 regex（如 `new RegExp(pattern)`）必须 try/catch；
+   - 编译期会静态扫描裸 regex，对明显不完整（缺右斜杠、括号数不平衡）的会打回重写。
+
+**反例**（会被打回）：
+```js
+const m = content.match(/营销关键词[：:](.*?)(?:\n|###|##|\*$/);  // 缺右括号
+const m = content.match(/标题[：:](.+?)$/m);                      // 在模板字符串里被截断
+```
+
+**正例**：
+```js
+const TITLE_RE = /^##\s+(.+)$/gm;
+const m = TITLE_RE.exec(content);
+```
+
 # 中文标识符约定
 
 - 变量名、对象 key、属性名可使用中文（V8 完全支持）；
@@ -402,3 +435,5 @@ async function main(输入对象, instructions) {
 16. **verify 推荐用 generate + __PASS__ 标记词**——只有需要程序化分支时才用 safefmt；
 17. **每个 instruction 的 content 必须包含角色/目标/输入/输出/规则**——不能只有一句角色定位；
 18. **每个 instruction id 语义独立、职责具体**——禁止多个 verify 复用同一 id；主思考与 reviewer 必须用不同 id；id 命名应体现职责（role_xxx_reviewer / role_xxx_writer）。
+19. **所有裸 regex 必须语法完整、左右斜杠配对、括号平衡**——模板字符串内的 regex 必须提取为外部 const；编译期静态扫描会拦截不完整 regex。
+20. **禁止在模板字符串 `${...}` 内写 regex 字面量**——先 `const X_RE = /.../` 再引用。

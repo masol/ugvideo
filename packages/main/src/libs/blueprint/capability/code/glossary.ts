@@ -19,6 +19,7 @@
  * 3. 规范化维度关系的自维护，避免过度依赖 LLM 直觉（这是产生幻觉和缺乏条理的根源）。
  */
 
+import { getInput } from "$libs/blueprint/glossary/input.js";
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
 import { isPlainObject } from "radashi";
@@ -40,6 +41,10 @@ const fixed = {
     }
 }
 
+function getInputStr(ctx: IRunnerContext, name: string = "script"): string {
+    return getInput(ctx, name).join('\n\n\n');
+}
+
 export function getGlossary(ctx: IRunnerContext) {
     return {
         ...fixed,
@@ -49,6 +54,7 @@ export function getGlossary(ctx: IRunnerContext) {
         getIOByKeys: getIOByKeys.bind(null, ctx),
         // 纯 key-based 过期判断。
         checkExpiry: checkExpiry.bind(null, ctx),
+        getInput: getInputStr.bind(null, ctx),
         // 基座：基于已加载的 PrjTimeStore 判断过期(纯函数，无需 ctx)。
         isExpiredByTime,
         // 保存输出，支持内置 reducer 名或自定义 (older, newer) => merged 函数。

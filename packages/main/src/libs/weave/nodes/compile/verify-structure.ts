@@ -1,24 +1,15 @@
 /**
- * weaver · compile · 约束器（v9）
+ * weaver · compile · 约束器（v10）
  *
- * 4 层校验：
- *   1. compilation   —— terser + vm.Script 必须通过；
- *   2. structure     —— main 签名（双参）、reAct 三段式、return 对象、命名引用一致；
- *   3. api & globals —— 只允许 llm.* / tool.* 与 globals 清单内对象；
- *   4. react-shape   —— 必须包含 messages 数组、for 循环、verify、continue、return
- *
- * 并行提示（非阻断）：
- *   - detectParallelism 扫描顶层 await；
- *
- * v9 变更：
- *   - 移除 "verify 必须定义在 main 之外" 的强制约束：verify 可与 main 同处
- *     一个闭包，靠 JS 函数声明 hoisting + 闭包捕获 instructions / 输入对象。
- *   - verifyReActShape 改用多标记独立检测，兼容 messages 构造中模板字符串含 ${}。
+ * v10 变更：
+ *   - 集成 regex 字面量预检（checkRegexLiterals），在 terser/vm.Script 之前先拦截不完整 regex
+ *   - extractMainBody 增强：模板字符串内表达式未闭合时，截断到最后一个完整 \` 边界做 fallback
+ *   - hasVerifyPattern 放宽：支持内联 verify模式（body 内出现 `{ ok: ..., feedback: ... }`）
  */
 
 import type { FlowNode } from "../../types.js";
 import type { ApiCatalog } from "./api-catalog.js";
-import { checkCompilation } from "./code-executor.js";
+import { checkCompilation, checkRegexLiterals } from "./code-executor.js";
 import type { FunctionPlan, ParallelismHint } from "./parse-types.js";
 
 export interface VerificationResult {
@@ -44,6 +35,16 @@ export async function verifyFunctionPlan(
 
     if (!code.trim()) {
         feedback.push({ kind: "structure", msg: "代码为空，必须输出完整 main 与全部实现。" });
+        return { valid: false, feedback };
+    }
+
+    // ── 0.裸 regex 预检（先于 terser/vm.Script） ──
+    const regexCheck = checkRegexLiterals(code);
+    if (!regexCheck.ok) {
+        feedback.push({
+            kind: "compilation",
+            msg: `[regex预检] ${regexCheck.error}`,
+        });
         return { valid: false, feedback };
     }
 
@@ -295,6 +296,11 @@ function stripComments(code: string): string {
     return result;
 }
 
+/**
+ * 提取 main 函数体。
+ * v10 改进：模板字符串内表达式未闭合时，尝试截断到最后一个完整反引号边界，
+ * 仍失败才返回 null。
+ */
 function extractMainBody(code: string): string | null {
     const m = code.match(/async\s+function\s+main\s*\([^)]*\)\s*\{/);
     if (!m) return null;
@@ -309,7 +315,19 @@ function extractMainBody(code: string): string | null {
             continue;
         }
         if (ch === "`") {
-            i = scanTemplateString(code, i);
+            const end = scanTemplateString(code, i);
+            if (end > code.length - 1) {
+                // 模板字符串未闭合——回退：截断到最后一个完整的 `边界
+                const lastBacktick = code.lastIndexOf("`", i + 1);
+                if (lastBacktick > start) {
+                    // 继续扫描截断后的部分
+                    i = lastBacktick + 1;
+                    continue;
+                }
+                // 实在没法——返回截断 body（避免直接 null）
+                return code.slice(start, i);
+            }
+            i = end;
             continue;
         }
 

@@ -20,7 +20,7 @@ import {
     verifyFunctionPlan,
     type VerificationResult,
 } from "./verify-structure.js";
-const STAGNATION_LIMIT = 2;
+const STAGNATION_LIMIT = 3;
 export async function compileWorkflow(ctx: WeaveContext): Promise<void> {
     const store = ctx.storage.workflow;
     if (!checkExpiry(ctx.ctx, {

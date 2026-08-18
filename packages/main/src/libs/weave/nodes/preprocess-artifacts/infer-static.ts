@@ -1,7 +1,11 @@
 /**
- * weaver · preprocess-artifacts · 静态推导（v2）
+ * weaver · preprocess-artifacts · 静态推导（v3）
  *
- * 变更（v2）：
+ * 变更（v3）：
+ * - 修复 buildLineage 中 BFS depth 计算的无限循环 bug：
+ *   当 artifact predecessor/successor 关系存在环时（两个节点互为输入输出），
+ *   旧代码中 `if (depths.get(succ)! < newDepth)` 条件会导致永远不收敛。
+ *   改为拓扑排序计算 depth（有环时 depth 保持 0，不阻塞）。
  * - 修复 duplicate-producer 检测：记录所有 producer（不再丢失第一个）
  */
 
@@ -40,7 +44,6 @@ export function inferStaticRelations(
     const producerMap = new Map<string, string[]>();
     const consumers = new Map<string, Set<string>>();
 
-    // ── 关键修正：记录所有 producer ──
     for (const node of nodes) {
         for (const outId of node.outputs) {
             const name = artifactByName.get(outId)?.name ?? outId;
@@ -134,7 +137,10 @@ export function mergeStaticIntoArtifacts(
 }
 
 /**
- * 构建 lineage——以 artifact 为中心的思维链，与 DAG 互为镜像。
+ * 构建 lineage——以 artifact 为中心的血缘图。
+ *
+ * 关键安全措施：predecessor/successor 关系可能有环（两个节点互为输入输出时），
+ * depth 计算使用 Kahn 拓扑排序——有环的节点 depth 保持 0，不会导致无限循环。
  */
 export function buildLineage(
     ctx: WeaveContext,
@@ -182,6 +188,9 @@ export function buildLineage(
             }
         }
 
+        // 移除自引用
+        predecessors.delete(a.name);
+
         byArtifact[a.name] = {
             artifact: a.name,
             predecessors: [...predecessors],
@@ -192,6 +201,7 @@ export function buildLineage(
         };
     }
 
+    // 构建 successors（predecessor 的反向）
     for (const lin of Object.values(byArtifact)) {
         for (const pred of lin.predecessors) {
             const predLin = byArtifact[pred];
@@ -201,32 +211,45 @@ export function buildLineage(
         }
     }
 
-    // BFS 计算 depth
-    const depths = new Map<string, number>();
-    const queue: string[] = [];
+    // ── Kahn 拓扑排序计算 depth（安全：有环时环内节点 depth 保持 0） ──
+    const inDegree = new Map<string, number>();
+    for (const name of Object.keys(byArtifact)) {
+        inDegree.set(name, 0);
+    }
     for (const lin of Object.values(byArtifact)) {
-        if (lin.predecessors.length === 0) {
-            depths.set(lin.artifact, 0);
-            queue.push(lin.artifact);
+        for (const pred of lin.predecessors) {
+            if (byArtifact[pred]) {
+                inDegree.set(lin.artifact, (inDegree.get(lin.artifact) ?? 0) + 1);
+            }
         }
     }
+
+    const queue: string[] = [];
+    for (const [name, deg] of inDegree) {
+        if (deg === 0) {
+            queue.push(name);
+            byArtifact[name].depth = 0;
+        }
+    }
+
     while (queue.length > 0) {
         const cur = queue.shift()!;
-        const curDepth = depths.get(cur)!;
+        const curDepth = byArtifact[cur].depth;
         const lin = byArtifact[cur];
         for (const succ of lin.successors) {
-            const newDepth = curDepth + 1;
-            if (!depths.has(succ) || depths.get(succ)! < newDepth) {
-                depths.set(succ, newDepth);
+            const succLin = byArtifact[succ];
+            if (!succLin) continue;
+            succLin.depth = Math.max(succLin.depth, curDepth + 1);
+            const newDeg = (inDegree.get(succ) ?? 1) - 1;
+            inDegree.set(succ, newDeg);
+            if (newDeg === 0) {
                 queue.push(succ);
             }
         }
     }
-    for (const [name, d] of depths) {
-        if (byArtifact[name]) byArtifact[name].depth = d;
-    }
+    // 有环的节点 inDegree 永不归零，depth 保持 0——不会无限循环
 
-    // finalLineage：从终产物反向追溯
+    // finalLineage：从终产物反向追溯（带 visited 防环）
     const terminals = Object.values(byArtifact).filter((l) => l.successors.length === 0);
     const finalChain: string[] = [];
     const visited = new Set<string>();

@@ -1,18 +1,23 @@
 /**
  * weaver · DAG 验证（含路径级输入闭合性）
+ *
+ * v14 变更：
+ *   - 新增 `no-non-config-output` 校验：工作流必须至少有一个非 Config 的最终产物
+ *   - 新增 `no-non-config-input` 校验：工作流必须至少有一个非 Config 的外部输入
  */
 
 import type { DirectedGraph } from "graphology";
 import { hasCycle } from "graphology-dag";
 import type { ConceptManager } from "../concept/concept-manager.js";
-import type { FlowGraph, FlowNode, HumanFlow } from "../types.js";
+import type { Config, FlowGraph, FlowNode, HumanFlow } from "../types.js";
 import { topoOrder } from "./graph-ops.js";
 
 export interface ValidationError {
     kind:
     | "cycle" | "orphan" | "orphan-edge" | "missing-input" | "missing-output"
     | "multiple-terminal" | "no-terminal"
-    | "missing-concept" | "unreachable";
+    | "missing-concept" | "unreachable"
+    | "no-non-config-input" | "no-non-config-output";
     severity: "error" | "warning";
     nodeId?: string;
     graphId?: string;
@@ -102,6 +107,10 @@ export function validateHumanFlow(
             }
         }
     }
+
+    // ── 非配置输入/输出校验 ──
+    errors.push(...validateNonConfigInput(flow, conceptManager));
+    errors.push(...validateNonConfigOutput(flow, conceptManager));
 
     return errors;
 }
@@ -208,6 +217,95 @@ function collectRequiredArtifactNames(
         if (a) names.push(a.name);
     }
     return names;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// 非配置输入/输出校验
+// ════════════════════════════════════════════════════════════════════
+
+/**
+ * 校验工作流必须至少有一个非 Config 的外部输入。
+ *
+ * Config = 带默认值的固定素材（模板/公式/清单），不需要用户提供。
+ * 若工作流的所有输入都是 Config，意味着工作流没有任何"待处理的外部材料"，
+ * 等同于纯配置驱动，没有实际的处理对象——这不是一个有意义的工作流。
+ */
+function validateNonConfigInput(
+    flow: HumanFlow,
+    conceptManager: ConceptManager,
+): ValidationError[] {
+    if (flow.inputs.length === 0) {
+        return [{
+            kind: "no-non-config-input",
+            severity: "error",
+            graphId: flow.id,
+            message:
+                `工作流「${flow.name}」没有任何外部输入。` +
+                `一个有意义的工作流必须接收至少一个需要用户提供的输入（非配置项），` +
+                `作为整个处理流程的起始材料。` +
+                `请在「全局输入」中添加至少一个「输入项」（不带默认值的外部材料），` +
+                `并确保有步骤在「输入」中引用它。`,
+            category: "missing-io",
+        }];
+    }
+
+    const hasNonConfigInput = flow.inputs.some((name) => {
+        const artifact = conceptManager.artifacts.getByName(name);
+        if (!artifact) return true;
+        return (artifact as Config).isConfig !== true;
+    });
+
+    if (!hasNonConfigInput) {
+        return [{
+            kind: "no-non-config-input",
+            severity: "error",
+            graphId: flow.id,
+            message:
+                `工作流「${flow.name}」的所有输入均为 Config（带默认值的配置项），` +
+                `没有任何需要用户提供的外部材料。` +
+                `一个有意义的工作流必须接收至少一个非配置项的输入，作为处理的起始对象。` +
+                `请在「全局输入」中添加至少一个「输入项」（不带默认值），` +
+                `并确保首个步骤的「输入」中引用它、「动作」中使用它。`,
+            category: "missing-io",
+        }];
+    }
+
+    return [];
+}
+
+/**
+ * 校验工作流必须至少有一个非 Config 的最终产物。
+ *
+ * 若所有输出都是 Config，工作流没有"处理后产出有价值结果"的语义——无意义。
+ */
+function validateNonConfigOutput(
+    flow: HumanFlow,
+    conceptManager: ConceptManager,
+): ValidationError[] {
+    if (flow.outputs.length === 0) return [];
+
+    const hasNonConfigOutput = flow.outputs.some((name) => {
+        const artifact = conceptManager.artifacts.getByName(name);
+        if (!artifact) return false;
+        return (artifact as Config).isConfig !== true;
+    });
+
+    if (!hasNonConfigOutput) {
+        return [{
+            kind: "no-non-config-output",
+            severity: "error",
+            graphId: flow.id,
+            message:
+                `工作流「${flow.name}」的所有输出均为 Config，无任何有意义的产物产出。` +
+                `一个工作流必须接收输入并产生至少一个非配置项的最终产物。` +
+                `请检查：(a) 是否漏写了某些步骤应产出的非配置产物；` +
+                `(b) 是否所有产出的 artifact 都被错误地标记为 Config 类型；` +
+                `(c) 整体工作流是否缺少一个产出最终交付物的收尾步骤。`,
+            category: "missing-io",
+        }];
+    }
+
+    return [];
 }
 
 // ════════════════════════════════════════════════════════════════════
