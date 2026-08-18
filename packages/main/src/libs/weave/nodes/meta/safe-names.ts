@@ -5,7 +5,7 @@
 import { randomUUID } from "crypto";
 import type { WorkflowStorage } from "../../storage/workflow.js";
 import type { HumanFlow } from "../../types.js";
-import type { ConfigItem } from "./activities.js";
+import type { ConfigItem } from "./index.js";
 
 export function buildSafeNameMap(
     store: WorkflowStorage,
@@ -37,7 +37,7 @@ export function buildSafeNameMap(
 }
 
 export function extractConfigItems(
-    store: import("../../storage/workflow.js").WorkflowStorage,
+    store: WorkflowStorage,
     safeNameMap: Record<string, string>,
 ): ConfigItem[] {
     const items: ConfigItem[] = [];
