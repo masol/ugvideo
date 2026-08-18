@@ -1,5 +1,9 @@
 /**
  * weaver · node ⑤ meta · 编排入口
+ *
+ * v8 变更：
+ * - collectMainInputs：遍历主工作流所有非配置输入（不只是第一个），
+ *   传给 buildActivities 用于 input-manager 的多 text-list 绑定。
  */
 
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
@@ -7,7 +11,7 @@ import { throwUnprcessable } from "$libs/utils/err.js";
 import { projectActivityDataSchema } from "$types/shared/template/project.js";
 import { randomUUID } from "crypto";
 import type { WeaveContext } from "../../context.js";
-import type { HumanFlow, HumanNode } from "../../types.js";
+import type { Artifact, HumanFlow, HumanNode } from "../../types.js";
 import { buildActivities } from "./activities.js";
 import { buildMetaJson, buildTypeJson } from "./assemble.js";
 import { generateCopywriting } from "./copywriting.js";
@@ -43,13 +47,13 @@ export async function metaWorkflow(ctx: WeaveContext): Promise<void> {
     store.saveSafeNameMap(safeNameMap);
 
     const dagNodes = collectMainFlowNodes(ctx, mainFlow);
-    const mainInputArtifact = extractMainInputArtifact(ctx, mainFlow);
+    const mainInputs = collectMainInputs(ctx, mainFlow);
     const configItems = extractConfigItems(store, safeNameMap);
 
     const iconSlots = buildIconSlots(mainFlow, levels);
 
     const [copywriting, resolvedIcons] = await Promise.all([
-        generateCopywriting(ctx, mainFlow, dagNodes, levels, mainInputArtifact),
+        generateCopywriting(ctx, mainFlow, dagNodes, levels, mainInputs),
         resolveIcons(ctx, mainFlow, iconSlots),
     ]);
 
@@ -62,6 +66,10 @@ export async function metaWorkflow(ctx: WeaveContext): Promise<void> {
         icon: resolvedIcons.meta_icon || "IconCircle",
     });
 
+    const checkInputKey = mainInputs.length > 0
+        ? `#${mainInputs[mainInputs.length - 1].name}`
+        : null;
+
     const typeJson = buildTypeJson({
         flowName: copywriting.workflowName,
         flowDesc: copywriting.workflowDesc,
@@ -69,12 +77,13 @@ export async function metaWorkflow(ctx: WeaveContext): Promise<void> {
         idleHint: copywriting.idleHint,
         checkInputTitle: copywriting.checkInputTitle,
         checkInputDesc: copywriting.checkInputDesc,
+        checkInputKey,
         targets: levels.map((_, i) => ({
             label: copywriting.targetLabels[i] ?? `第 ${i + 1} 阶段`,
             desc: copywriting.targetDescs[i] ?? "",
             icon: resolvedIcons[`target_${i}`] || "IconCircle",
         })),
-        activities: buildActivities(copywriting, resolvedIcons, mainInputArtifact, configItems),
+        activities: buildActivities(copywriting, resolvedIcons, mainInputs, configItems),
         blueprintFilters: buildBlueprintFilters(levels, lineage),
     });
 
@@ -108,17 +117,34 @@ function collectMainFlowNodes(ctx: WeaveContext, flow: HumanFlow): HumanNode[] {
     return out;
 }
 
-interface MainInputArtifact {
-    exists: boolean;
+/**
+ * 收集主工作流的所有非配置输入——这些是入口处需要用户提供的外部材料。
+ * Config（带默认值的固定素材）归 spec-setting 段处理，不在此处出现。
+ */
+function collectMainInputs(ctx: WeaveContext, flow: HumanFlow): MainInputArtifact[] {
+    const out: MainInputArtifact[] = [];
+    for (const inputId of flow.inputs) {
+        const a = ctx.conceptManager.artifacts.get(inputId);
+        const isConfig = (a as Artifact & { isConfig?: boolean })?.isConfig === true;
+        if (a && isConfig) continue;
+        out.push({
+            name: a?.name ?? inputId,
+            intent: a?.intent ?? "",
+        });
+    }
+    return out;
+}
+
+export interface MainInputArtifact {
     name: string;
     intent: string;
 }
 
-function extractMainInputArtifact(ctx: WeaveContext, flow: HumanFlow): MainInputArtifact {
-    const mainInputId = flow.inputs.find((id) => id === "script") ?? flow.inputs[0];
-    if (!mainInputId) return { exists: false, name: "工作流", intent: "" };
-    const artifact = ctx.conceptManager.artifacts.get(mainInputId);
-    return { exists: true, name: artifact?.name ?? mainInputId, intent: artifact?.intent ?? "" };
+export interface ConfigItem {
+    originalKey: string;
+    safeKey: string;
+    label: string;
+    defaultValue: string;
 }
 
 export interface IconSlot {
@@ -145,5 +171,3 @@ function ensureStableId(store: import("../../storage/workflow.js").WorkflowStora
     store.saveStableMetaId(id);
     return id;
 }
-
-export type { MainInputArtifact };

@@ -1,7 +1,9 @@
 import { PrjDB } from "$libs/project/controllers/drizzle/index.js";
 import { LanceDB } from "$libs/project/controllers/lance/index.js";
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import Logger from "electron-log/main.js";
 import vm from "node:vm";
+import { getErrorMessage } from "radashi";
 import { BaseFunctor } from "../base.js";
 import { Capability } from "../is.js";
 import { FIXED_PACKAGES } from "./fixedpkgs.js";
@@ -63,7 +65,12 @@ ${capa.code}
             ioc: Record<string, unknown>,
         ) => Promise<void>;
 
-        // 3. 注入 ioc 并等待单次执行完毕
-        await asyncFn(ioc);
+        try {
+            // 3. 注入 ioc 并等待单次执行完毕
+            await asyncFn(ioc);
+        } catch (e) {
+            Logger.error(`代码节点${this.capa.id}执行时报错:${getErrorMessage(e)}`)
+            throw e;
+        }
     }
 }

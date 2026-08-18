@@ -1,5 +1,9 @@
 /**
  * weaver · dump · 导出所有节点的 .capa + .code
+ *
+ * v3 变更：
+ * - 收集主工作流的非配置输入名集合，传入 buildNodeCode 用于区分
+ *   glossary.getInput（外部输入）vs glossary.get（前置产出）。
  */
 
 import { configService } from "$libs/store/index.js";
@@ -8,7 +12,7 @@ import { knowledgeCenter } from "$libs/utils/kc.js";
 import pMap from "p-map";
 import { minify } from "terser";
 import type { WeaveContext } from "../../context.js";
-import type { HumanNode } from "../../types.js";
+import type { Artifact, HumanFlow, HumanNode } from "../../types.js";
 import { buildNodeCode } from "./build-node-code.js";
 
 export async function exportNodes(ctx: WeaveContext, id: string): Promise<void> {
@@ -23,6 +27,7 @@ export async function exportNodes(ctx: WeaveContext, id: string): Promise<void> 
     }
 
     const concurrency = Math.max(configService().get("concurrency") || 4, 2);
+    const flowInputNames = collectFlowInputNames(ctx);
 
     await pMap(nodeIds, async (nodeId) => {
         const selfId = safeNameMap[`node:${nodeId}`];
@@ -44,7 +49,6 @@ export async function exportNodes(ctx: WeaveContext, id: string): Promise<void> 
             return;
         }
 
-        // 构建 .capa
         const capa = {
             id: selfId,
             name: "#code",
@@ -65,7 +69,6 @@ export async function exportNodes(ctx: WeaveContext, id: string): Promise<void> 
             `${selfId}.capa`,
         );
 
-        // 构建完整 .code（含 glossary 尾部）
         const giIndex = store.getGeneratedInstructionsIndex() ?? [];
         const instructionIds = plan.instructions
             .map((inst) => `${nodeId}:${inst.id}`)
@@ -77,11 +80,9 @@ export async function exportNodes(ctx: WeaveContext, id: string): Promise<void> 
             plan,
             instructionIds,
             safeNameMap,
+            flowInputNames,
         );
 
-        // ctx.ctx.debug("fullcode=", fullCode)
-
-        // terser 压缩
         const minified = await minify(fullCode, {
             compress: { dead_code: true, unused: true },
             mangle: true,
@@ -95,4 +96,28 @@ export async function exportNodes(ctx: WeaveContext, id: string): Promise<void> 
 
         ctx.ctx.info(`[dump] 节点「${nodeId}」→ ${selfId.slice(0, 8)}… 已导出`);
     }, { concurrency });
+}
+
+/**
+ * 收集主工作流中所有非配置的输入产物名——这些是工作流入口需要外部提供的材料，
+ * 运行时应通过 glossary.getInput(...) 读取，与 type.json 中 input-manager 的 bind
+ * 同源。
+ */
+function collectFlowInputNames(ctx: WeaveContext): Set<string> {
+    const out = new Set<string>();
+    const mainFlow = findMainFlow(ctx);
+    if (!mainFlow) return out;
+
+    for (const inputId of mainFlow.inputs) {
+        const a = ctx.conceptManager.artifacts.get(inputId);
+        const isConfig = (a as Artifact & { isConfig?: boolean })?.isConfig === true;
+        if (a && isConfig) continue;
+        out.add(inputId);
+    }
+    return out;
+}
+
+function findMainFlow(ctx: WeaveContext): HumanFlow | null {
+    const flows = ctx.conceptManager.listHumanFlows();
+    return flows.find((f) => f.isMain === true) ?? flows[0] ?? null;
 }

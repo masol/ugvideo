@@ -1,5 +1,11 @@
 /**
  * weaver · meta · 文案生成（一次 LLM + safefmt，无 reAct）
+ *
+ * v2 变更：
+ * - 接受 MainInputArtifact[]（所有非配置入口）而非单 mainInput，
+ *   把每条 entry 的 name + intent 注入 prompt 让 LLM 生成 N 套独立文案。
+ * - 因 schema 仍为单字段（workflowDesc/idleHint 等），多输入的差异化文案
+ *   由 per-input 字段承载；保留单字段以最小化破裂现有 schema 校验。
  */
 
 import { getSmartModel } from "$libs/model/balancer/get-smart-model.js";
@@ -25,6 +31,7 @@ export interface Copywriting {
     mainInputEmptyTitle: string;
     mainInputAddDialogTitle: string;
     mainInputEditDialogTitle: string;
+    mainInputEditDialogDescription: string;
     mainInputEditDialogDesc: string;
     mainInputConfirmTitle: string;
     mainInputConfirmMessage: string;
@@ -35,13 +42,13 @@ export async function generateCopywriting(
     flow: HumanFlow,
     nodes: HumanNode[],
     levels: string[][],
-    mainInput: MainInputArtifact,
+    mainInputs: MainInputArtifact[],
 ): Promise<Copywriting> {
     const nodeList = nodes.map((n, i) => `${i + 1}. ${n.name}（${n.intent}）`).join("\n");
     const levelList = levels.map((lv, i) => `第 ${i + 1} 代：${lv.join("、")}`).join("\n");
-    const mainInputDesc = mainInput.exists
-        ? `主输入「${mainInput.name}」，语义：${mainInput.intent}`
-        : "（无主输入）";
+    const inputList = mainInputs.length > 0
+        ? mainInputs.map((mi, i) => `  ${i + 1}. 「${mi.name}」：${mi.intent || "（无语义）"}`).join("\n")
+        : "  （无外部输入）";
 
     const { text } = await generateText({
         model: getSmartModel(undefined, ctx.ctx),
@@ -53,7 +60,7 @@ export async function generateCopywriting(
             `- 总目标：${flow.intent}\n` +
             `- 步骤：\n${nodeList}\n` +
             `- DAG 代数（${levels.length} 代）：\n${levelList}\n` +
-            `- ${mainInputDesc}\n\n` +
+            `- 工作流输入入口（${mainInputs.length} 个）：\n${inputList}\n\n` +
             `请为以下 16 个项目各写一段简短文案：\n` +
             `1. 工作流名称（<= 15 字，动宾结构）\n` +
             `2. 工作流简介（<= 80 字）\n` +
@@ -97,5 +104,9 @@ export async function generateCopywriting(
         throwUnprcessable("[meta] 文案 safefmt 提取失败");
     }
 
-    return result.value.output as Copywriting;
+    const raw = result.value.output as Copywriting;
+    return {
+        ...raw,
+        mainInputEditDialogDescription: raw.mainInputEditDialogDesc,
+    };
 }

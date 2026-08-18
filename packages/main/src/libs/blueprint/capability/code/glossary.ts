@@ -42,7 +42,9 @@ const fixed = {
 }
 
 function getInputStr(ctx: IRunnerContext, name: string = "script"): string {
-    return getInput(ctx, name).join('\n\n\n');
+    const inptuArray = getInput(ctx, name);
+    // Logger.error("inptuArray=", name, inptuArray)
+    return inptuArray.join('\n\n\n');
 }
 
 export function getGlossary(ctx: IRunnerContext) {

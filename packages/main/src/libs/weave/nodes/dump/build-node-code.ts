@@ -1,11 +1,11 @@
 /**
  * weaver · dump · 拼接节点完整可执行代码（main + glossary 调用尾部）
  *
- * v2 变更：
- * - 配置项（Config）输入使用 safeNameMap 中 cfg:XXX 的值作 key（无 # 前缀），
- *   与普通 artifact（#<name>）区分——配置项是项目级 KV，由 glossary.get(safeId) 直接读取。
- * - 对于无法在 safeNameMap 中找到的 cfg 映射，降级为 #<name>（与之前行为一致），
- *   保证功能不丢失。
+ * v3 变更：
+ * - 新增 flowInputNames 参数：对工作流级输入（非配置、前置未产出的外部材料），
+ *   使用 `glossary.getInput('#'+name)` 路由（与 type.json 中 input-manager 的 bind 同源）；
+ *   前置步骤产出的中间产物仍走 `glossary.get('#'+name)`。
+ * - 保持原 cfg 优先逻辑：配置项走 safeNameMap 中 cfg:XXX 的无 # 前缀 key。
  */
 
 import type { HumanNode } from "../../types.js";
@@ -17,26 +17,27 @@ export function buildNodeCode(
     plan: FunctionPlan,
     instructionCompositeKeys: string[],
     safeNameMap: Record<string, string>,
+    flowInputNames: ReadonlySet<string>,
 ): string {
     const lines: string[] = [];
 
-    // 主函数体
     lines.push(mainCode);
     lines.push("");
     lines.push("// ── glossary 调度 ──");
     lines.push("");
 
-    // 将 inputs 构造之后的逻辑封装为 run 函数
     lines.push("async function run() {");
     lines.push("  // inputs 构造");
-    lines.push("  // - 普通 artifact：使用 `#<name>` 作 key（项目级 KV）");
-    lines.push("  // - 配置项（Config）：使用 safeNameMap 中 cfg:XXX 的值作 key（无 # 前缀），");
-    lines.push("  //   运行期由 dump 阶段把 defaultValue 写入 res/<id>.kv 供 glossary.get 读取");
+    lines.push("  // - 工作流级输入（外部材料）：glossary.getInput('#<name>')");
+    lines.push("  // - 前置步骤产出（项目级 KV）：glossary.get('#<name>')");
+    lines.push("  // - 配置项（Config）：glossary.get(safeNameMap 中 cfg:<name> 的值，无 # 前缀）");
     lines.push("  const inputs = {");
     for (const name of node.inputs) {
         const cfgSafeId = safeNameMap[`cfg:${name}`];
         if (cfgSafeId) {
             lines.push(`    ${JSON.stringify(name)}: glossary.get(${JSON.stringify(cfgSafeId)}),`);
+        } else if (flowInputNames.has(name)) {
+            lines.push(`    ${JSON.stringify(name)}: glossary.getInput(${JSON.stringify("#" + name)}),`);
         } else {
             lines.push(`    ${JSON.stringify(name)}: glossary.get(${JSON.stringify("#" + name)}),`);
         }
@@ -62,7 +63,7 @@ export function buildNodeCode(
 
     lines.push("  // 保存结果");
     lines.push("  for (const [key, value] of Object.entries(result)) {");
-    lines.push("    glossary.save('#' + key, value);");
+    lines.push("    glossary.set('#' + key, value);");
     lines.push("  }");
     lines.push("}");
     lines.push("");

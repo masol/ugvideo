@@ -42,11 +42,12 @@ const LLMS: ApiMemberDoc[] = [
         signature: "llm.safefmt(nl, output)",
         description:
             "从自然语言文本 nl 中提取结构化 JSON。" +
-            "output 必须是 llm.Output.object(zodSchema) 的形态；output 使用的 zod schema **每个字段必须有 .describe() 描述**，描述越精确提取质量越高。" +
+            "第二个参数 output 必须是 `llm.Output.object({ schema: zodSchema })` 的形态（注意是 `{ schema }` 包装对象，**不是裸 schema**）。" +
+            "output 使用的 zod schema **每个字段必须有 .describe() 描述**，描述越精确提取质量越高。" +
             "返回 Promise<NlFormatType>：成功时 result.value.output 是符合 zod schema 的 JSON 对象；失败时 result.success=false 且 result.err 非空。",
         example:
             "const Schema = z.object({ points: z.array(z.string()).describe('要点列表，每条一行') });\n" +
-            "const r = await llm.safefmt(原文, llm.Output.object(Schema));\n" +
+            "const r = await llm.safefmt(原文, llm.Output.object({ schema: Schema }));\n" +
             "if (!r.success || !r.value) err.throwUnprcessable('提取失败：' + JSON.stringify(r.err));\n" +
             "const points = r.value.output.points;",
     },
@@ -56,9 +57,9 @@ const LLMS: ApiMemberDoc[] = [
             "流式调用，返回 Promise<{textStream: AsyncIterable<string>}>。用于需要分块输出的场景。",
     },
     {
-        signature: "llm.Output.object(zodSchema)",
+        signature: "llm.Output.object({ schema })",
         description:
-            "配合 llm.safefmt 使用，传入 zod schema 定义目标结构。",
+            "配合 llm.safefmt 使用，必须传入 `{ schema: zodSchema }` 包装对象。",
     },
 ];
 

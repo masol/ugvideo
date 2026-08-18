@@ -1,27 +1,39 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * weaver · meta · activities JSON 拼接（纯代码，无 LLM）
+ *
+ * v3 变更：
+ * - 完全去除硬编码的 `key: "script"` 项；只按 mainInputs 动态生成 N 项。
+ * - binding key 统一 `#<originalKey>`，与 dump 阶段 getInput('#'+name) 同源。
+ * - Config 完全交给 spec-setting 段，mainInputs 不混入。
  */
 
 import type { Copywriting } from "./copywriting.js";
-import type { MainInputArtifact } from "./index.js";
-
-export interface ConfigItem {
-    originalKey: string;
-    safeKey: string;
-    label: string;
-    defaultValue: string;
-}
+import type { ConfigItem, MainInputArtifact } from "./index.js";
 
 export function buildActivities(
     copy: Copywriting,
     icons: Record<string, string>,
-    mainInput: MainInputArtifact,
+    mainInputs: MainInputArtifact[],
     configItems: ConfigItem[],
 ): any[] {
     const activities: any[] = [];
 
-    if (mainInput.exists) {
+    if (mainInputs.length > 0) {
+        const inputChildren: any[] = mainInputs.map((mi) => ({
+            type: "text-list",
+            binding: { key: `#${mi.name}` },
+            addLabel: copy.mainInputAddLabel || `添加${mi.name}`,
+            emptyTitle: copy.mainInputEmptyTitle || `暂无${mi.name}`,
+            emptyIcon: "IconFileText",
+            addDialogTitle: copy.mainInputAddDialogTitle || `添加${mi.name}`,
+            editDialogTitle: copy.mainInputEditDialogTitle || `编辑${mi.name}`,
+            editDialogDescription: copy.mainInputEditDialogDescription || mi.intent || "",
+            editAlert: true,
+            confirmTitle: copy.mainInputConfirmTitle || "确认删除",
+            confirmMessage: copy.mainInputConfirmMessage || "确定删除吗？",
+        }));
+
         activities.push({
             id: "input-manager",
             label: copy.inputSectionTitle || "输入管理",
@@ -35,21 +47,7 @@ export function buildActivities(
                         icon: icons.script_list || "IconScript",
                         defaultOpen: true,
                         badge: "count",
-                        children: [
-                            {
-                                type: "text-list",
-                                binding: { key: "script" },
-                                addLabel: copy.mainInputAddLabel || "添加",
-                                emptyTitle: copy.mainInputEmptyTitle || "暂无内容",
-                                emptyIcon: "IconFileText",
-                                addDialogTitle: copy.mainInputAddDialogTitle || "添加",
-                                editDialogTitle: copy.mainInputEditDialogTitle || "编辑",
-                                editDialogDescription: copy.mainInputEditDialogDesc || "",
-                                editAlert: true,
-                                confirmTitle: copy.mainInputConfirmTitle || "确认删除",
-                                confirmMessage: copy.mainInputConfirmMessage || "确定删除吗？",
-                            },
-                        ],
+                        children: inputChildren,
                     },
                 ],
             },

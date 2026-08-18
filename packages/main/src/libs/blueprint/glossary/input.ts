@@ -37,7 +37,7 @@ export function getInput(ctx: IRunnerContext, name: string = "script"): string[]
     }
 
     inputs.forEach((item) => {
-        const key = `script_${item.id}`
+        const key = `${name}_${item.id}`
         const s = prjdb.get<string>(key);
         if (isString(s)) {
             scriptArray.push(s);

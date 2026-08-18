@@ -52,16 +52,19 @@
     if (dashboardStore.runState === "idle") {
       if (projectStore.activity?.intputSteps) {
         const inputKey = projectStore.activity.inputKey;
-        const inputValue = await safeApi().project.get(inputKey);
-        let lackInput = true;
-        if (Array.isArray(inputValue) && inputValue.length > 0) {
-          lackInput = false;
-        } else if (inputValue) {
-          lackInput = false;
-        }
-        if (lackInput) {
-          tourStore.start(projectStore.activity?.intputSteps);
-          return;
+        console.log("inputKey=", inputKey);
+        if (inputKey) {
+          const inputValue = await safeApi().project.get(inputKey);
+          let lackInput = true;
+          if (Array.isArray(inputValue) && inputValue.length > 0) {
+            lackInput = false;
+          } else if (inputValue) {
+            lackInput = false;
+          }
+          if (lackInput) {
+            tourStore.start(projectStore.activity?.intputSteps);
+            return;
+          }
         }
       }
     }

@@ -102,7 +102,7 @@ export class ProjectActivity {
                 },
             ];
         }
-        this.inputKey = data.checkInput?.key || "script";
+        this.inputKey = data.checkInput?.key ?? "";
 
         // ── 项目级配置：只做持有，不反向调用任何 UI/route store ──
         this.blueprintFilters = data.blueprintFilters;

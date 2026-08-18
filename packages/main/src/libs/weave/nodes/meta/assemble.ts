@@ -33,12 +33,22 @@ export interface TypeJsonInput {
     idleHint: string;
     checkInputTitle: string;
     checkInputDesc: string;
+    /** 最后输入项的 binding key（#<name> 形式）；无输入则不输出 key 字段 */
+    checkInputKey: string | null;
     targets: TargetDef[];
     activities: unknown[];
     blueprintFilters: { glossary: { value: string; desc: string }[] };
 }
 
 export function buildTypeJson(input: TypeJsonInput): Record<string, unknown> {
+    const checkInput: Record<string, unknown> = {
+        title: input.checkInputTitle,
+        description: input.checkInputDesc,
+    };
+    if (input.checkInputKey) {
+        checkInput.key = input.checkInputKey;
+    }
+
     return {
         icon: input.icon,
         statusText: input.flowName,
@@ -49,10 +59,7 @@ export function buildTypeJson(input: TypeJsonInput): Record<string, unknown> {
         hints: {
             idle: input.idleHint,
         },
-        checkInput: {
-            title: input.checkInputTitle,
-            description: input.checkInputDesc,
-        },
+        checkInput,
         targets: input.targets.map((t) => ({
             label: t.label,
             desc: t.desc,

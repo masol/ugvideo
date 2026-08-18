@@ -180,7 +180,7 @@ const { text } = await llm.generate({
 const Schema = z.object({
 字段名: z.string().describe('该字段的精确语义与格式说明'),
 });
-const r = await llm.safefmt(nl, llm.Output.object(Schema));
+const r = await llm.safefmt(nl, llm.Output.object({ schema: Schema }));
 if (!r.success || !r.value) {
   err.throwUnprcessable('safefmt 抽取失败：' + JSON.stringify(r.err));
 }
