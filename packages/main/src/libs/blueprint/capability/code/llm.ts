@@ -4,7 +4,6 @@ import { prism, PrismOpts } from "$libs/model/llm/prism/prism.js";
 import { LlmParamArgs } from "$types/ai/gentext.js";
 import { IRunnerContext } from "$types/blueprint/context.js";
 import { generateText, Output } from "ai";
-import Logger from "electron-log";
 
 
 // 透传ctx,以允许abort生效。
@@ -27,10 +26,10 @@ const prsimaProxy = async (ctx: IRunnerContext, query: string, opts?: PrismOpts)
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const safefmProxy = async (ctx: IRunnerContext, nl: string, output: any) => {
-    Logger.debug("output=", output)
+    // Logger.debug("output=", output)
     const ret = await safefmt(nl, output, ctx);
-    Logger.debug("safefmt=", nl)
-    Logger.debug("ret=", ret.value)
+    // Logger.debug("safefmt=", nl)
+    // Logger.debug("ret=", ret.value)
     return ret;
 }
 

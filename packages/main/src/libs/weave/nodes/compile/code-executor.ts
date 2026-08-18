@@ -2,10 +2,11 @@
 /**
  * weaver · compile · 代码语法 / 编译校验
  *
- * v2 新增：裸 regex 字面量完整性预检
- *  - 在 terser / vm.Script 之前先扫一遍代码，找出明显不完整的 regex 字面量
- *  - 避免 LLM 在长上下文中写出 `/foo[/:...$/` 这种截断的 regex
- *  - 只做粗粒度检查（左右斜杠配对、括号平衡），不做完整语法验证
+ * v3 变更：
+ * - 编译检查时用运行时相同的 wrapper 包裹代码
+ *   `(async function (__ioc__) { with (__ioc__) { ... } })`
+ *   确保顶层 await 合法、__ioc__ 成员（llm / tool / err 等）不报 undefined token
+ * - 裸 regex 预检仍对原始代码执行（不受 wrapper 影响）
  */
 
 import vm from "node:vm";
@@ -21,6 +22,14 @@ export interface CompilationCheckResult {
     regexError?: string;
 }
 
+/**
+ * 运行时 wrapper——与实际执行环境保持一致。
+ * 生成的代码在此 wrapper 内执行，因此编译检查也必须在此 wrapper 内进行。
+ */
+function wrapForCompilation(code: string): string {
+    return `(async function (__ioc__) {\n  with (__ioc__) {\n${code}\n  }\n})`;
+}
+
 export async function checkCompilation(code: string): Promise<CompilationCheckResult> {
     const regexCheck = checkRegexLiterals(code);
     if (!regexCheck.ok) {
@@ -33,10 +42,12 @@ export async function checkCompilation(code: string): Promise<CompilationCheckRe
         };
     }
 
+    const wrapped = wrapForCompilation(code);
+
     let terserOk = true;
     let terserError: string | undefined;
     try {
-        const out = await minify(code, {
+        const out = await minify(wrapped, {
             compress: false,
             mangle: false,
             format: { comments: false },
@@ -53,7 +64,7 @@ export async function checkCompilation(code: string): Promise<CompilationCheckRe
     let scriptOk = true;
     let scriptError: string | undefined;
     try {
-        new vm.Script(code, { filename: "compiled.js" });
+        new vm.Script(wrapped, { filename: "compiled.js" });
     } catch (e: any) {
         scriptOk = false;
         scriptError = e?.message ?? String(e);
@@ -76,8 +87,7 @@ export async function checkCompilation(code: string): Promise<CompilationCheckRe
  *   - 分组 `()` 是否平衡
  *   - 量词 `{}` 是否闭合
  *
- * 简化策略：跳过字符串、模板字符串、注释；只扫描代码字面量部分。
- * 检测到第一个不完整 regex 即返回。
+ * 注意：regex 预检对原始代码执行，不需要 wrapper。
  */
 export function checkRegexLiterals(code: string): { ok: boolean; error?: string } {
     const stripped = stripCommentsAndStrings(code);

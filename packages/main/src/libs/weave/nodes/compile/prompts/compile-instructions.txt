@@ -10,7 +10,9 @@
 async function main(输入对象, instructions) {
   // 第一步：从入参对象中读取原料（命名与该步骤声明的 inputs 逐字一致）
   // 第二步：构造初始 messages = [{role: 'user', content: '<用户提示词>'}]
-  //         注意：不要把 instructions 内容放进 messages  const messages = [{ role: 'user', content: '...' }];
+  //         注意：不要把 instructions 内容放进 messages
+  // 第三步：reAct 循环
+  const messages = [{ role: 'user', content: '...' }];
 
   for (let round = 0; round < 6; round++) {
     // 主思考 LLM（instructions 作为独立参数传递）
@@ -36,9 +38,77 @@ async function main(输入对象, instructions) {
 }
 ```
 
+## reAct 末轮降级（兜底，工程韧性）
+
+为防止 verify instruction 本身有缺陷导致 N 轮全部失败，**最后一轮跳过 verify**。三种写法任选其一：
+
+**写法 A**（推荐——用 MAX 变量，循环条件与终止条件对称）：
+```js
+async function main(输入对象, instructions) {
+  const MAX = 6;
+  const messages = [{ role: 'user', content: '...' }];
+
+  for (let round = 0; round < MAX; round++) {
+    const { text } = await llm.generate({ instructions, messages });
+    messages.push({ role: 'assistant', content: text });
+
+    // 末轮降级：不再 verify，直接接受
+    if (round === MAX - 1) {
+      return { <outputKey>: text, ... };
+    }
+
+    const v1 = await verify1(text);
+    if (!v1.ok) { messages.push({ role: 'user', content: v1.feedback }); continue; }
+    const v2 = await verify2(text);
+    if (!v2.ok) { messages.push({ role: 'user', content: v2.feedback }); continue; }
+
+    return { <outputKey>: text, ... };
+  }
+  err.throwUnprcessable('reAct 超出最大轮次仍未能收敛');
+
+  async function verify1(content) { ... }
+  async function verify2(content) { ... }
+}
+```
+
+**写法 B**（直接用数字，N=6 时）：
+```js
+for (let round = 0; round < 6; round++) {
+  const { text } = await llm.generate({ instructions, messages });
+  messages.push({ role: 'assistant', content: text });
+
+  if (round === 5) {  // 6-1=5，最后一轮 return { <outputKey>: text, ... };
+  }
+
+  const v1 = await verify1(text);
+  if (!v1.ok) { messages.push({ role: 'user', content: v1.feedback }); continue; }
+  // ...
+}
+```
+
+**写法 C**（用 >= 判定）：
+```js
+for (let round = 0; round < 6; round++) {
+  const { text } = await llm.generate({ instructions, messages });
+  messages.push({ role: 'assistant', content: text });
+
+  if (round >= 5) {
+    return { <outputKey>: text, ... };
+  }
+
+  const v1 = await verify1(text);
+  // ...
+}
+```
+
+**关键点**：
+- 末轮早返回**必须在 verify 调用之前**（否则 verify 会先跑一遍才退出，浪费一次 LLM 调用）；
+- 末轮早返回**必须返回对象字面量**（`return { ... };`），不能裸 return；
+- 任意一种写法都能通过校验——编译框架不强制 MAX 变量名。
+
 ## verify 函数与 main 的位置关系
 
-verify 函数可与 main 同处一个闭包作用域内（即 verify 定义在 main 函数体内），靠 JS 函数声明 hoisting 调用，并闭包捕获外层的 `instructions` 参数和 `输入对象`。
+verify 函数可与 main 同处一个闭包作用域内（即 verify 定义在 main 函数体内），靠 JS 函数声明 hoisting 调用，并闭包捕获外层的 `instructions` 参数和`输入对象`。
 
 这种写法是**推荐写法**，原因是：
 - verify 需要直接读 `instructions['<id>']`，写在 main 内部可直接捕获，不用再传参；
@@ -49,7 +119,7 @@ verify 函数可与 main 同处一个闭包作用域内（即 verify 定义在 m
 
 ```js
 async function main(输入对象, instructions) {
-  const提纲原文 = 输入对象['文章提纲草案'];
+  const 提纲原文 = 输入对象['文章提纲草案'];
   if (!提纲原文) err.throwUnprcessable('缺少输入');
 
   const messages = [{
@@ -79,21 +149,21 @@ async function main(输入对象, instructions) {
 
   async function verify结构(content) {
     const { text } = await llm.generate({
-      instructions: instructions['role_structure_reviewer'],  // ← 用专门的 reviewer
+      instructions: instructions['role_structure_reviewer'],
       prompt: '...'
     });
     const trimmed = text.trim();
-    const ok = trimmed.includes('__PASS__') && trimmed.length < 40;
+    const ok = trimmed.toLowerCase().includes('__pass__') && trimmed.length < 40;
     return { ok, feedback: ok ? '' : trimmed };
   }
 
   async function verify语感(content) {
     const { text } = await llm.generate({
-      instructions: instructions['role_tone_reviewer'], // ← 用另一个专门的 reviewer
+      instructions: instructions['role_tone_reviewer'],
       prompt: '...'
     });
     const trimmed = text.trim();
-    const ok = trimmed.includes('__PASS__') && trimmed.length < 40;
+    const ok = trimmed.toLowerCase().includes('__pass__') && trimmed.length < 40;
     return { ok, feedback: ok ? '' : trimmed };
   }
 }
@@ -191,7 +261,10 @@ const data = r.value.output.字段名;
 - safefmt **仅用于从已有自然语言文本中提取结构化数据**，它没有推理能力，不能替代 generate；
 - safefmt 之前**通常需要一次 generate 产出自然语言**，然后才对其输出调用 safefmt；
 - **只有后续代码需要程序化判断（if/else 分支、枚举匹配、数值比较）时**才使用 safefmt；
-- 简单的通过/不通过判断，**不要用 safefmt**——用 generate + 标记词判定（见下方 verify 约定）。
+- 简单的通过/不通过判断，**不要用 safefmt**——用 generate + 标记词判定（见下方 verify 约定）；
+- **safefmt 的第一个参数直接传 LLM 产出的原始文本字符串**——safefmt 内部能自动处理任意格式（含 markdown、代码块、JSON 混排等），绝不需要调用方做任何预处理；
+- ❌ **禁止**在调用 safefmt 之前用 regex 提取 JSON 块、禁止 JSON.parse、禁止剥离代码块标记、禁止任何"清理"操作——这些都是多余的，会引入不必要的失败点；
+- ❌ **禁止**让 generate 输出包含 JSON 代码块然后自己 regex 提取——需要结构化数据时一律走 safefmt，不要自己解析。
 
 # verify 函数约定（轻量自检的标准写法）
 
@@ -217,7 +290,27 @@ async function verify名称(content) {
 }
 ```
 
-**每个 verify 必须用独立的 instruction id**——结构审查、语感审查、新手可读性审查是不同维度，必须各有专属的 reviewer system prompt。
+**关于 `__PASS__` 输出协议（极重要）**：
+
+reviewer 类 instruction 的输出协议（"通过时输出 `__PASS__`，不通过时给出反馈"）由**运行框架统一追加**，不要求 LLM 在 content 中自行生成。LLM 在生成 reviewer instruction 时只需描述：
+- 评审角色与职责
+- 输入说明
+- 评审标准（可判定的条件）
+- 不通过时的反馈要点
+
+**禁止在 reviewer instruction 的 content 中包含 `__PASS__` 字面量**——运行框架会在 dump阶段自动追加固定的输出协议尾段：
+
+> **输出规则**：若完全满足所有评审标准，只输出"__PASS__"（不含引号的四个字符加两个下划线），不输出任何其他内容——包括"恭喜""分析如下""通过"等词语一概不输出。若不满足，详细指出问题并给出修改建议。
+
+这样做的目的是：**所有 reviewer 的输出协议格式永远一致，LLM 不会写错、写漏、写错位置**。
+
+verify 函数中检测 `__PASS__` 的标准代码：
+
+```js
+const trimmed = text.trim();
+const ok = trimmed.toLowerCase().includes('__pass__') && trimmed.length < 40;
+return { ok, feedback: ok ? '' : trimmed };
+```
 
 ## 写法 B：纯代码校验（适合格式/结构/长度等可程序化判定的场景）
 
@@ -240,7 +333,8 @@ async function verify结构(content) {
 **禁止**：
 - ❌ 不要用 safefmt 做"是否通过"判断——safefmt 无推理能力，不适合做质量评审；
 - ❌ 不要在 verify 中用 safefmt 提取一个 boolean 字段——这比 generate + __PASS__ 更贵更脆弱；
-- ❌ 不要多个 verify 复用同一 instruction id——评审维度不同，system prompt 必须不同。
+- ❌ 不要多个 verify 复用同一 instruction id——评审维度不同，system prompt 必须不同；
+- ❌ 不要在 reviewer instruction 的 content 中硬编码 `__PASS__` 输出规则——这是框架的事。
 
 # 异常抛出约定
 
@@ -282,6 +376,52 @@ const 结果 = await pMap(items, async (item) => {
 - `require(...)` / `import ...`
 - `fs` / `http` / `net` / `child_process` / `process` / `crypto` / `vm`（Node.js 内建）
 - 任何 npm 包（`axios`、`lodash`、`moment` 等）
+
+# 输入数据零预处理原则（铁律）
+
+**所有从 `输入对象` 读取的值，必须原样使用，禁止任何预处理。**
+
+"预处理"包括但不限于：
+- ❌ `.trim()`、`.replace()`、`.split()`、`.filter(Boolean)` 等字符串清理
+- ❌ `JSON.parse()` 解析
+- ❌ regex 提取子串
+- ❌ 类型假设（如假设一定是 string 然后调用字符串方法）
+- ❌ 数组化（如 `.map(s => s?.trim()).filter(Boolean)`）
+- ❌ 剥离 markdown 代码块标记
+- ❌ 任何"兜底默认值"拼接（如 `|| '暂无'`）
+
+**为什么**：
+- 输入值的类型和格式由上游步骤在写入时确保正确——可能是字符串、数组、对象；
+- 读取方不知道也不应假设其类型；
+- 预处理是 bug 的第一来源：类型不匹配时 `.trim()` 会 throw，regex 提取会返回 null，`filter(Boolean)` 会丢失有效数据。
+
+**正确做法**：
+- 直接把 `输入对象['<key>']` 传给 prompt 模板字符串（模板字符串会自动 toString）；
+- 直接把 `输入对象['<key>']` 传给 `llm.safefmt` 第一个参数；
+- 如果需要判断是否存在，只用 `if (!输入对象['<key>'])` 判空即可；
+- 如果需要拼接多个输入，直接用模板字符串 `${输入对象['A']}\n${输入对象['B']}`。
+
+```js
+// ✅ 正确——直接使用，不做任何预处理
+const messages = [{
+  role: 'user',
+  content: `请基于以下素材撰写正文：\n\n${输入对象['文章骨架']}\n\n${输入对象['产品档案表']}`
+}];
+
+// ✅ 正确——safefmt 直接接收原始值
+const r = await llm.safefmt(输入对象['分析结果'], llm.Output.object({ schema: Schema }));
+
+// ❌ 错误——对输入做了 trim/filter 预处理
+const 片段 = [输入对象['A'], 输入对象['B']].map(s => s?.trim()).filter(Boolean);
+
+// ❌ 错误——假设输入是字符串并调用字符串方法
+const 内容 = 输入对象['金句标记'].replace(/```json/g, '');
+
+// ❌ 错误——对输入做 JSON.parse
+const data = JSON.parse(输入对象['配置']);
+```
+
+**唯一例外**：对 `llm.generate` 产出的 `text`（即本节点自己生成的中间结果），可以做必要的后处理再写入输出——因为这是"自己产出的数据，在写入时处理"。
 
 # 输入抽取 / 解析约定
 
@@ -349,20 +489,25 @@ const m = TITLE_RE.exec(content);
     处理规则：1.解释必须用大白话+比喻/对比 2.案例必须含时间人物对话 3.段落间过渡自然 4.禁止使用专业术语
 ```
 
-reviewer 类 instructions 必须包含"通过时只输出 __PASS__"的指令，且**每个 reviewer 一条 instruction id**：
+reviewer 类 instructions **只需描述角色 + 输入 + 评审标准 + 反馈要点**，**不要包含 `__PASS__` 输出规则**——这部分由运行框架统一追加。每个 reviewer 一条 instruction id：
+
 ```
 - id: role_structure_reviewer
   content: 你是结构合规性审查专家。
     任务：审查文本是否每个主体章节都严格依次包含"亮观点-做解释-举例子"三个模块。
     判定标准：1.每部分开头一句核心观点 2.紧接大白话解释（含对比或比喻） 3.真实案例（含时间/人物/对话）。
-    输出规则：若完全满足所有标准，只输出"__PASS__"，不输出任何其他内容。若不满足，明确指出哪个章节缺失了哪一环节，并给出补全建议。
+    反馈要点：若不满足，明确指出哪个章节缺失了哪一环节，并给出补全建议。
 
 - id: role_tone_reviewer
   content: 你是语感审查编辑。
     任务：以"大声朗读"的方式审阅文本，检查是否有 AI 腔、拗口断句、或书面化表达。
     判定标准：1.朗读是否顺畅自然 2.断句位置是否符合日常口语节奏 3.用词是否贴近读者日常表达。
-    输出规则：若完全满足，只输出"__PASS__"。若不满足，明确指出问题片段并建议重写方式。
+    反馈要点：若不满足，明确指出问题片段并建议重写方式。
 ```
+
+注意：上面的 reviewer 示例**故意不包含 `__PASS__`**——运行框架会在 dump 阶段自动追加固定的输出协议尾段：
+
+> **输出规则**：若完全满足所有评审标准，只输出"__PASS__"（不含引号的四个字符加两个下划线），不输出任何其他内容——包括"恭喜""分析如下""通过"等词语一概不输出。若不满足，详细指出问题并给出修改建议。
 
 # messages 构造约定（极重要）
 
@@ -373,7 +518,7 @@ messages 中的 user消息只包含**任务素材与指令**（如"请基于以�
 ```js
 // ✅ 正确
 const messages = [{
-  role: 'user',
+ role: 'user',
   content: '请基于以下文章提纲草案撰写完整正文：\n\n' + 提纲文本
 }];
 const { text } = await llm.generate({ instructions: instructions['role_main_writer'], messages });
@@ -394,10 +539,11 @@ const messages = [{
 
 ## Instructions
 - id: <引用 ID，main 中通过 `instructions['<id>']` 使用>
-  content: <该角色的完整 system prompt 文本，包含角色/目标/输入/输出/规则>
+  content: <该角色的完整 system prompt 文本，包含角色/目标/输入/输出/规则；
+ 对 reviewer 类，content 中**禁止**包含 `__PASS__` 字面量——这部分由运行框架统一追加>
 
 ## Pseudocode
-（"Pseudocode" 是历史命名；本阶段实际产出可执行 JavaScript）
+（"必须"是历史命名；本阶段实际产出可执行 JavaScript）
 
 ```js
 // JavaScript 代码（不要写 TS 类型标注，不要 import）
@@ -405,8 +551,10 @@ async function main(输入对象, instructions) {
   // 1) 从 输入对象['<inputKey>'] 读原料
   // 2) 构造 messages = [{ role: 'user', content: '...' }]（不含 instructions）
   // 3) reAct 循环：
-  //    for (let round = 0; round < 6; round++) {
-  //        主思考 LLM（instructions 作为独立参数）→ verify → 反馈 → 继续 / 收敛
+  //    const MAX = 6;
+  //    for (let round = 0; round < MAX; round++) {
+ //        主思考 LLM（instructions 作为独立参数）→ verify → 反馈 → 继续 / 收敛
+  //        末轮（round === MAX - 1）跳过 verify 直接返回
   //    }
   // 4) return { '<outputKey>': '<value>', ... };
 
@@ -419,21 +567,26 @@ async function main(输入对象, instructions) {
 
 1. **必须产出 JavaScript**（不要 TS、不要类型标注）；
 2. **main 签名必须是** `async function main(输入对象, instructions)`；
-3. **代码必须包含 reAct 三段式**：`messages` 数组 + `for` 循环 + `verify` 调用 + 反馈 continue + 终 return；
-4. **禁止硬编码系统提示词字符串**——必须从 `instructions['<id>']` 取；
-5. **必须出现** `return { <outputKey>: <value>, ... };`；
-6. **变量 / key 与原动作描述中的产物名逐字一致**；
-7. **只允许调用 llm.* / tool.* / globals 清单内对象**；
-8. **禁止 `require` / `import` / Node.js 内建模块 / 第三方 npm 包**；
-9. **多元素并行用 pMap(..., { concurrency: 8 })**；
-10. **异常一律 `err.throwUnprcessable('...')`，禁止 throw new Error**；
-11. **并行 await 用 `await`** 或 `Promise.all`，不要漏掉；
-12. **不要输出"以下是代码""编译结果说明"等元信息**；
-13. **所有控制流**（if / for / while / try-catch）完整保留；
-14. **输入解析有显式步骤**——不要把整段原文丢给 prompt；
-15. **instructions 不混入 messages**——通过 llm.generate 的 instructions 参数传递；
-16. **verify 推荐用 generate + __PASS__ 标记词**——只有需要程序化分支时才用 safefmt；
-17. **每个 instruction 的 content 必须包含角色/目标/输入/输出/规则**——不能只有一句角色定位；
-18. **每个 instruction id 语义独立、职责具体**——禁止多个 verify 复用同一 id；主思考与 reviewer 必须用不同 id；id 命名应体现职责（role_xxx_reviewer / role_xxx_writer）。
-19. **所有裸 regex 必须语法完整、左右斜杠配对、括号平衡**——模板字符串内的 regex 必须提取为外部 const；编译期静态扫描会拦截不完整 regex。
-20. **禁止在模板字符串 `${...}` 内写 regex 字面量**——先 `const X_RE = /.../` 再引用。
+3. **代码必须包含 reAct 三段式**：`messages` 数组 + `for` 循环 + `verify` 调用 + 反馈 `continue` + 终 `return`；
+4. **代码必须包含末轮降级**——for 循环最后一轮（在 verify 调用之前）必须有早返回分支 `return { ... };`；可用 `round === MAX - 1`、`round === 5`、`round >= 5` 等任意写法；编译框架不再强制使用 `MAX` 变量名；
+5. **禁止硬编码系统提示词字符串**——必须从 `instructions['<id>']` 取；
+6. **必须出现** `return { <outputKey>: <value>, ... };`；
+7. **变量 / key 与原动作描述中的产物名逐字一致**；
+8. **只允许调用 llm.* / tool.* / globals 清单内对象**；
+9. **禁止 `require` / `import` / Node.js 内建模块 / 第三方 npm 包**；
+10. **多元素并行用 pMap(..., { concurrency: 8 })`**；
+11. **异常一律 `err.throwUnprcessable('...')`，禁止 throw new Error**；
+12. **并行 await 用 `await`** 或 `Promise.all`，不要漏掉；
+13. **不要输出"以下是代码""编译结果说明"等元信息**；
+14. **所有控制流**（if / for / while / try-catch）完整保留；
+15. **输入解析有显式步骤**——不要把整段原文丢给 prompt；
+16. **instructions 不混入 messages**——通过 llm.generate 的 instructions 参数传递；
+17. **verify 推荐用 generate + __PASS__ 标记词**——只有需要程序化分支时才用 safefmt；
+18. **每个 instruction 的 content 必须包含角色/目标/输入/输出/规则**——不能只有一句角色定位；
+19. **每个 instruction id 语义独立、职责具体**——禁止多个 verify 复用同一 id；主思考与 reviewer 必须用不同 id；id 命名应体现职责（role_xxx_reviewer / role_xxx_writer）；
+20. **所有裸 regex 必须语法完整、左右斜杠配对、括号平衡**——模板字符串内的 regex 必须提取为外部 const；编译期静态扫描会拦截不完整 regex；
+21. **禁止在模板字符串 `${...}` 内写 regex 字面量**——先 `const X_RE = /.../` 再引用；
+22. **reviewer 类 instruction 的 content 中禁止包含 `__PASS__` 字面量**——这部分由运行框架在 dump 阶段统一追加；
+23. **禁止对 `输入对象` 的值做任何预处理**——不要 trim、不要 filter、不要 JSON.parse、不要 regex 提取、不要类型转换、不要剥离代码块标记；输入值原样传给模板字符串或 safefmt；
+24. **禁止在 safefmt 之前做任何预处理**——safefmt 直接接收原始字符串，不需要清理；
+25. **禁止让 generate 输出 JSON 代码块然后自己 regex 提取**——需要结构化数据时一律走 safefmt。

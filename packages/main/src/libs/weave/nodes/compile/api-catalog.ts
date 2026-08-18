@@ -42,6 +42,8 @@ const LLMS: ApiMemberDoc[] = [
         signature: "llm.safefmt(nl, output)",
         description:
             "从自然语言文本 nl 中提取结构化 JSON。" +
+            "第一个参数 nl 直接传 LLM 产出的原始文本字符串——safefmt 内部能自动处理任意格式的输入（包括含 markdown、代码块、混合格式的文本），" +
+            "绝不需要调用方做任何预处理（禁止在调用前用 regex 提取 JSON、禁止 JSON.parse、禁止剥离代码块标记）。" +
             "第二个参数 output 必须是 `llm.Output.object({ schema: zodSchema })` 的形态（注意是 `{ schema }` 包装对象，**不是裸 schema**）。" +
             "output 使用的 zod schema **每个字段必须有 .describe() 描述**，描述越精确提取质量越高。" +
             "返回 Promise<NlFormatType>：成功时 result.value.output 是符合 zod schema 的 JSON 对象；失败时 result.success=false 且 result.err 非空。",

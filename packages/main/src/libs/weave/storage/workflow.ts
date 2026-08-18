@@ -1,7 +1,7 @@
 /**
- * weaver · Workflow Storage（v8）
+ * weaver · Workflow Storage（v9）
  *
- * 变更（v8）：新增 meta 阶段的存储方法。
+ * 变更（v9）：新增 instruction分类信息存储方法。
  */
 
 import type { CachedWorkflow } from "../nodes/parse/extract-workflow.js";
@@ -12,6 +12,8 @@ type CachedWorkflowAny = CachedWorkflow;
 type ArtifactLineageMapAny = import("../types.js").ArtifactLineageMap;
 type FunctionPlanAny = import("../nodes/compile/parse-types.js").FunctionPlan;
 type LineageSnapshotAny = import("../nodes/preprocess-artifacts/export-lineage.js").LineageSnapshot;
+
+export type InstructionKind = "writer" | "reviewer" | "extractor" | "generic";
 
 export class WorkflowStorage extends BaseStorage {
     protected NS = "#weave:wf:";
@@ -147,6 +149,17 @@ export class WorkflowStorage extends BaseStorage {
     }
     getGeneratedInstructionsIndex(): string[] | null {
         return this.get<string[]>("gi_index");
+    }
+
+    /**
+ * v9 新增：落盘 instruction 分类信息。
+     * dump 阶段据此识别 reviewer，追加 __PASS__ 输出协议。
+     */
+    saveInstructionClassification(compositeKey: string, kind: InstructionKind): void {
+        this.set(`gi_class:${compositeKey}`, kind);
+    }
+    getInstructionClassification(compositeKey: string): InstructionKind | null {
+        return this.get<InstructionKind>(`gi_class:${compositeKey}`);
     }
 
     // ════════════════════════════════════════════════════════════════

@@ -1,10 +1,13 @@
 /**
- * weaver · compile · 约束器（v10）
+ * weaver · compile · 约束器（v15）
  *
- * v10 变更：
- *   - 集成 regex 字面量预检（checkRegexLiterals），在 terser/vm.Script 之前先拦截不完整 regex
- *   - extractMainBody 增强：模板字符串内表达式未闭合时，截断到最后一个完整 \` 边界做 fallback
- *   - hasVerifyPattern 放宽：支持内联 verify模式（body 内出现 `{ ok: ..., feedback: ... }`）
+ * v15 变更：
+ *   - reAct 消息结构不再强制变量名必须是 messages
+ *   - 接受 const / let / var 声明
+ *   - 接受单引号、双引号、反引号字符串
+ *   - 接受 role: 'user' / role: "user" / role: `user`
+ *   - 接受 push / assignment / concat 等等价消息追加形式
+ *   - 保留循环、LLM 调用、verify、continue、末轮降级检查
  */
 
 import type { FlowNode } from "../../types.js";
@@ -38,7 +41,7 @@ export async function verifyFunctionPlan(
         return { valid: false, feedback };
     }
 
-    // ── 0.裸 regex 预检（先于 terser/vm.Script） ──
+    // ── 0.裸 regex 预检 ──
     const regexCheck = checkRegexLiterals(code);
     if (!regexCheck.ok) {
         feedback.push({
@@ -48,7 +51,7 @@ export async function verifyFunctionPlan(
         return { valid: false, feedback };
     }
 
-    // ── 1. 编译（terser + vm.Script） ──
+    // ── 1. 编译 ──
     const comp = await checkCompilation(code);
     if (!comp.terserOk) {
         feedback.push({
@@ -66,16 +69,18 @@ export async function verifyFunctionPlan(
 
     const stripped = stripComments(code);
 
-    // ── 2. 结构约束 ──
-
-    // 2.1 main 函数存在 & 签名正确（双参）
+    // ── 2.1 main 签名 ──
     if (!/async\s+function\s+main\s*\(/.test(stripped)) {
         feedback.push({ kind: "structure", msg: "必须包含 `async function main(...)` 定义。" });
     }
+
     const mainSig = stripped.match(/async\s+function\s+main\s*\(([^)]*)\)/);
     if (mainSig) {
         const params = mainSig[1].trim();
-        const paramCount = params ? params.split(",").filter((p) => p.trim().length > 0).length : 0;
+        const paramCount = params
+            ? params.split(",").filter((p) => p.trim().length > 0).length
+            : 0;
+
         if (paramCount !== 2) {
             feedback.push({
                 kind: "structure",
@@ -84,7 +89,7 @@ export async function verifyFunctionPlan(
         }
     }
 
-    // 2.2 main 体含 return { ... }
+    // ── 2.2 main 内容和 reAct 结构 ──
     const mainBody = extractMainBody(stripped);
     if (!mainBody) {
         feedback.push({
@@ -99,17 +104,26 @@ export async function verifyFunctionPlan(
             });
         }
 
-        // 2.3 reAct 三段式
         const hasReAct = verifyReActShape(mainBody, stripped);
         if (!hasReAct.ok) {
             feedback.push({
                 kind: "structure",
                 msg: `reAct 结构不完整：${hasReAct.missing.join("；")}。\n` +
-                    "必须包含：const messages = [{role: 'user', ...}] + for 循环 + 主思考 llm.generate({instructions, messages}) + verify 函数（返回 {ok, feedback}）+ 反馈 continue + return。",
+                    "必须包含：限次循环 + 主思考 llm.generate({instructions, messages}) + user 消息 + assistant 消息 + verify 函数（返回 {ok, feedback}）+ 反馈 continue + return。",
             });
         }
 
-        // 2.4 命名引用
+        const hasLastRoundBypass = verifyLastRoundBypass(mainBody);
+        if (!hasLastRoundBypass.ok) {
+            feedback.push({
+                kind: "structure",
+                msg: `reAct 末轮降级缺失：${hasLastRoundBypass.missing.join("；")}。\n` +
+                    "必须在循环最后一轮（无论用 `round === MAX - 1`、`i === 5`、`round >= N - 1` 哪种写法）" +
+                    "先于 verify 直接 `return { <outputKey>: text, ... };`。\n" +
+                    "这是工程韧性保证——防止 verify instruction 本身有缺陷时无限循环。",
+            });
+        }
+
         for (const inp of declaredInputs) {
             if (!stripped.includes(inp)) {
                 feedback.push({
@@ -118,6 +132,7 @@ export async function verifyFunctionPlan(
                 });
             }
         }
+
         for (const out of declaredOutputs) {
             if (!stripped.includes(out)) {
                 feedback.push({
@@ -132,14 +147,31 @@ export async function verifyFunctionPlan(
         feedback.push({ kind: "structure", msg: `api_kind 值不合法：${plan.apiKind}。` });
     }
 
-    // ── 3. API & globals 合规 ──
-    const allowedToolNames = new Set(catalog.tools.map((t) => t.signature.split(".")[1]));
-    const allowedLlmNames = new Set(["generate", "streamGenerate", "safefmt", "Output"]);
+    // ── 2.3 verify 函数必须 async ──
+    const verifyAsyncCheck = verifyFunctionsAreAsync(stripped);
+    if (!verifyAsyncCheck.ok) {
+        feedback.push({
+            kind: "structure",
+            msg: verifyAsyncCheck.message,
+        });
+    }
+
+    // ── 3. API 与全局对象合规 ──
+    const allowedToolNames = new Set(
+        catalog.tools.map((t) => t.signature.split(".")[1]),
+    );
+    const allowedLlmNames = new Set([
+        "generate",
+        "streamGenerate",
+        "safefmt",
+        "Output",
+    ]);
 
     const usageMatches = [...stripped.matchAll(API_NAME_RE)];
     for (const m of usageMatches) {
         const ns = m[1];
         const name = m[2];
+
         if (ns === "llm") {
             if (!allowedLlmNames.has(name)) {
                 feedback.push({
@@ -151,8 +183,7 @@ export async function verifyFunctionPlan(
             if (!allowedToolNames.has(name)) {
                 feedback.push({
                     kind: "api",
-                    msg: `调用了 tool.${name}——本任务可用工具：${allowedToolNames.size > 0 ? `[${[...allowedToolNames].join(", ")}]` : "（无）"
-                        }。`,
+                    msg: `调用了 tool.${name}——本任务可用工具：${allowedToolNames.size > 0 ? `[${[...allowedToolNames].join(", ")}]` : "（无）"}。`,
                 });
             }
         }
@@ -172,7 +203,6 @@ export async function verifyFunctionPlan(
         });
     }
 
-    // pMap 并发数硬约束
     const pMapUsages = [...code.matchAll(/pMap\s*\([^)]*\)/g)];
     for (const u of pMapUsages) {
         if (!/concurrency\s*:\s*\d+/.test(u[0])) {
@@ -181,6 +211,7 @@ export async function verifyFunctionPlan(
                 msg: "pMap 调用必须显式给出 concurrency 选项（如 { concurrency: 8 }）。",
             });
         }
+
         const cm = u[0].match(/concurrency\s*:\s*(\d+)/);
         if (cm && cm[1] !== "8") {
             feedback.push({
@@ -191,67 +222,217 @@ export async function verifyFunctionPlan(
     }
 
     return {
-        valid: !feedback.some((f) => f.kind === "compilation" || f.kind === "structure" || f.kind === "api"),
+        valid: !feedback.some(
+            (f) =>
+                f.kind === "compilation" ||
+                f.kind === "structure" ||
+                f.kind === "api",
+        ),
         feedback,
     };
 }
 
 // ════════════════════════════════════════════════════════════════
-// reAct 形态校验
+// reAct 结构检查
 // ════════════════════════════════════════════════════════════════
 
-function verifyReActShape(body: string, fullCode: string): { ok: boolean; missing: string[] } {
+function verifyReActShape(
+    body: string,
+    fullCode: string,
+): { ok: boolean; missing: string[] } {
     const checks: [() => boolean, string][] = [
         [
-            () => /const\s+messages\s*=/.test(body) && /role\s*:\s*['"`]user['"`]/.test(body),
-            "const messages = [...]包含 role: 'user'",
+            () => hasUserMessage(body),
+            "包含 role: 'user' 的用户消息",
         ],
         [
-            () => /for\s*\(\s*let\s+\w+\s*=\s*0\s*;\s*\w+\s*<\s*\d+\s*;\s*\w+\+\+\s*\)/.test(body),
-            "for (let round = 0; round < N; round++) 循环",
+            () => hasIterationLoop(body),
+            "for/while 限次循环",
         ],
         [
             () => /await\s+llm\.generate\s*\(/.test(body),
             "await llm.generate(...) 主思考",
         ],
         [
-            () => /messages\.push\s*\(/.test(body) && /role\s*:\s*['"`]assistant['"`]/.test(body),
-            "messages.push({role: 'assistant', ...}) 追加主思考",
+            () => hasAssistantMessage(body),
+            "追加或记录 role: 'assistant' 的主思考结果",
         ],
         [
             () => hasVerifyPattern(body, fullCode),
             "verify 函数（返回 {ok, feedback} 并驱动 continue）",
         ],
     ];
+
     const missing: string[] = [];
     for (const [check, desc] of checks) {
-        if (!check()) missing.push(`缺 ${desc}`);
+        if (!check()) {
+            missing.push(`缺 ${desc}`);
+        }
     }
-    return { ok: missing.length === 0, missing };
+
+    return {
+        ok: missing.length === 0,
+        missing,
+    };
 }
 
 /**
- * 检测 verify 模式是否存在。
+ * 判断是否包含用户消息。
+ *
+ * 接受：
+ *   const messages = [{ role: "user", content: ... }];
+ *   let history = [{ role: "user", content: ... }];
+ *   messages.push({ role: "user", content: ... });
+ *   history = [...history, { role: "user", content: ... }];
+ *
+ * 不再要求变量名必须是 messages。
  */
-function hasVerifyPattern(body: string, fullCode: string): boolean {
-    // 模式1：if (!v.ok) { ... continue }
-    if (/if\s*\(\s*![\w.]+\.ok\s*\)/.test(body) && /\bcontinue\b/.test(body)) {
+function hasUserMessage(body: string): boolean {
+    const userRole = /role\s*:\s*['"`]user['"`]/i;
+    return userRole.test(body);
+}
+
+/**
+ * 判断是否包含 assistant 消息。
+ *
+ * 接受：
+ *   messages.push({ role: "assistant", content: text });
+ *   history = [...history, { role: "assistant", content: result.text }];
+ *   const assistantMessage = { role: "assistant", content: text };
+ */
+function hasAssistantMessage(body: string): boolean {
+    const assistantRole = /role\s*:\s*['"`]assistant['"`]/i;
+    return assistantRole.test(body);
+}
+
+/**
+ * 检测限次循环。
+ *
+ * 接受：
+ *   for (...; i < N; ...)
+ *   for (...; attempt <= 5; ...)
+ *   while (round < MAX)
+ *   while (attempts !== 6)
+ */
+function hasIterationLoop(body: string): boolean {
+    if (
+        /for\s*\([^;]*;\s*\w+\s*(?:<|<=|!==|>=)\s*[^;]+;[^)]*\)/.test(
+            body,
+        )
+    ) {
         return true;
     }
 
-    // 模式2：全代码中定义了 verify 函数，且 main 体中调用了
-    const hasVerifyDef = /(?:async\s+)?function\s+verify\w*\s*\(/.test(fullCode);
-    const hasVerifyCall = /await\s+verify\w*\s*\(/.test(body);
-    if (hasVerifyDef && hasVerifyCall) {
-        return true;
-    }
-
-    // 模式3：内联 verify——body 内直接出现 { ok: ..., feedback: ... } + continue
-    if (/\{\s*ok\s*:/.test(body) && /feedback\s*:/.test(body) && /\bcontinue\b/.test(body)) {
+    if (
+        /while\s*\(\s*\w+\s*(?:<|<=|!==|>=)\s*[^)]+\)/.test(
+            body,
+        )
+    ) {
         return true;
     }
 
     return false;
+}
+
+/**
+ * 检测 verify 模式。
+ */
+function hasVerifyPattern(body: string, fullCode: string): boolean {
+    if (
+        /if\s*\(\s*![\w.]+\.ok\s*\)/.test(body) &&
+        /\bcontinue\b/.test(body)
+    ) {
+        return true;
+    }
+
+    const hasVerifyDef =
+        /(?:async\s+)?function\s+verify\w*\s*\(/.test(fullCode);
+    const hasVerifyCall = /await\s+verify\w*\s*\(/.test(body);
+
+    if (hasVerifyDef && hasVerifyCall) {
+        return true;
+    }
+
+    if (
+        /\{\s*ok\s*:/.test(body) &&
+        /feedback\s*:/.test(body) &&
+        /\bcontinue\b/.test(body)
+    ) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * 检测 verify 函数是否为 async。
+ */
+function verifyFunctionsAreAsync(
+    code: string,
+): { ok: boolean; message: string } {
+    const nonAsyncVerify =
+        /(?<!async\s)function\s+(verify\w*)\s*\(/g;
+    const matches = [...code.matchAll(nonAsyncVerify)];
+
+    if (matches.length > 0) {
+        const names = matches.map((m) => m[1]).join("、");
+        return {
+            ok: false,
+            message:
+                `verify 函数「${names}」必须声明为 async function——` +
+                "verify 内部需要调用 await llm.generate()，非 async 函数会导致运行时错误。",
+        };
+    }
+
+    return {
+        ok: true,
+        message: "",
+    };
+}
+
+// ════════════════════════════════════════════════════════════════
+// 末轮降级检查
+// ════════════════════════════════════════════════════════════════
+
+function verifyLastRoundBypass(
+    body: string,
+): { ok: boolean; missing: string[] } {
+    const missing: string[] = [];
+
+    const hasLastReturn =
+        /if\s*\([^)]*\)[\s\S]*?return\s*\{[\s\S]*?\}\s*;?/.test(
+            body,
+        );
+
+    if (!hasLastReturn) {
+        missing.push(
+            "缺 if (...) { return { <outputKey>: text, ... }; } 早返回分支",
+        );
+        return {
+            ok: false,
+            missing,
+        };
+    }
+
+    const hasNumericCondition =
+        /if\s*\(\s*[^)]*\w+\s*(?:===|!==|>=|<=|>|<)\s*[^)]*\)/.test(
+            body,
+        );
+
+    if (!hasNumericCondition) {
+        missing.push(
+            "早返回分支的条件必须涉及某种数值比较（===、>=、<= 等）",
+        );
+        return {
+            ok: false,
+            missing,
+        };
+    }
+
+    return {
+        ok: true,
+        missing: [],
+    };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -261,6 +442,7 @@ function hasVerifyPattern(body: string, fullCode: string): boolean {
 function stripComments(code: string): string {
     let result = "";
     let i = 0;
+
     while (i < code.length) {
         const ch = code[i];
 
@@ -293,20 +475,23 @@ function stripComments(code: string): string {
         result += ch;
         i++;
     }
+
     return result;
 }
 
-/**
- * 提取 main 函数体。
- * v10 改进：模板字符串内表达式未闭合时，尝试截断到最后一个完整反引号边界，
- * 仍失败才返回 null。
- */
 function extractMainBody(code: string): string | null {
-    const m = code.match(/async\s+function\s+main\s*\([^)]*\)\s*\{/);
-    if (!m) return null;
+    const m = code.match(
+        /async\s+function\s+main\s*\([^)]*\)\s*\{/,
+    );
+
+    if (!m) {
+        return null;
+    }
+
     const start = m.index! + m[0].length;
     let depth = 1;
     let i = start;
+
     while (i < code.length && depth > 0) {
         const ch = code[i];
 
@@ -314,17 +499,15 @@ function extractMainBody(code: string): string | null {
             i = scanSimpleString(code, i);
             continue;
         }
+
         if (ch === "`") {
             const end = scanTemplateString(code, i);
             if (end > code.length - 1) {
-                // 模板字符串未闭合——回退：截断到最后一个完整的 `边界
                 const lastBacktick = code.lastIndexOf("`", i + 1);
                 if (lastBacktick > start) {
-                    // 继续扫描截断后的部分
                     i = lastBacktick + 1;
                     continue;
                 }
-                // 实在没法——返回截断 body（避免直接 null）
                 return code.slice(start, i);
             }
             i = end;
@@ -336,30 +519,46 @@ function extractMainBody(code: string): string | null {
         } else if (ch === "}") {
             depth--;
         }
+
         i++;
     }
-    if (depth !== 0) return null;
+
+    if (depth !== 0) {
+        return null;
+    }
+
     return code.slice(start, i - 1);
 }
 
-function scanSimpleString(code: string, start: number): number {
+function scanSimpleString(
+    code: string,
+    start: number,
+): number {
     const quote = code[start];
     let i = start + 1;
+
     while (i < code.length) {
         if (code[i] === "\\") {
             i += 2;
             continue;
         }
+
         if (code[i] === quote) {
             return i + 1;
         }
+
         i++;
     }
+
     return i;
 }
 
-function scanTemplateString(code: string, start: number): number {
+function scanTemplateString(
+    code: string,
+    start: number,
+): number {
     let i = start + 1;
+
     while (i < code.length) {
         const ch = code[i];
 
@@ -375,12 +574,15 @@ function scanTemplateString(code: string, start: number): number {
         if (ch === "$" && i + 1 < code.length && code[i + 1] === "{") {
             i += 2;
             let exprDepth = 1;
+
             while (i < code.length && exprDepth > 0) {
                 const ec = code[i];
+
                 if (ec === "\\") {
                     i += 2;
                     continue;
                 }
+
                 if (ec === "{") {
                     exprDepth++;
                     i++;
@@ -399,11 +601,13 @@ function scanTemplateString(code: string, start: number): number {
                     i++;
                 }
             }
+
             continue;
         }
 
         i++;
     }
+
     return i;
 }
 
@@ -411,57 +615,95 @@ function scanTemplateString(code: string, start: number): number {
 // 错误位置 / 并行提示
 // ════════════════════════════════════════════════════════════════
 
-function formatSyntaxError(raw: string | undefined): string {
-    if (!raw) return "(空)";
+function formatSyntaxError(
+    raw: string | undefined,
+): string {
+    if (!raw) {
+        return "(空)";
+    }
+
     const m = raw.match(TERSER_LOC_RE);
+
     if (m) {
         const line = m[1] ?? m[3];
         const col = m[2] ?? m[4];
         return `${raw}（行 ${line} 列 ${col}）`;
     }
+
     return raw;
 }
 
-export function detectParallelism(code: string): ParallelismHint {
+export function detectParallelism(
+    code: string,
+): ParallelismHint {
     const mainBody = extractMainBody(stripComments(code));
+
     if (!mainBody) {
-        return { kind: "sequential", parallelGroups: [], note: "main 函数体无法解析，跳过并行判定。" };
+        return {
+            kind: "sequential",
+            parallelGroups: [],
+            note: "main 函数体无法解析，跳过并行判定。",
+        };
     }
 
     const awaits: { expr: string }[] = [];
     const lines = mainBody.split("\n");
     let depth = 0;
+
     for (let i = 0; i < lines.length; i++) {
         const ln = lines[i];
         const opens = (ln.match(/\{/g) ?? []).length;
         const closes = (ln.match(/\}/g) ?? []).length;
         depth += opens - closes;
-        const m = ln.match(/^\s*(?:const\s+(\w+)\s*=\s*)?await\s+([^\n;]+)/);
+
+        const m = ln.match(
+            /^\s*(?:const\s+(\w+)\s*=\s*)?await\s+([^\n;]+)/,
+        );
+
         if (m && depth <= 1) {
-            awaits.push({ expr: m[2].trim() });
+            awaits.push({
+                expr: m[2].trim(),
+            });
         }
     }
 
     if (awaits.length < 2) {
-        return { kind: "sequential", parallelGroups: [], note: "独立 await 数 < 2，无需并行优化。" };
+        return {
+            kind: "sequential",
+            parallelGroups: [],
+            note: "独立 await 数 < 2，无需并行优化。",
+        };
     }
 
     const parallelGroups: string[][] = [];
     let current: string[] = [];
+
     for (let i = 0; i < awaits.length; i++) {
         const cur = awaits[i];
         current.push(cur.expr);
+
         const referenced = awaits
             .slice(i + 1)
-            .some((later) => later.expr.includes(cur.expr.split("(")[0].trim()));
+            .some((later) =>
+                later.expr.includes(
+                    cur.expr.split("(")[0].trim(),
+                ),
+            );
+
         if (!referenced) {
             parallelGroups.push([...current]);
             current = [];
         }
     }
-    if (current.length > 0) parallelGroups.push(current);
 
-    if (parallelGroups.length >= 1 && parallelGroups.some((g) => g.length >= 2)) {
+    if (current.length > 0) {
+        parallelGroups.push(current);
+    }
+
+    if (
+        parallelGroups.length >= 1 &&
+        parallelGroups.some((g) => g.length >= 2)
+    ) {
         return {
             kind: "partial",
             parallelGroups,
@@ -469,5 +711,9 @@ export function detectParallelism(code: string): ParallelismHint {
         };
     }
 
-    return { kind: "sequential", parallelGroups: [], note: "await 间存在数据依赖，保持串行。" };
+    return {
+        kind: "sequential",
+        parallelGroups: [],
+        note: "await 间存在数据依赖，保持串行。",
+    };
 }

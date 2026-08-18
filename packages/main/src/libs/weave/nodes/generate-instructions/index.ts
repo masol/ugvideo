@@ -1,9 +1,9 @@
 /**
  * weaver · node ④ generate-instructions
  *
- * v6 变更：
- * - KV key 改为 <nodeId>:<instructionId>（保证全局唯一，无覆盖风险）
- * - index 值存 <nodeId>:<instructionId> 组合
+ * v7 变更：
+ * - 新增落盘 instruction分类信息（reviewer / writer / extractor / generic）
+ * - 分类信息供 dump 阶段识别 reviewer，追加 __PASS__ 输出协议
  */
 
 import { checkExpiry } from "$libs/blueprint/glossary/expiry.js";
@@ -11,7 +11,7 @@ import { configService } from "$libs/store/index.js";
 import pMap from "p-map";
 import type { WeaveContext } from "../../context.js";
 import type { ArtifactRelation, HumanNode } from "../../types.js";
-import { generateInstruction } from "./prompt-generator.js";
+import { classifyInstructionForStorage, generateInstruction } from "./prompt-generator.js";
 
 export async function generateInstructions(ctx: WeaveContext): Promise<void> {
     const store = ctx.storage.workflow;
@@ -105,9 +105,12 @@ export async function generateInstructions(ctx: WeaveContext): Promise<void> {
         async (ictx) => {
             const content = await generateInstruction(ctx, ictx);
             store.saveGeneratedInstruction(ictx.compositeKey, content);
+            // v7 新增：落盘分类信息（dump 阶段据此决定是否追加输出协议）
+            const category = classifyInstructionForStorage(ictx.id);
+            store.saveInstructionClassification(ictx.compositeKey, category.kind);
             completedKeys.push(ictx.compositeKey);
             ctx.ctx.info(
-                `[generateInstructions] 已生成「${ictx.compositeKey}」(${content.length} 字)`,
+                `[generateInstructions] 已生成「${ictx.compositeKey}」(${content.length} 字，类别=${category.kind})`,
             );
         },
         { concurrency, stopOnError: false },
