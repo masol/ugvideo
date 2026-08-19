@@ -1,14 +1,22 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
- * weaver · parse · 提取入口（v6.4）
+ * weaver · parse · 提取入口（v6.9）
  *
- * 变更（v6.4）：
- * - 终产物判定改为基于步骤 order（而非 DAG 拓扑结构）
- * - 终产物 = 由 order 最大的步骤产出的 artifact
- * - 这些 artifact 不视为"死产物"，无需下游消费
+ * 变更（v6.9）：
+ * - 【修复反馈回灌死循环】section 修补分支（repair.changed=true）此前只把 allGlobal
+ *   回灌给下一轮 semanticRefine，而当阻断源全部是 step 级问题时 allGlobal 为空，
+ *   导致下一轮 semanticRefine 收到空反馈、不知要改什么，LLM 自由重整理后同样问题
+ *   复现 —— reAct 空转到耗尽（实测微信长文工作流 4 轮全空转失败）。
+ *   现修复为：无论是否走 section 修补，都把 step 级反馈 + global 反馈一并回灌，
+ *   确保 semanticRefine 始终带着"要改什么"的完整信息前进。
+ *
+ * 变更（v6.8）：可观测性增强（保留）。
+ * 变更（v6.7）：死产物不阻断，降级为 build-flow 告警；保留 orphans 阻断。
+ * 变更（v6.5）：semanticRefine 的 messages 在 reAct 轮次间正确透传。
  */
 
 import { safefmt } from "$libs/model/llm/outline.js";
+import type { ModelMessage } from "ai";
 import { Output } from "ai";
 import { z } from "zod";
 import type { WeaveContext } from "../../context.js";
@@ -91,8 +99,10 @@ export async function extractWorkflow(
     const maxRounds = ctx.storage.config.getMaxReactRounds();
     let lastFeedback: string[] = [];
     let workingDoc: string = doc;
+    let messages: ModelMessage[] | undefined = undefined;
 
     for (let round = 0; round < maxRounds; round++) {
+        const roundTag = `doc ${docIndex + 1} round ${round + 1}`;
         ctx.ctx.notify(
             "extract",
             `doc ${docIndex + 1} 第 ${round + 1}/${maxRounds} 轮：语义整理`,
@@ -105,14 +115,15 @@ export async function extractWorkflow(
             options.constraints ?? null,
             options.preferences ?? null,
             lastFeedback,
-            undefined,
+            messages,
             options.frozenNames ?? null,
         );
         const semanticDoc = refine.doc;
+        messages = refine.messages;
         workingDoc = semanticDoc;
 
         ctx.ctx.info?.(
-            `[extract] doc ${docIndex + 1} round ${round + 1} 语义整理完成，长度 ${semanticDoc.length}`,
+            `[extract] ${roundTag} 语义整理完成，长度 ${semanticDoc.length}`,
         );
 
         const extracted = await extractStructured(ctx, semanticDoc);
@@ -166,8 +177,8 @@ export async function extractWorkflow(
         }
         if (structuralOnly.length > 0) {
             ctx.ctx.info?.(
-                `[extract] doc ${docIndex + 1} round ${round + 1} structural错误（不可由语义整理修复）：` +
-                structuralOnly.map((e) => e.message).join("；"),
+                `[extract] ${roundTag} structural错误（不可由语义整理修复）：` +
+                structuralOnly.map((e) => `[${e.kind}] ${e.message}`).join("；"),
             );
         }
 
@@ -188,34 +199,49 @@ export async function extractWorkflow(
             }
             : { orphans: [], dead: [], total: 0 };
 
+        // ── 可观测性：打印本轮所有阻断源原文 ──
+        ctx.ctx.info?.(
+            `[extract] ${roundTag} 阻断源统计：` +
+            `stepFixable=${stepFixable.length} ` +
+            `actionIssues=${actionIssues.length} ` +
+            `orphans=${artifactReport.orphans.length} ` +
+            `dead(仅告警不阻断)=${artifactReport.dead.length}`,
+        );
+        if (stepFixable.length > 0) {
+            ctx.ctx.info?.(
+                `[extract] ${roundTag} stepFixable 明细：\n` +
+                stepFixable
+                    .map((e, i) => `  ${i + 1}. [kind=${e.kind}] [nodeId=${e.nodeId ?? "—"}] ${e.message}`)
+                    .join("\n"),
+            );
+        }
+        if (actionIssues.length > 0) {
+            ctx.ctx.info?.(
+                `[extract] ${roundTag} actionIssues 明细：\n` +
+                actionIssues.map((m, i) => `  ${i + 1}. ${m}`).join("\n"),
+            );
+        }
+        if (artifactReport.orphans.length > 0) {
+            ctx.ctx.info?.(
+                `[extract] ${roundTag} orphans 明细：\n` +
+                artifactReport.orphans
+                    .map((o, i) => `  ${i + 1}. 「${o.name}」被 [${o.consumedBy.join(", ")}] 消费但无人产出`)
+                    .join("\n"),
+            );
+        }
+
         if (warnings.length > 0) {
             ctx.ctx.info?.(
-                `[extract] doc ${docIndex + 1} round ${round + 1} 警告：${warnings.map((w) => w.message).join("；")}`,
+                `[extract] ${roundTag} 警告：${warnings.map((w) => w.message).join("；")}`,
             );
         }
 
         // ══════════════════════════════════════════════════════════════
-        // 通用规则：终产物判定
-        //
-        // 终产物 = 由 order 最大的步骤产出的 artifact
-        // 这些 artifact 是工作流的最终交付物，天然无需下游消费
-        // 判定依据是"步骤顺序"，而非"DAG 拓扑"——这样拓扑补全不会干扰判定
-        // �═════════════════════════════════════════════════════════════
-        const terminalArtifactNames = new Set<string>();
-        const maxOrder = cached.nodes.reduce((m, n) => Math.max(m, n.order), 0);
-        const terminalNodes = cached.nodes.filter((n) => n.order === maxOrder);
-        for (const tn of terminalNodes) {
-            for (const outId of tn.outputs) terminalArtifactNames.add(outId);
-        }
-
-        const genuineDeadArtifacts = artifactReport.dead.filter(
-            (d) => !terminalArtifactNames.has(d.name),
-        );
-
+        // 通过条件：仅 stepFixable / orphans / actionIssues 三类阻断，死产物不阻断。
+        // ══════════════════════════════════════════════════════════════
         if (
             stepFixable.length === 0 &&
             artifactReport.orphans.length === 0 &&
-            genuineDeadArtifacts.length === 0 &&
             actionIssues.length === 0
         ) {
             const names = collectArtifactNames(cached);
@@ -233,14 +259,36 @@ export async function extractWorkflow(
             return { flow, standardDoc, cached, artifactReport };
         }
 
-        // ── 反馈 ──
+        // ── 组织反馈 ──
         const bucketed = bucketFeedbacksByStep(stepFixable, actionIssues);
-        const artifactFeedback = formatArtifactFeedback({
-            ...artifactReport,
-            dead: genuineDeadArtifacts,
-            nodes: cached.nodes,
-        });
+        const artifactFeedback = formatArtifactFeedback(artifactReport);
         const allGlobal = [...bucketed.global, ...artifactFeedback];
+
+        // 完整反馈 = 所有 step 级反馈 + 所有 global 反馈。
+        // 无论是否走 section 修补，都用它回灌 semanticRefine —— 这是本版核心修复：
+        // 此前 section 修补分支只回灌 allGlobal，当阻断全是 step 级时为空，导致空转。
+        const fullFeedback = [
+            ...bucketed.stepTargets.flatMap((t) => t.feedbacks),
+            ...allGlobal,
+        ];
+
+        // ── 可观测性 ──
+        ctx.ctx.info?.(
+            `[extract] ${roundTag} bucket 结果：stepTargets=${bucketed.stepTargets.length} ` +
+            `global=${allGlobal.length} fullFeedback=${fullFeedback.length}`,
+        );
+        for (const t of bucketed.stepTargets) {
+            ctx.ctx.info?.(
+                `[extract] ${roundTag} stepTarget「${t.stepName}」的反馈：\n` +
+                t.feedbacks.map((f, i) => `    ${i + 1}. ${f}`).join("\n"),
+            );
+        }
+        if (allGlobal.length > 0) {
+            ctx.ctx.info?.(
+                `[extract] ${roundTag} global 反馈：\n` +
+                allGlobal.map((f, i) => `    ${i + 1}. ${f}`).join("\n"),
+            );
+        }
 
         const repair = await repairSectionsByLLM(
             ctx,
@@ -254,14 +302,19 @@ export async function extractWorkflow(
                 `doc ${docIndex + 1} 第 ${round + 1} 轮：section修补${bucketed.stepTargets.length} 个步骤，重新抽取`,
             );
             workingDoc = repair.doc;
-            lastFeedback = allGlobal;
+            // 修复：section 修补后仍回灌完整反馈（含 step 级），避免下一轮空转。
+            lastFeedback = fullFeedback;
+            ctx.ctx.info?.(
+                `[extract] ${roundTag} section 已修补，回灌完整反馈 ${fullFeedback.length} 条`,
+            );
             continue;
         }
 
-        lastFeedback = [
-            ...bucketed.stepTargets.flatMap((t) => t.feedbacks),
-            ...allGlobal,
-        ];
+        lastFeedback = fullFeedback;
+        ctx.ctx.info?.(
+            `[extract] ${roundTag} section 未产生变更，回灌 lastFeedback 全文：\n` +
+            lastFeedback.map((f, i) => `  ${i + 1}. ${f}`).join("\n"),
+        );
         ctx.ctx.notify(
             "extract",
             `doc ${docIndex + 1} 第 ${round + 1} 轮：${lastFeedback.length} 条反馈回灌语义整理`,
@@ -269,7 +322,10 @@ export async function extractWorkflow(
     }
 
     throw new Error(
-        `[extract] doc ${docIndex} 经${maxRounds} 轮reAct 仍未通过验证：\n${lastFeedback.join("\n")}`,
+        `[extract] doc ${docIndex} 经${maxRounds} 轮reAct 仍未通过验证。最后一轮反馈：\n` +
+        (lastFeedback.length > 0
+            ? lastFeedback.map((f, i) => `${i + 1}. ${f}`).join("\n")
+            : "（lastFeedback 为空，请检查上方各轮 stepFixable/actionIssues 明细日志）"),
     );
 }
 
@@ -420,48 +476,19 @@ function collectArtifactNames(cached: CachedWorkflow): string[] {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// 反馈格式化
+// 反馈格式化（仅 orphans，死产物不进反馈）
 // ══════════════════════════════════════════════════════════════════
 
-function formatArtifactFeedback(
-    report: ArtifactReport & { nodes?: ParsedNode[] },
-): string[] {
+function formatArtifactFeedback(report: ArtifactReport): string[] {
     const lines: string[] = [];
 
     if (report.orphans.length > 0) {
         lines.push(
             `[DAG验证] 以下产物被消费但无任何步骤产出（孤儿）：${report.orphans
                 .map((o) => `「${o.name}」被[${o.consumedBy.join(", ")}] 消费`)
-                .join("、")}。请检查：是否漏写了产出该产物的步骤？或该产物本应作为全局输入/配置项？`,
-        );
-    }
-
-    if (report.dead.length > 0) {
-        const nodes = report.nodes ?? [];
-        const suggestions = report.dead.map((d) => {
-            const producer = nodes.find((n) => n.name === d.producedBy);
-            const producerOrder = producer?.order ?? 0;
-            const downstreamCandidates = nodes
-                .filter((n) => n.order > producerOrder)
-                .map((n) => n.name)
-                .slice(0, 3);
-
-            return (
-                `「${d.name}」由步骤 [${d.producedBy}] 产出但无任何下游步骤在 inputs 中引用。` +
-                `建议：在后续步骤（${downstreamCandidates.join("、") || "无合适候选"}）的「输入」中显式添加 \`${d.name}\`，` +
-                `并在「动作」段描述如何使用。如果该 artifact 确实不应被任何下游消费（如最终交付物），` +
-                `请确认它出现在工作流输出登记中；如果是临时草稿可丢弃，请从产出步骤的 outputs 中移除该 artifact 名。`
-            );
-        });
-
-        lines.push(
-            `[DAG验证] 以下产物被产出但无任何步骤消费（死产物）：\n${suggestions
-                .map((s, i) => `${i + 1}. ${s}`)
-                .join("\n")}\n` +
-            `死产物意味着图中缺少消费该产物的依赖边。请逐条按上述建议修正：\n` +
-            `(a) 在下游合适步骤的「输入」中显式列出该 artifact；\n` +
-            `(b) 若该产物是工作流的最终交付物，请在工作流输出中登记；\n` +
-            `(c) 若该产物确无用途，从产出步骤的 outputs 中移除。`,
+                .join("、")}。请检查：是否漏写了产出该产物的步骤？或该产物本应作为全局输入/配置项？` +
+            `另外请特别检查：是否因为同一产物在上游步骤产出时用了不同的名字（拼写/用词不一致），` +
+            `导致下游引用的名字找不到对应产出——若是，请统一为完全一致的名称。`,
         );
     }
 

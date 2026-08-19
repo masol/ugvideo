@@ -1,17 +1,30 @@
 /**
- * weaver · parse · 动作完整性 + 输入自洽性校验
+ * weaver · parse · 动作完整性校验（v2）
  *
- * 两个方向的校验（均以反馈驱动 reAct 自我修正，非硬失败）：
+ * 变更（v2）：删除"反向输入自洽"检查。
  *
- * 1. 前向（原有）：action 中反引号提及的产物名，若未在该步骤 inputs/outputs 或全局输入中
- *    声明，则报告——防止漏声明。
+ *   为什么删：
+ *   实测证据（微信长文工作流，4 轮 reAct 全部因它失败）表明，原反向检查
+ *   「步骤声明的输入若未在动作文本中逐字出现则报错」存在两个致命问题：
  *
- * 2. 反向（新增）：该步骤声明的 inputs 若未在 action 文本中出现，则报告——把每个步骤视作
- *    一个"函数"，声明的入参必须被真正使用；未使用的输入应删除或在动作中体现如何使用。
- *    这直接命中"通用写作常识/个人经验储备被声明却从未使用"这类不自洽问题。
+ *   1. 前提不成立：自然语言中"使用一个输入"根本不要求逐字复述其名称
+ *      （动作写"基于骨架展开"，输入名叫"文章骨架"，语义上已使用，但子串
+ *      匹配判定为"未引用"）。用文本子串匹配判定"是否使用"必然大量误报。
  *
- * 注意：两个方向都基于文本约定（反引号 / 名称出现）。若模型偶发未按约定书写会有误报，
- * 但反馈进入 reAct 循环让模型自查修正，代价可控。
+ *   2. 与前向检查死锁：前向要求"动作里反引号提及的名字必须已声明"，反向
+ *      要求"声明的输入必须在动作里出现"。LLM 为满足反向而在动作里补写输入
+ *      名（反引号包裹），又触发前向"提及未声明"。两个检查互斥，LLM 在两者
+ *      间反复横跳，reAct 永不收敛。
+ *
+ *   为什么删它安全（无实质能力损失）：
+ *   - 反向检查想防的是"声明了没用的输入"——这最多是冗余（多读一个 KV），
+ *     不影响 DAG 正确性、不影响生成代码正确性；
+ *   - 真正有害的是反过来"动作用了某上游产物却没声明为输入"（导致 DAG 缺边）——
+ *     这由保留的【前向检查】+ orphans 检查共同兜住，未被放过。
+ *
+ *   保留的前向检查：action 中反引号提及的产物名，若未在该步骤 inputs/outputs
+ *   或全局输入中声明，则报告——防止 DAG 缺边。此方向修复目标明确（把名字加进
+ *   声明），不与其它检查互斥，无死锁风险。
  */
 
 import type { ParsedGlobalInput, ParsedNode } from "./parse-types.js";
@@ -26,7 +39,8 @@ export function checkActionCompleteness(
     for (const node of nodes) {
         const declaredIO = new Set([...node.inputs, ...node.outputs, ...globalNames]);
 
-        // 前向：动作提及但未声明
+        // 前向：动作中反引号提及的产物名，未在本步骤 inputs/outputs 或全局输入中声明 → 报告。
+        // 目的：防止 DAG 缺边（动作用了某产物却没把它声明为输入/输出）。
         const mentions = extractMentions(node.action);
         const missing = mentions.filter((m) => !declaredIO.has(m));
         if (missing.length > 0) {
@@ -35,17 +49,6 @@ export function checkActionCompleteness(
                 `但这些产物未在该步骤的输入/输出或全局输入中声明。` +
                 `请检查：(a) 是否漏写了输入/输出；(b) 是否是内部中间变量（无需声明）；` +
                 `(c) 是否名称不一致（应统一）。`,
-            );
-        }
-
-        // 反向：声明了输入却未在动作中使用
-        const unusedInputs = node.inputs.filter((name) => !actionReferences(node.action, name));
-        if (unusedInputs.length > 0) {
-            issues.push(
-                `[输入自洽] 步骤「${node.name}」声明了输入「${unusedInputs.join("、")}」，` +
-                `但动作段中并未引用它们。把每个步骤当作一个函数：入参必须被真正使用。` +
-                `请二选一修正：(a) 若动作确实需要用到，请在动作中明确写出如何使用（并用反引号引用其名称）；` +
-                `(b) 若并不需要，请从该步骤的输入中移除，保持自洽。`,
             );
         }
     }
@@ -69,10 +72,4 @@ function extractMentions(action: string): string[] {
             if (/^[，。；：、""''（）\s]+$/.test(name)) return false;
             return true;
         });
-}
-
-/** 动作文本是否引用了某个输入名（子串匹配，容忍是否带反引号） */
-function actionReferences(action: string, name: string): boolean {
-    if (!action || !name) return false;
-    return action.includes(name);
 }
