@@ -51,6 +51,7 @@ export const projectActivityDataSchema = z.object({
     icon: z.string(),
     status: z.string().optional(),
     statusText: z.string(),
+    chatMode: z.boolean().optional(),
     /**
      * 需要客户端反向注入的api.
      * 当前有效值只有 "icon"。

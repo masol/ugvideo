@@ -1,5 +1,6 @@
 // src/lib/stores/msg.svelte.ts
 import type { Message } from "$lib/components/markdown/type";
+import { dashboardStore } from "$lib/store/dashboard.svelte";
 import { bottomPanelStore } from "$lib/store/local/bottombar.store.svelte";
 import { projectStore } from "$lib/store/project.svelte";
 import { layoutStore } from "$lib/store/ui/layout.svelte";
@@ -7,22 +8,24 @@ import { safeApi } from "$lib/utils/api";
 import evtbus from "$lib/utils/evtbus";
 import Logger from "electron-log/renderer.js";
 import pTimeout, { TimeoutError } from "p-timeout";
-import { toast } from "svelte-sonner"; // 按你的项目实际 toast 库调整
+import { toast } from "svelte-sonner";
 
 export type ReflectPhase = {
     title: string;
     detail: string;
-} | null;
+};
 
-// 流式事件：阶段更新 or 最终文本（真实场景可再加 token 增量等）
+export type PhaseRecord = ReflectPhase & {
+    id: string;
+    timestamp: Date;
+};
+
 type StreamEvent =
-    | { type: "phase"; phase: NonNullable<ReflectPhase> }
+    | { type: "phase"; phase: ReflectPhase }
     | { type: "text"; text: string };
 
-/** 等待主进程侧确认 seq 对应任务彻底结束的超时时长 */
 const RUNCOMMAND_END_TIMEOUT_MS = 15 * 60 * 1000;
 
-/** 单个 seq 调用的完成态，由 runcommand-end 事件 resolve */
 type SeqDeferred = {
     promise: Promise<boolean>;
     resolve: (suc: boolean) => void;
@@ -44,7 +47,6 @@ class MessageStore {
                 this.#pendingSeqs.delete(seq);
                 pending.resolve(suc);
             } else {
-                // 没有等待者：可能是超时清理后迟到的事件，或异常来源，忽略即可
                 Logger.debug("runcommand-end received with no pending waiter", { suc, seq });
             }
         });
@@ -52,12 +54,11 @@ class MessageStore {
 
     messages = $state<Message[]>([]);
     isLoading = $state(false);
-
-    /** 当前 AI 工作阶段（反思中/生成中），null 表示无 */
-    phase = $state<ReflectPhase>(null);
-
-    /** 是否处于「终止中」——已发出 abort 信号但流尚未结束 */
+    phase = $state<ReflectPhase | null>(null);
     isAborting = $state(false);
+
+    // ✅ 新增：phase 历史记录（归档到消息）
+    phaseHistory = $state<PhaseRecord[]>([]);
 
     hasMessages = $derived(this.messages.length > 0);
     lastMessage = $derived(
@@ -65,12 +66,8 @@ class MessageStore {
     );
 
     #controller: AbortController | null = null;
-    /** 当前运行中的流消费 promise；null 表示空闲 */
     #runPromise: Promise<void> | null = null;
-
-    /** 下一个可用调用序号，单调递增，用于与主进程 runcommand-end 对齐 */
     #nextSeq = 1;
-    /** 等待主进程确认结束的 seq -> deferred 映射 */
     #pendingSeqs = new Map<number, SeqDeferred>();
 
     addMessage(message: Omit<Message, "id" | "timestamp">) {
@@ -85,6 +82,7 @@ class MessageStore {
 
     clear() {
         this.messages = [];
+        this.phaseHistory = [];
     }
 
     deleteMessage(id: string) {
@@ -95,14 +93,33 @@ class MessageStore {
         this.isLoading = loading;
     }
 
+    // ✅ 新增：归档当前 phase 到历史记录
+    #archivePhase() {
+        if (!this.phase) return;
+        const record: PhaseRecord = {
+            ...this.phase,
+            id: crypto?.randomUUID?.() ?? Date.now().toString(),
+            timestamp: new Date(),
+        };
+        this.phaseHistory = [...this.phaseHistory, record];
+    }
+
     /**
-     * 流式消费入口：若已有任务在运行则报错退出；否则启动一轮消费。
-     * 期间可调用 abort() 提前终止。
+     * 流式消费入口：互斥守卫 — 阻止与主控运行并发
      */
     AIResponse(userMessage: string): Promise<void> {
-        // 已有任务在跑 — 直接报错退出，不打断当前任务
         if (this.#runPromise) {
-            toast.error("已有任务正在进行，请等待完成或先终止当前任务");
+            toast.error("已有对话任务正在进行，请等待完成或先终止");
+            return Promise.resolve();
+        }
+
+        if (dashboardStore.runState !== "idle") {
+            toast.error("主控任务正在运行，请等待完成或先终止主控");
+            return Promise.resolve();
+        }
+
+        if (!projectStore.opened) {
+            toast.error("请先打开一个项目");
             return Promise.resolve();
         }
 
@@ -117,20 +134,18 @@ class MessageStore {
         return run;
     }
 
-    /** 内部：真正的流消费主循环 */
     async #run(userMessage: string, signal: AbortSignal): Promise<void> {
-        // 将 stream 提至上层作用域，确保 finally 块可以访问
         let stream: AsyncGenerator<StreamEvent> | null = null;
-
-        // 分配本次调用的 seq，并在发起请求前注册等待者，避免和 runcommand-end 竞态
         const seq = this.#nextSeq++;
         const deferred = createDeferred();
         this.#pendingSeqs.set(seq, deferred);
         let finalText = "";
         let responsed = false;
 
-        try {
+        // ✅ 本轮对话开始时，清空上一轮的 phase 历史（可选：根据产品需求决定是否保留）
+        this.phaseHistory = [];
 
+        try {
             stream = await safeApi().project.runCommand({
                 msg: userMessage,
                 seq,
@@ -139,6 +154,9 @@ class MessageStore {
             for await (const evt of stream) {
                 if (signal.aborted) break;
                 if (evt.type === "phase") {
+                    // ✅ 修复：先归档旧 phase，再更新新 phase
+                    this.#archivePhase();
+
                     if (evt.phase.title === 'error') {
                         this.addMessage({
                             role: "assistant",
@@ -146,31 +164,25 @@ class MessageStore {
                             content: evt.phase.detail,
                         });
                         responsed = true;
+                        this.phase = null;
+                    } else if (evt.phase.title === "show-asset") {
+                        projectStore.mediaURL = evt.phase.detail;
+                        layoutStore.openPanel("bottom");
+                        bottomPanelStore.setActiveTab("media");
+                        this.phase = null;
                     } else {
-                        if (evt.phase.title === "show-asset") {
-                            projectStore.mediaURL = evt.phase.detail;
-                            // 开始确认打开下方面板打开。
-                            layoutStore.openPanel("bottom");
-                            bottomPanelStore.setActiveTab("media");
-                        } else {
-                            this.phase = evt.phase;
-                        }
+                        this.phase = evt.phase;
                     }
+                } else {
+                    finalText = evt.text;
                 }
-                else finalText = evt.text;
             }
-
-            // // 只有未被中断且拿到文本才落地
-            // if (!signal.aborted && finalText) {
-            //     this.addMessage({ role: "assistant", content: finalText });
-            // }
         } catch (err) {
-            // abort 引发的异常静默吞掉，其余才提示
             if (signal.aborted) {
                 this.phase = {
                     title: "终止命令",
                     detail: "向命令中心请求终止，等待其终止确认中...",
-                }
+                };
             } else {
                 this.addMessage({
                     role: "assistant",
@@ -185,24 +197,40 @@ class MessageStore {
                     Logger.debug("waiting for stream.return()...", { seq });
                     await stream.return(undefined);
                 } catch (returnErr) {
-                    // 静默吞掉生成器关闭时的异常
                     Logger.error("Failed to close run command stream safely:", returnErr);
                 }
             }
 
-            // 客户端迭代器已关闭，但主进程侧任务是否真正收尾，
-            // 必须等 runcommand-end(seq) 确认，否则可能是「假终止」
             await this.#waitForRunEnd(seq, deferred);
+
+            // ✅ 修复：最终归档当前 phase
+            this.#archivePhase();
+
+            // ✅ 修复：将本轮的 phase 历史附加到即将创建的消息上
+            const currentPhaseRecords = [...this.phaseHistory];
+
             if (finalText) {
-                this.addMessage({ role: "assistant", content: finalText });
+                const msg = this.addMessage({ role: "assistant", content: finalText });
+                msg.phaseRecords = currentPhaseRecords;
+                responsed = true;
             } else if (signal.aborted) {
-                this.addMessage({
+                const msg = this.addMessage({
                     role: "assistant",
                     content: `您终止了当前任务，查看日志了解执行细节。`,
                 });
-            } else if (!responsed) {
-                this.addMessage({ role: "assistant", isError: true, content: "任务正常结束，但是AI没有返回任意最终文本，请查阅日志了解细节。" });
+                msg.phaseRecords = currentPhaseRecords;
+                responsed = true;
             }
+
+            // ✅ 修复：只有真正没有任何响应时才添加兜底错误消息
+            if (!responsed) {
+                this.addMessage({
+                    role: "assistant",
+                    isError: true,
+                    content: "任务正常结束，但 AI 没有返回任何最终文本，请查阅日志了解细节。",
+                });
+            }
+
             this.phase = null;
             this.isAborting = false;
             this.setLoading(false);
@@ -211,11 +239,6 @@ class MessageStore {
         }
     }
 
-    /**
-     * 等待主进程通过 runcommand-end 确认 seq 对应任务已彻底结束。
-     * 5 分钟内未收到确认视为「悬置」：清理本地等待者并强提示用户重启，
-     * 因为此时无法确认主进程侧能力组件/术语库是否仍在运行或已产生副作用。
-     */
     async #waitForRunEnd(seq: number, deferred: SeqDeferred): Promise<void> {
         try {
             const suc = await pTimeout(deferred.promise, {
@@ -226,7 +249,7 @@ class MessageStore {
             if (err instanceof TimeoutError) {
                 this.#pendingSeqs.delete(seq);
                 Logger.error("Timed out waiting for runcommand-end confirmation", { seq });
-                const msg = "终止任务超时：未能确认主进程的任务已完全结束。为安全起见，请关闭全部窗口并重启应用，避免悬置的能力组件意外更新术语库。"
+                const msg = "终止任务超时：未能确认主进程的任务已完全结束。为安全起见，请关闭全部窗口并重启应用，避免悬置的能力组件意外更新术语库。";
                 this.addMessage({
                     role: "assistant",
                     isError: true,
@@ -239,15 +262,10 @@ class MessageStore {
         }
     }
 
-    /**
-     * 请求终止：发信号 + 切「终止中」状态，
-     * 然后等待 #run 真正收尾结束后才 resolve（包括等到 runcommand-end 确认）。
-     */
     async abort(): Promise<void> {
         if (!this.#controller || !this.#runPromise) return;
         this.isAborting = true;
         this.#controller.abort();
-        // 等待流（含 generator 的 finally 收尾，以及主进程结束确认）彻底结束
         await this.#runPromise;
     }
 }

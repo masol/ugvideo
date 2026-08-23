@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // featured/rightside/store.svelte.ts
 import {
-    IconAiAgent,
+    // IconAiAgent,
     IconSketching
 } from "@tabler/icons-svelte";
 import type { Component } from "svelte";
@@ -13,10 +13,10 @@ export type PanelTab = {
 };
 
 function createRightPanelStore() {
-    let activeTab = $state<string>("assistant");
+    let activeTab = $state<string>("blueprint");
 
     const tabs: PanelTab[] = [
-        { id: "assistant", label: "助手", Icon: IconAiAgent as unknown as Component<any> },
+        // { id: "assistant", label: "助手", Icon: IconAiAgent as unknown as Component<any> },
         { id: "blueprint", label: "蓝图", Icon: IconSketching as unknown as Component<any> },
     ];
 

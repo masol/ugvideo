@@ -6,7 +6,6 @@
   import { layoutStore } from "$lib/store/ui/layout.svelte";
   import autoAnimate from "@formkit/auto-animate";
   import BarHeader from "./bar.header.svelte";
-  import ChatComponet from "./chat/Main.svelte";
   import Glossary from "./glossary/table.svelte";
 
   let isMaximized = $derived(layoutStore.maximizedPanel === "right");
@@ -32,9 +31,7 @@
   <!-- │    会被一起滚动，无法固定在底部                       │ -->
   <!-- ╰─────────────────────────────────────────────────────╯ -->
   <div class="min-h-0 flex-1 overflow-hidden">
-    {#if rightPanelStore.activeTab === "assistant"}
-      <ChatComponet />
-    {:else if rightPanelStore.activeTab === "blueprint"}
+    {#if rightPanelStore.activeTab === "blueprint"}
       <ScrollArea class="h-full">
         <div class="space-y-1 p-2 pt-1" use:autoAnimate>
           <Glossary />

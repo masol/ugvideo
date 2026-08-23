@@ -1,6 +1,5 @@
 // $lib/store/dashboard.svelte.ts
-// 私有 store：所有状态、衍生值、副作用、对外回调都集中在这里。
-// 子组件通过只读 getter 消费，通过调用方法修改，完全不持有本地状态。
+import { messageStore } from "$lib/store/local/msg.svelte";
 import { projectStore } from "$lib/store/project.svelte";
 import { confirmStore } from "$lib/store/ui/confirm.svelte";
 import { api, safeApi } from "$lib/utils/api";
@@ -11,37 +10,28 @@ import log from "electron-log/renderer";
 import { getErrorMessage } from "radashi";
 import { toast } from "svelte-sonner";
 
-// ─── 类型 ───────────────────────────────────────────────────────
 interface LogEntry {
     id: string;
-    time: number; // 时间戳（毫秒）
+    time: number;
     message: string;
 }
 
-// ─── Store ──────────────────────────────────────────────────────
 class DashboardStore {
-    // ── 私有状态（精确选型）──────────────────────────────────────
     #elapsedSeconds = $state(0);
     #terminatingSeconds = $state(0);
     #logs = $state.raw<LogEntry[]>([]);
     #target = $state<string>("post");
-    #preserveLogs = $state(false); // 是否保留日志（跨任务重启）
+    #preserveLogs = $state(false);
     forceShowLog = $state(false);
+    viewMode = $state<"control" | "chat">("control");
 
-    // ── 运行标识（非响应式，仅用于控制流 / 状态守卫）─────────────
-    // #seqCounter：单调递增的 call sequence 生成器。
-    // #activeSeq：当前我们“拥有”的这次运行的 seq；空闲时为 null。
-    //   task_finished 只会被 seq 匹配的那一次运行处理，杜绝旧任务的迟到事件。
-    // #terminationRequested：本次运行是否已发出过终止信号（保证只响应一次终止）。
     #seqCounter = 0;
     #activeSeq: number | null = null;
     #terminationRequested = false;
 
-    // ── 私有非响应式资源 ─────────────────────────────────────────
     #clockTimer: ReturnType<typeof setInterval> | null = null;
     #terminateTimer: ReturnType<typeof setInterval> | null = null;
 
-    // ── 派生 ─────────────────────────────────────────────────────
     readonly showLog = $derived(this.runState !== 'idle' || this.forceShowLog)
     readonly #statusLabel = $derived(
         projectStore.runState === "idle"
@@ -77,14 +67,10 @@ class DashboardStore {
     constructor() {
         log.info("[DashboardStore] initialized");
 
-        // 监听任务进度报告
         evtbus.on("task_progess_report", (message: string) => {
             this.#pushLog(message);
         });
 
-        // 监听任务完成事件。
-        // seq 由启动时传入并原样回传；只处理与 #activeSeq 匹配的那一次运行，
-        // 其余（迟到的旧任务事件、未由本 store 发起的运行）一律忽略。
         evtbus.on("task_finished", (evt: { success: boolean; reason?: string; seq?: number }) => {
             if (!this.#isOwnedEvent(evt.seq)) {
                 log.debug(
@@ -97,10 +83,8 @@ class DashboardStore {
                 `[DashboardStore] task_finished: seq=${evt.seq}, success=${evt.success}, reason=${evt.reason ?? ""}`,
             );
 
-            // 该次运行到此结束：先让出所有权，任何后续同 seq 事件都将被忽略。
             this.#releaseRun();
 
-            // 添加完成日志
             if (evt.success) {
                 const msg = "✓ 任务已成功完成 · 所有步骤已保存";
                 this.#pushLog(msg);
@@ -112,7 +96,6 @@ class DashboardStore {
                     confirmLabel: "我知道了",
                     size: "xl"
                 }).catch(e => toast.error(getErrorMessage(e)))
-                // toast.success(msg);
             } else {
                 const reasonText = evt.reason ? ` · ${evt.reason}` : "";
                 const msg = `✗ 任务已终止${reasonText}`;
@@ -126,12 +109,10 @@ class DashboardStore {
                     destructive: true,
                     size: "xl"
                 }).catch(e => toast.error(getErrorMessage(e)))
-                // toast.error(msg);
             }
         });
 
         hooks.hook("project:loaded", async () => {
-            // 新项目已打开，清空旧数据。重新加载必要的内容。
             this.#target = await safeApi().project.get("target");
             if (!this.#target && projectStore.activity) {
                 const targetSize = projectStore.activity.targets.length;
@@ -141,7 +122,6 @@ class DashboardStore {
         })
     }
 
-    // ── 只读门面 ─────────────────────────────────────────────────
     get target(): string {
         return this.#target;
     }
@@ -181,14 +161,10 @@ class DashboardStore {
         this.#target = newTarget;
     }
 
-    // ── 运行标识工具 ─────────────────────────────────────────────
-    // 事件是否属于当前活跃运行：seq 必须存在且严格等于 #activeSeq。
-    // 未携带 seq（undefined）的事件不被认领——避免误吞非本 store 发起的运行结果。
     #isOwnedEvent(seq: number | undefined): boolean {
         return seq !== undefined && seq === this.#activeSeq;
     }
 
-    // 让出当前运行所有权并停表；幂等，重复调用安全。
     #releaseRun() {
         this.#activeSeq = null;
         this.#terminationRequested = false;
@@ -197,9 +173,7 @@ class DashboardStore {
         this.#terminatingSeconds = 0;
     }
 
-    // ── 工具 ─────────────────────────────────────────────────────
     #pushLog(message: string) {
-        // 新日志插入在数组头部（最新在上）
         this.#logs = [
             {
                 id: crypto.randomUUID(),
@@ -222,10 +196,8 @@ class DashboardStore {
         log.debug("[DashboardStore] all timers cleared");
     };
 
-    // ── 状态机 ───────────────────────────────────────────────────
     async #startRunning(): Promise<boolean> {
-        // 严格守卫：必须真正空闲，且当前没有被认领的运行。
-        // 双重条件杜绝“已开始的项目再次开始”，也防止并发点击重入。
+        // 🔒 守卫 1：主控已在运行
         if (projectStore.runState !== "idle" || this.#activeSeq !== null) {
             log.debug(
                 `[DashboardStore] startRunning() rejected: runState=${projectStore.runState}, activeSeq=${this.#activeSeq ?? "null"}`,
@@ -233,14 +205,18 @@ class DashboardStore {
             return false;
         }
 
-        // 立即认领本次运行，占住 seq，防止 await 期间的重入。
+        // 🔒 守卫 2：对话任务正在运行
+        if (messageStore.isLoading) {
+            toast.error("对话任务正在运行，请等待完成或先终止对话");
+            log.debug("[DashboardStore] startRunning() rejected: messageStore is loading");
+            return false;
+        }
+
         const seq = ++this.#seqCounter;
         this.#activeSeq = seq;
         this.#terminationRequested = false;
-        // this.forceShowLog = false; // 必须用户明确关闭日志，否则一直处于强制显示日志状态。
         log.debug(`[DashboardStore] startRunning() called, seq=${seq}`);
 
-        // 如果未勾选“保留日志”，则清空历史日志（在真正启动前）。
         if (!this.#preserveLogs) {
             this.#logs = [];
         }
@@ -248,7 +224,6 @@ class DashboardStore {
         try {
             await projectStore.start(seq, true);
         } catch (err) {
-            // 启动失败：回滚所有权，避免 store 卡在“已认领但未运行”的悬空态。
             log.error("[DashboardStore] projectStore.start() failed", err);
             if (this.#activeSeq === seq) {
                 this.#releaseRun();
@@ -256,14 +231,11 @@ class DashboardStore {
             return false;
         }
 
-        // await 期间可能已被更新的运行取代，或本次已经完成/终止。
-        // 只有仍持有本 seq 时才继续布置计时器。
         if (this.#activeSeq !== seq) {
             log.debug(`[DashboardStore] startRunning() superseded, seq=${seq}`);
             return false;
         }
 
-        // 任务可能瞬时结束：以真实 runState 为准，避免给已结束的任务开表。
         if (projectStore.runState === "idle") {
             log.debug(`[DashboardStore] run already idle after start, seq=${seq}`);
             this.#releaseRun();
@@ -283,12 +255,10 @@ class DashboardStore {
     }
 
     #enterTerminating(): boolean {
-        // 只响应一次终止：本次运行已请求过终止则直接返回。
         if (this.#terminationRequested) {
             log.debug("[DashboardStore] enterTerminating() ignored: already requested");
             return false;
         }
-        // 必须处于“运行中”且由本 store 拥有，才允许发出终止。
         if (projectStore.runState !== "running" || this.#activeSeq === null) {
             log.debug(
                 `[DashboardStore] enterTerminating() rejected: runState=${projectStore.runState}, activeSeq=${this.#activeSeq ?? "null"}`,
@@ -316,7 +286,6 @@ class DashboardStore {
         log.info(`[DashboardStore] run stopped: ${message}`);
     }
 
-    // ── 对外方法（子组件调用，箭头字段确保 this 绑定）──────────────
     handleMainButton = async (): Promise<void> => {
         log.debug(
             `[DashboardStore] handleMainButton() called, runState=${projectStore.runState}`,
@@ -338,7 +307,6 @@ class DashboardStore {
     };
 
     private async forceStop() {
-        // 仅在仍持有一次运行时才允许强停，防止对已结束任务的重复终止。
         if (this.#activeSeq === null) {
             log.debug("[DashboardStore] forceStop() ignored: no active run");
             return;
@@ -352,7 +320,6 @@ class DashboardStore {
         });
         if (!ok) return;
 
-        // 确认期间该运行可能已自然结束或被更替，重新校验所有权。
         if (this.#activeSeq !== seq) {
             log.debug(`[DashboardStore] forceStop() superseded, seq=${seq}`);
             return;

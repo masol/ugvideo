@@ -40,7 +40,7 @@ import type { Edge as XYEdge, Node as XYNode } from '@xyflow/svelte';
 import DirectedGraph from 'graphology';
 import { toast } from 'svelte-sonner';
 import { push } from "svelte-spa-router";
-import { messageStore } from '../../featured/rightside/chat/msg.svelte';
+import { messageStore } from '../../../lib/store/local/msg.svelte';
 import { pureInput } from './storeHelper';
 
 export type { GDagJSON, NodeStatus, PNode, RegArtifact };

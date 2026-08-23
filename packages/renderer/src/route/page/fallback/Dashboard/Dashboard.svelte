@@ -1,29 +1,39 @@
-<!-- NovelToVideoDashboard/index.svelte (orchestrator 完整版) -->
-<!-- 职责：作为「状态中枢」独占一份私有 store。其余子组件仅接收 props 渲染。 -->
+<!-- Dashboard/Dashboard.svelte -->
 <script lang="ts">
-  import autoAnimate from "@formkit/auto-animate";
-
   import { dashboardStore } from "$lib/store/dashboard.svelte";
+  import autoAnimate from "@formkit/auto-animate";
+  import ChatMain from "../chat/Main.svelte";
   import DashboardHeader from "./DashboardHeader.svelte";
   import InfoBlocksGrid from "./InfoBlocksGrid.svelte";
   import RunControlCard from "./RunControlCard.svelte";
-  import RunLogPanel from "./RunLogPanel.svelte";
-
-  // onDestroy(() => dashboardStore.destroy());
 </script>
 
-<div
-  class="flex h-full min-h-screen w-full flex-col gap-6 bg-background p-8 text-foreground lg:p-12"
->
-  <DashboardHeader />
+<!-- Dashboard 必须是 h-full，且使用 flex-col 布局 -->
+<div class="flex h-full w-full flex-col overflow-hidden bg-background">
+  <!-- 头部和内容区域使用内边距包裹 -->
+  <div class="flex flex-col gap-6 p-4 sm:p-8 lg:p-12">
+    <DashboardHeader />
+  </div>
 
-  <RunControlCard />
-
-  <section use:autoAnimate class="flex-1">
-    {#if dashboardStore.showLog}
-      <RunLogPanel />
+  <!-- 内容区域：flex-1 占满剩余空间 -->
+  <section
+    class="flex flex-1 min-h-0 flex-col gap-6 px-4 sm:px-8 lg:px-12 pb-4 sm:pb-8 lg:pb-12"
+    use:autoAnimate
+  >
+    {#if dashboardStore.viewMode === "control"}
+      <div class="overflow-y-auto">
+        <div class="space-y-6">
+          <RunControlCard />
+          <InfoBlocksGrid />
+        </div>
+      </div>
     {:else}
-      <InfoBlocksGrid />
+      <!-- 🔧 聊天模式：必须占满剩余空间 -->
+      <div
+        class="flex-1 min-h-0 overflow-hidden rounded-2xl border border-border/50 bg-card shadow-sm animate-fade-in"
+      >
+        <ChatMain />
+      </div>
     {/if}
   </section>
 </div>

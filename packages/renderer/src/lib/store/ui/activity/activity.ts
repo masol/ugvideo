@@ -1,5 +1,6 @@
 import DynEntry from '$lib/components/dyn/Entry.svelte';
 import type { Step } from '$lib/components/ui/walkthrough/ctx';
+import { dashboardStore } from '$lib/store/dashboard.svelte';
 import type { BlueprintFilters, InfoCardView, ProjectActivityData, TargetOption } from '@app/main/types';
 import { layoutStore } from '../layout.svelte';
 import type { IValueService } from './type';
@@ -77,6 +78,8 @@ export class ProjectActivity {
         this.header = data.header
         this.infocards = mergeInfocards(data);
         this.targets = data.targets ?? [];
+
+        dashboardStore.viewMode = data.chatMode ? "chat" : "control"
 
         const targetSize = this.targets.length;
         this.targets.forEach((t, idx) => {

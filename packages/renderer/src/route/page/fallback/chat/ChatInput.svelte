@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button";
+  import { messageStore } from "$lib/store/local/msg.svelte";
   import {
     IconLoader2,
     IconMicrophone,
@@ -12,7 +13,6 @@
   import { tick } from "svelte";
   import ChatCommandMenu from "./ChatCommandMenu.svelte";
   import { chatCommands, filterCommands, type ChatCommand } from "./commands";
-  import { messageStore } from "./msg.svelte";
 
   let {
     value = $bindable(""),

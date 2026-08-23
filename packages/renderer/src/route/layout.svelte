@@ -64,7 +64,9 @@
                     <!-- Main Editor Area -->
                     {#if layoutStore.showMainEditor}
                       <Resizable.Pane minSize={20}>
-                        <Router routes={routerStore.routes} />
+                        <div class="h-full w-full overflow-hidden">
+                          <Router routes={routerStore.routes} />
+                        </div>
                       </Resizable.Pane>
                     {/if}
                     <!-- Bottom Panel -->

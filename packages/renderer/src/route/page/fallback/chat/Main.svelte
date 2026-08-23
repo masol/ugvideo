@@ -1,6 +1,7 @@
 <!-- src/lib/components/chat/Main.svelte -->
 <script lang="ts">
   import { configStore } from "$lib/store/config.svelte";
+  import { messageStore } from "$lib/store/local/msg.svelte";
   import { projectStore } from "$lib/store/project.svelte";
   import { confirmStore } from "$lib/store/ui/confirm.svelte";
   import {
@@ -13,7 +14,6 @@
   import ChatInput from "./ChatInput.svelte";
   import ChatMessageList from "./ChatMessageList.svelte";
   import type { ChatCommand } from "./commands";
-  import { messageStore } from "./msg.svelte";
 
   let inputValue = $state("");
 
@@ -32,7 +32,7 @@
     if (!configStore.silentSave) {
       const confirm = await confirmStore.request({
         title: "项目可能无法运行",
-        message: `AI反思会引发工作流变动，有概率导致本项目无法执行，确定要继续吗？。`,
+        message: `AI反思会引发工作流变动，有概率导致本项目无法执行，确定要继续吗？`,
         confirmLabel: "继续",
       });
       if (!confirm) {
@@ -69,7 +69,6 @@
     toast.warning("语音输入功能尚未实现");
   }
 
-  // 助手能力清单（无项目引导页复用）
   const capabilities = [
     {
       icon: IconTargetArrow,
@@ -89,14 +88,15 @@
   ];
 </script>
 
-<!--╭─────────────────────────────────────────────────────╮ -->
-<!-- │ [组件 → chat/Main.svelte]                           │ -->
-<!-- │ 职责：AI 工作流助手容器 — 有项目才可工作           │ -->
-<!-- ╰─────────────────────────────────────────────────────╯ -->
-<div class="flex h-full w-full flex-col overflow-hidden">
+<!-- 🔧 最终容器：h-full flex-col 布局 -->
+<div class="flex h-full w-full flex-col">
   {#if hasProject}
-    <ChatMessageList onPreset={handlePreset} />
+    <!-- 消息列表：flex-1 占满剩余空间 -->
+    <div class="flex-1 min-h-0 overflow-hidden">
+      <ChatMessageList onPreset={handlePreset} />
+    </div>
 
+    <!-- 输入框：固定底部 -->
     <ChatInput
       bind:value={inputValue}
       canClear={messageStore.hasMessages}
@@ -107,10 +107,6 @@
       onClear={handleClear}
     />
   {:else}
-    <!--╭─────────────────────────────────────────────────────╮ -->
-    <!-- │ [可抽取子组件 → ChatNoProject.svelte]               │ -->
-    <!-- │ 职责：未打开项目时的空态 — 介绍助手职责 + 引导      │ -->
-    <!-- ╰─────────────────────────────────────────────────────╯ -->
     <div
       class="flex h-full flex-col items-center justify-center overflow-y-auto px-6 py-10 text-center"
     >
@@ -156,6 +152,5 @@
         <span>请先在主控台打开一个项目，助手即可开始工作</span>
       </div>
     </div>
-    <!-- ╭─── / ChatNoProject ───╮ -->
   {/if}
 </div>
