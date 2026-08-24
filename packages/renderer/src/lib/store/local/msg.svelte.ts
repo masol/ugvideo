@@ -57,8 +57,9 @@ class MessageStore {
     phase = $state<ReflectPhase | null>(null);
     isAborting = $state(false);
 
-    // ✅ 新增：phase 历史记录（归档到消息）
     phaseHistory = $state<PhaseRecord[]>([]);
+
+    collapsedMessages = $state<Record<string, boolean>>({});
 
     hasMessages = $derived(this.messages.length > 0);
     lastMessage = $derived(
@@ -83,17 +84,35 @@ class MessageStore {
     clear() {
         this.messages = [];
         this.phaseHistory = [];
+        this.collapsedMessages = {};
     }
 
     deleteMessage(id: string) {
         this.messages = this.messages.filter((msg) => msg.id !== id);
+        delete this.collapsedMessages[id];
     }
 
     setLoading(loading: boolean) {
         this.isLoading = loading;
     }
 
-    // ✅ 新增：归档当前 phase 到历史记录
+    toggleMessage(messageId: string) {
+        this.collapsedMessages[messageId] = !this.collapsedMessages[messageId];
+    }
+
+    // ✅ 修复：正确处理 undefined 的情况
+    toggleAllMessages() {
+        if (this.messages.length === 0) return;
+
+        // 判断是否所有消息都已折叠（显式为 true）
+        const allCollapsed = this.messages.every((msg) => this.collapsedMessages[msg.id] === true);
+        const targetState = !allCollapsed;
+
+        this.messages.forEach((msg) => {
+            this.collapsedMessages[msg.id] = targetState;
+        });
+    }
+
     #archivePhase() {
         if (!this.phase) return;
         const record: PhaseRecord = {
@@ -104,9 +123,6 @@ class MessageStore {
         this.phaseHistory = [...this.phaseHistory, record];
     }
 
-    /**
-     * 流式消费入口：互斥守卫 — 阻止与主控运行并发
-     */
     AIResponse(userMessage: string): Promise<void> {
         if (this.#runPromise) {
             toast.error("已有对话任务正在进行，请等待完成或先终止");
@@ -142,7 +158,6 @@ class MessageStore {
         let finalText = "";
         let responsed = false;
 
-        // ✅ 本轮对话开始时，清空上一轮的 phase 历史（可选：根据产品需求决定是否保留）
         this.phaseHistory = [];
 
         try {
@@ -154,7 +169,6 @@ class MessageStore {
             for await (const evt of stream) {
                 if (signal.aborted) break;
                 if (evt.type === "phase") {
-                    // ✅ 修复：先归档旧 phase，再更新新 phase
                     this.#archivePhase();
 
                     if (evt.phase.title === 'error') {
@@ -203,10 +217,8 @@ class MessageStore {
 
             await this.#waitForRunEnd(seq, deferred);
 
-            // ✅ 修复：最终归档当前 phase
             this.#archivePhase();
 
-            // ✅ 修复：将本轮的 phase 历史附加到即将创建的消息上
             const currentPhaseRecords = [...this.phaseHistory];
 
             if (finalText) {
@@ -222,7 +234,6 @@ class MessageStore {
                 responsed = true;
             }
 
-            // ✅ 修复：只有真正没有任何响应时才添加兜底错误消息
             if (!responsed) {
                 this.addMessage({
                     role: "assistant",

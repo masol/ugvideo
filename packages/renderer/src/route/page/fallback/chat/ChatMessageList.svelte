@@ -23,10 +23,8 @@
 
   let {
     onPreset = () => {},
-    collapsedMessages = $bindable<Record<string, boolean>>({}),
   }: {
     onPreset?: (text: string) => void;
-    collapsedMessages?: Record<string, boolean>;
   } = $props();
 
   const presets = [
@@ -35,7 +33,7 @@
       title: "撰写项目报告",
       desc: "规划结构 → 收集信息 → 撰写并修订",
       prompt:
-        "请帮我撰写一份关于当前项目的进展报告。先制定报告大纲，然后逐步填充内容，最后进行修订完善。如果遇到资料不足，请回溯调整方案。",
+        "请帮我撰写一份关于当前项目的进展报告。先制定报告大纲，然后逐步填充内容,最后进行修订完善。如果遇到资料不足，请回溯调整方案。",
     },
     {
       icon: IconRefresh,
@@ -67,7 +65,7 @@
   }
 
   function toggleMessageCollapse(messageId: string) {
-    collapsedMessages[messageId] = !collapsedMessages[messageId];
+    messageStore.toggleMessage(messageId);
   }
 
   function copyMessage(id: string, content: string) {
@@ -187,7 +185,6 @@
       {#each messageStore.messages as message, index (message.id + index)}
         <div class="group/msg flex min-w-0 flex-col gap-1.5">
           {#if isUser(message.role)}
-            <!-- 用户消息：头像和操作按钮都在右侧 -->
             <div class="flex items-center justify-end gap-2">
               <Button
                 variant="ghost"
@@ -208,11 +205,11 @@
                 size="icon"
                 onclick={() => toggleMessageCollapse(message.id)}
                 class="size-6 rounded-lg text-muted-foreground opacity-0 transition-all duration-200 group-hover/msg:opacity-100 hover:text-foreground"
-                aria-label={collapsedMessages[message.id]
+                aria-label={messageStore.collapsedMessages[message.id]
                   ? "展开消息"
                   : "折叠消息"}
               >
-                {#if collapsedMessages[message.id]}
+                {#if messageStore.collapsedMessages[message.id]}
                   <IconChevronDown size={14} stroke={1.5} />
                 {:else}
                   <IconChevronUp size={14} stroke={1.5} />
@@ -228,22 +225,24 @@
               </Chat.BubbleAvatar>
             </div>
 
-            {#if !collapsedMessages[message.id]}
+            {#if !messageStore.collapsedMessages[message.id]}
               <div
                 class="ml-32 min-w-0 rounded-2xl border border-primary/15 bg-primary/8 p-3 text-sm leading-relaxed text-foreground wrap-break-word transition-all duration-200"
               >
                 <ChatMessage {message} />
               </div>
             {:else}
-              <div
-                class="ml-32 flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground transition-all duration-200"
+              <button
+                type="button"
+                onclick={() => toggleMessageCollapse(message.id)}
+                class="ml-32 flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground transition-all duration-200 hover:bg-muted/40 hover:text-foreground"
+                aria-label="展开消息"
               >
                 <IconChevronDown size={14} stroke={1.5} />
-                <span>消息已折叠</span>
-              </div>
+                <span>消息已折叠 · 点击展开</span>
+              </button>
             {/if}
           {:else}
-            <!-- 助手消息：头像和操作按钮都在左侧 -->
             <div class="flex items-center gap-2">
               <Chat.BubbleAvatar class="size-6 shrink-0">
                 <Chat.BubbleAvatarFallback
@@ -285,11 +284,11 @@
                 size="icon"
                 onclick={() => toggleMessageCollapse(message.id)}
                 class="size-6 rounded-lg text-muted-foreground opacity-0 transition-all duration-200 group-hover/msg:opacity-100 hover:text-foreground"
-                aria-label={collapsedMessages[message.id]
+                aria-label={messageStore.collapsedMessages[message.id]
                   ? "展开消息"
                   : "折叠消息"}
               >
-                {#if collapsedMessages[message.id]}
+                {#if messageStore.collapsedMessages[message.id]}
                   <IconChevronDown size={14} stroke={1.5} />
                 {:else}
                   <IconChevronUp size={14} stroke={1.5} />
@@ -353,7 +352,7 @@
               </div>
             {/if}
 
-            {#if !collapsedMessages[message.id]}
+            {#if !messageStore.collapsedMessages[message.id]}
               <div
                 class={[
                   "min-w-0 rounded-2xl p-3 text-sm leading-relaxed wrap-break-word transition-all duration-200",
@@ -365,12 +364,15 @@
                 <ChatMessage {message} />
               </div>
             {:else}
-              <div
-                class="flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground transition-all duration-200"
+              <button
+                type="button"
+                onclick={() => toggleMessageCollapse(message.id)}
+                class="flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground transition-all duration-200 hover:bg-muted/40 hover:text-foreground"
+                aria-label="展开消息"
               >
                 <IconChevronDown size={14} stroke={1.5} />
-                <span>消息已折叠</span>
-              </div>
+                <span>消息已折叠 · 点击展开</span>
+              </button>
             {/if}
           {/if}
         </div>

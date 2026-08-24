@@ -88,15 +88,12 @@
   ];
 </script>
 
-<!-- 🔧 最终容器：h-full flex-col 布局 -->
 <div class="flex h-full w-full flex-col">
   {#if hasProject}
-    <!-- 消息列表：flex-1 占满剩余空间 -->
     <div class="flex-1 min-h-0 overflow-hidden">
       <ChatMessageList onPreset={handlePreset} />
     </div>
 
-    <!-- 输入框：固定底部 -->
     <ChatInput
       bind:value={inputValue}
       canClear={messageStore.hasMessages}

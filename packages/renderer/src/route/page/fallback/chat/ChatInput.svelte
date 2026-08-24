@@ -21,7 +21,6 @@
     placeholder = "Enter 换行，Ctrl+Enter 发送",
     commands = chatCommands,
     canClear = false,
-    collapsedMessages = $bindable<Record<string, boolean>>({}),
     onSend = () => {},
     onCommand = () => {},
     onAttach = () => {},
@@ -32,7 +31,6 @@
     placeholder?: string;
     commands?: ChatCommand[];
     canClear?: boolean;
-    collapsedMessages?: Record<string, boolean>;
     onSend?: () => void;
     onCommand?: (cmd: ChatCommand) => void;
     onAttach?: () => void;
@@ -50,16 +48,11 @@
   let aborting = $derived(messageStore.isAborting);
   let canSend = $derived(value.trim().length > 0 && !sending);
 
-  let allCollapsed = $state(false);
-
-  // 监听 collapsedMessages 变化，同步更新 allCollapsed 状态
-  $effect(() => {
+  // ✅ 修复：与 store 中的判断逻辑保持一致
+  let allCollapsed = $derived.by(() => {
     const msgs = messageStore.messages;
-    if (msgs.length === 0) {
-      allCollapsed = false;
-    } else {
-      allCollapsed = msgs.every((msg) => collapsedMessages[msg.id]);
-    }
+    if (msgs.length === 0) return false;
+    return msgs.every((msg) => messageStore.collapsedMessages[msg.id] === true);
   });
 
   $effect(() => {
@@ -129,12 +122,7 @@
   }
 
   function toggleAllMessages() {
-    const targetState = !allCollapsed;
-    messageStore.messages.forEach((msg) => {
-      collapsedMessages[msg.id] = targetState;
-    });
-    // 强制触发响应式更新
-    collapsedMessages = { ...collapsedMessages };
+    messageStore.toggleAllMessages();
   }
 
   function handleKeydown(event: KeyboardEvent) {
