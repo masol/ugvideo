@@ -116,11 +116,13 @@
         <IconRefresh size={32} stroke={1.5} />
       </div>
       <h3 class="text-lg font-medium tracking-tight text-foreground">
-        工作流反思助手
+        UniGen 智能助手
       </h3>
       <p class="mt-2 max-w-xs text-sm leading-relaxed text-muted-foreground">
-        每个项目都有固有的 AI 工作流。这个助手帮你反思它的问题、
-        自动改进流程以提升项目质量，并解释每一处调整的原因。
+        输入任何任务，UniGen 会像一位严谨的工程师一样——
+        先规划蓝图，验证每一步的可行性， 然后按步骤执行。
+        如果中途遇到问题，它会自动回溯调整，直到任务完整完成。
+        适合复杂任务，也能利用已有工作流快速上手。
       </p>
 
       <div class="mt-7 w-full max-w-xs space-y-2.5 text-left">

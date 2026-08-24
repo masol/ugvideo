@@ -1,6 +1,7 @@
 {
     "icon": "IconSquarePlus",
     "statusText": "工作流工坊",
+    "chatMode": true,
     "api": [
         "icon"
     ],

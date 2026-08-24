@@ -2,6 +2,8 @@
   import { Button } from "$lib/components/ui/button";
   import { messageStore } from "$lib/store/local/msg.svelte";
   import {
+    IconArrowsMaximize,
+    IconArrowsMinimize,
     IconLoader2,
     IconMicrophone,
     IconPaperclip,
@@ -19,6 +21,7 @@
     placeholder = "Enter 换行，Ctrl+Enter 发送",
     commands = chatCommands,
     canClear = false,
+    collapsedMessages = $bindable<Record<string, boolean>>({}),
     onSend = () => {},
     onCommand = () => {},
     onAttach = () => {},
@@ -29,6 +32,7 @@
     placeholder?: string;
     commands?: ChatCommand[];
     canClear?: boolean;
+    collapsedMessages?: Record<string, boolean>;
     onSend?: () => void;
     onCommand?: (cmd: ChatCommand) => void;
     onAttach?: () => void;
@@ -46,20 +50,33 @@
   let aborting = $derived(messageStore.isAborting);
   let canSend = $derived(value.trim().length > 0 && !sending);
 
-  // 加载中强制收起命令面板（兜底，修复面板复现 bug）
+  let allCollapsed = $state(false);
+
+  // 监听 collapsedMessages 变化，同步更新 allCollapsed 状态
+  $effect(() => {
+    const msgs = messageStore.messages;
+    if (msgs.length === 0) {
+      allCollapsed = false;
+    } else {
+      allCollapsed = msgs.every((msg) => collapsedMessages[msg.id]);
+    }
+  });
+
   $effect(() => {
     if (sending) showCommands = false;
   });
+
   function send() {
     if (!canSend) return;
-    showCommands = false; // 关键：发送即关面板
+    showCommands = false;
     onSend();
-    value = ""; // 清空输入，避免 "/xxx" 残留导致 filtered 复活
+    value = "";
     selectedIndex = 0;
     tick().then(adjustHeight);
   }
+
   async function stop() {
-    await messageStore.abort(); // 期间 isAborting 为 true，结束后自动复位
+    await messageStore.abort();
   }
 
   $effect(() => {
@@ -111,6 +128,15 @@
     });
   }
 
+  function toggleAllMessages() {
+    const targetState = !allCollapsed;
+    messageStore.messages.forEach((msg) => {
+      collapsedMessages[msg.id] = targetState;
+    });
+    // 强制触发响应式更新
+    collapsedMessages = { ...collapsedMessages };
+  }
+
   function handleKeydown(event: KeyboardEvent) {
     if (sending) {
       event.preventDefault();
@@ -118,7 +144,6 @@
     }
     if (isComposing && event.key === "Enter") return;
 
-    // 命令面板打开时：Enter 选中命令（不换行、不发送）
     if (showCommands && filtered.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -144,7 +169,6 @@
       }
     }
 
-    // Shift+Enter 发送；单独 Enter 交给浏览器默认行为（换行）
     if (event.key === "Enter" && (event.shiftKey || event.ctrlKey)) {
       event.preventDefault();
       send();
@@ -224,6 +248,22 @@
         >
           <IconTrash size={18} stroke={1.5} />
         </button>
+        {#if messageStore.messages.length > 0}
+          <button
+            type="button"
+            onclick={toggleAllMessages}
+            disabled={sending}
+            title={allCollapsed ? "展开全部消息" : "收起全部消息"}
+            aria-label={allCollapsed ? "展开全部消息" : "收起全部消息"}
+            class="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
+            {#if allCollapsed}
+              <IconArrowsMaximize size={18} stroke={1.5} />
+            {:else}
+              <IconArrowsMinimize size={18} stroke={1.5} />
+            {/if}
+          </button>
+        {/if}
       </div>
 
       <Button

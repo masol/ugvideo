@@ -12,6 +12,7 @@
     IconBulb,
     IconCheck,
     IconChevronDown,
+    IconChevronUp,
     IconCopy,
     IconRefresh,
     IconRobot,
@@ -22,29 +23,33 @@
 
   let {
     onPreset = () => {},
+    collapsedMessages = $bindable<Record<string, boolean>>({}),
   }: {
     onPreset?: (text: string) => void;
+    collapsedMessages?: Record<string, boolean>;
   } = $props();
 
   const presets = [
     {
       icon: IconTargetArrow,
-      title: "诊断当前工作流",
-      desc: "分析现有 AI 工作流可能存在的质量瓶颈",
-      prompt: "请审查当前项目的 AI 工作流，指出可能影响产出质量的薄弱环节。",
+      title: "撰写项目报告",
+      desc: "规划结构 → 收集信息 → 撰写并修订",
+      prompt:
+        "请帮我撰写一份关于当前项目的进展报告。先制定报告大纲，然后逐步填充内容，最后进行修订完善。如果遇到资料不足，请回溯调整方案。",
     },
     {
       icon: IconRefresh,
-      title: "提出改进方案",
-      desc: "让助手重构工作流并说明改动原因",
+      title: "制定学习计划",
+      desc: "规划路径 → 分阶段执行 → 动态调整",
       prompt:
-        "请针对当前工作流提出一套具体的改进方案，并逐条说明每处改动的理由与预期收益。",
+        "请为我制定一个为期三个月的 Python 学习计划，包括每周具体目标。执行中若发现进度不符，请回溯调整后续安排。",
     },
     {
       icon: IconBulb,
-      title: "追问改进思路",
-      desc: "理解 AI 为什么这样调整",
-      prompt: "你上一步为什么这样改进工作流？还有没有更优的替代做法？",
+      title: "优化工作流程",
+      desc: "分析现状 → 提出改进 → 执行并回溯",
+      prompt:
+        "分析我的日常工作流程，找出低效环节，提出优化方案并逐步执行。若实施中遇到阻碍，请回溯到规划阶段，尝试其他改进路径。",
     },
   ];
 
@@ -59,6 +64,10 @@
 
   function togglePhase(messageId: string) {
     expandedPhases[messageId] = !expandedPhases[messageId];
+  }
+
+  function toggleMessageCollapse(messageId: string) {
+    collapsedMessages[messageId] = !collapsedMessages[messageId];
   }
 
   function copyMessage(id: string, content: string) {
@@ -92,7 +101,6 @@
     }, 150);
   }
 
-  // ✅ 修复：等待 autoAnimate 动画完成后再滚动
   $effect(() => {
     void messageStore.messages.length;
     void messageStore.isLoading;
@@ -101,12 +109,10 @@
     tick().then(() => {
       if (!scrollContainer) return;
 
-      // 如果用户主动向上滚动超过 100px，不自动滚动
       const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
       const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
       if (userHasScrolledUp && distanceFromBottom > 100) return;
 
-      // ✅ 双重 requestAnimationFrame 确保 autoAnimate 完成
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           scrollToBottom();
@@ -130,18 +136,21 @@
       class="flex min-h-full flex-col items-center justify-center px-5 py-10"
     >
       <div
-        class="mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary transition-all duration-200"
+        class="mb-4 flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"
       >
         <IconRefresh size={28} stroke={1.5} />
       </div>
       <h3 class="text-center text-base font-medium text-foreground">
-        工作流反思助手
+        UniGen 智能助手
       </h3>
       <p
         class="mt-2 max-w-xs text-center text-sm leading-relaxed text-muted-foreground"
       >
-        描述你对项目质量的期望，助手会反思并改进当前项目的 AI
-        工作流。你也可以随时追问它「为什么这样改」。
+        输入任何任务，UniGen 会像一位严谨的工程师一样——
+        <strong>先规划蓝图</strong>，验证每一步的可行性， 然后<strong
+          >按步骤执行</strong
+        >。 如果中途遇到问题，它会<strong>自动回溯调整</strong
+        >，直到任务完整完成。 适合复杂任务，也能利用已有工作流快速上手。
       </p>
 
       <div class="mt-8 w-full max-w-sm space-y-2.5" use:autoAnimate>
@@ -157,12 +166,12 @@
               <p.icon size={20} stroke={1.5} />
             </span>
             <span class="min-w-0 flex-1">
-              <span class="block text-sm font-medium text-foreground">
-                {p.title}
-              </span>
-              <span class="block truncate text-xs text-muted-foreground">
-                {p.desc}
-              </span>
+              <span class="block text-sm font-medium text-foreground"
+                >{p.title}</span
+              >
+              <span class="block truncate text-xs text-muted-foreground"
+                >{p.desc}</span
+              >
             </span>
             <IconArrowRight
               size={16}
@@ -176,123 +185,194 @@
   {:else}
     <Chat.List class="min-h-full gap-5 px-3 py-4">
       {#each messageStore.messages as message, index (message.id + index)}
-        <div class="group/msg flex min-w-0 flex-col gap-1.5" use:autoAnimate>
-          <div
-            class={[
-              "flex items-center gap-2",
-              isUser(message.role) && "flex-row-reverse",
-            ]}
-          >
-            <Chat.BubbleAvatar class="size-6 shrink-0">
-              {#if isUser(message.role)}
+        <div class="group/msg flex min-w-0 flex-col gap-1.5">
+          {#if isUser(message.role)}
+            <!-- 用户消息：头像和操作按钮都在右侧 -->
+            <div class="flex items-center justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="icon"
+                onclick={() => copyMessage(message.id, message.content)}
+                class="size-6 rounded-lg text-muted-foreground opacity-0 transition-all duration-200 group-hover/msg:opacity-100 hover:text-foreground"
+                aria-label="复制消息内容"
+              >
+                {#if copiedId === message.id}
+                  <IconCheck size={14} stroke={1.5} class="text-primary" />
+                {:else}
+                  <IconCopy size={14} stroke={1.5} />
+                {/if}
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                onclick={() => toggleMessageCollapse(message.id)}
+                class="size-6 rounded-lg text-muted-foreground opacity-0 transition-all duration-200 group-hover/msg:opacity-100 hover:text-foreground"
+                aria-label={collapsedMessages[message.id]
+                  ? "展开消息"
+                  : "折叠消息"}
+              >
+                {#if collapsedMessages[message.id]}
+                  <IconChevronDown size={14} stroke={1.5} />
+                {:else}
+                  <IconChevronUp size={14} stroke={1.5} />
+                {/if}
+              </Button>
+
+              <span class="text-xs font-medium text-muted-foreground">你</span>
+
+              <Chat.BubbleAvatar class="size-6 shrink-0">
                 <Chat.BubbleAvatarFallback class="bg-primary/10 text-primary">
                   <IconUser size={15} stroke={1.5} />
                 </Chat.BubbleAvatarFallback>
-              {:else}
+              </Chat.BubbleAvatar>
+            </div>
+
+            {#if !collapsedMessages[message.id]}
+              <div
+                class="ml-32 min-w-0 rounded-2xl border border-primary/15 bg-primary/8 p-3 text-sm leading-relaxed text-foreground wrap-break-word transition-all duration-200"
+              >
+                <ChatMessage {message} />
+              </div>
+            {:else}
+              <div
+                class="ml-32 flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground transition-all duration-200"
+              >
+                <IconChevronDown size={14} stroke={1.5} />
+                <span>消息已折叠</span>
+              </div>
+            {/if}
+          {:else}
+            <!-- 助手消息：头像和操作按钮都在左侧 -->
+            <div class="flex items-center gap-2">
+              <Chat.BubbleAvatar class="size-6 shrink-0">
                 <Chat.BubbleAvatarFallback
                   class="bg-muted text-muted-foreground"
                 >
                   <IconRobot size={15} stroke={1.5} />
                 </Chat.BubbleAvatarFallback>
+              </Chat.BubbleAvatar>
+
+              <span class="text-xs font-medium text-muted-foreground">
+                助手
+              </span>
+
+              {#if message.phaseRecords && message.phaseRecords.length > 0}
+                <button
+                  type="button"
+                  onclick={() => togglePhase(message.id)}
+                  class="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground"
+                  aria-label={expandedPhases[message.id]
+                    ? "收起思考过程"
+                    : "展开思考过程"}
+                >
+                  <IconBrain size={14} stroke={1.5} />
+                  <span>思考过程</span>
+                  <IconChevronDown
+                    size={14}
+                    stroke={1.5}
+                    class="transition-transform duration-200 {expandedPhases[
+                      message.id
+                    ]
+                      ? 'rotate-180'
+                      : ''}"
+                  />
+                </button>
               {/if}
-            </Chat.BubbleAvatar>
 
-            <span class="text-xs font-medium text-muted-foreground">
-              {isUser(message.role) ? "你" : "反思助手"}
-            </span>
-
-            {#if !isUser(message.role) && message.phaseRecords && message.phaseRecords.length > 0}
-              <button
-                type="button"
-                onclick={() => togglePhase(message.id)}
-                class="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted-foreground transition-all duration-200 hover:bg-accent hover:text-foreground"
-                aria-label={expandedPhases[message.id]
-                  ? "收起思考过程"
-                  : "展开思考过程"}
+              <Button
+                variant="ghost"
+                size="icon"
+                onclick={() => toggleMessageCollapse(message.id)}
+                class="size-6 rounded-lg text-muted-foreground opacity-0 transition-all duration-200 group-hover/msg:opacity-100 hover:text-foreground"
+                aria-label={collapsedMessages[message.id]
+                  ? "展开消息"
+                  : "折叠消息"}
               >
-                <IconBrain size={14} stroke={1.5} />
-                <span>思考过程</span>
-                <IconChevronDown
-                  size={14}
-                  stroke={1.5}
-                  class="transition-transform duration-200 {expandedPhases[
-                    message.id
-                  ]
-                    ? 'rotate-180'
-                    : ''}"
-                />
-              </button>
+                {#if collapsedMessages[message.id]}
+                  <IconChevronDown size={14} stroke={1.5} />
+                {:else}
+                  <IconChevronUp size={14} stroke={1.5} />
+                {/if}
+              </Button>
+
+              <Button
+                variant="ghost"
+                size="icon"
+                onclick={() => copyMessage(message.id, message.content)}
+                class="size-6 rounded-lg text-muted-foreground opacity-0 transition-all duration-200 group-hover/msg:opacity-100 hover:text-foreground"
+                aria-label="复制消息内容"
+              >
+                {#if copiedId === message.id}
+                  <IconCheck size={14} stroke={1.5} class="text-primary" />
+                {:else}
+                  <IconCopy size={14} stroke={1.5} />
+                {/if}
+              </Button>
+            </div>
+
+            {#if message.phaseRecords && message.phaseRecords.length > 0 && expandedPhases[message.id]}
+              <div class="space-y-2 animate-fade-in">
+                {#each message.phaseRecords as record (record.id)}
+                  <Collapsible.Root>
+                    <Collapsible.Trigger
+                      class="group/phase flex w-full items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-left text-xs transition-all duration-200 hover:bg-muted/40"
+                    >
+                      <IconBrain
+                        size={14}
+                        stroke={1.5}
+                        class="shrink-0 text-primary"
+                      />
+                      <span class="flex-1 font-medium text-foreground">
+                        {record.title}
+                      </span>
+                      <IconChevronDown
+                        size={14}
+                        stroke={1.5}
+                        class="shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/phase:rotate-180"
+                      />
+                    </Collapsible.Trigger>
+                    <Collapsible.Content
+                      class="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down"
+                    >
+                      <div
+                        class="mt-1 rounded-xl border border-border/50 bg-background/50 p-3 text-xs leading-relaxed text-muted-foreground"
+                      >
+                        <ChatMessage
+                          message={{
+                            id: record.id,
+                            role: "assistant",
+                            content: record.detail,
+                            timestamp: record.timestamp,
+                          }}
+                        />
+                      </div>
+                    </Collapsible.Content>
+                  </Collapsible.Root>
+                {/each}
+              </div>
             {/if}
 
-            <Button
-              variant="ghost"
-              size="icon"
-              onclick={() => copyMessage(message.id, message.content)}
-              class="size-6 rounded-lg text-muted-foreground opacity-0 transition-all duration-200 group-hover/msg:opacity-100 hover:text-foreground"
-              aria-label="复制消息内容"
-            >
-              {#if copiedId === message.id}
-                <IconCheck size={14} stroke={1.5} class="text-primary" />
-              {:else}
-                <IconCopy size={14} stroke={1.5} />
-              {/if}
-            </Button>
-          </div>
-
-          {#if message.phaseRecords && message.phaseRecords.length > 0 && expandedPhases[message.id]}
-            <div class="space-y-2 animate-fade-in">
-              {#each message.phaseRecords as record (record.id)}
-                <Collapsible.Root>
-                  <Collapsible.Trigger
-                    class="group/phase flex w-full items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-left text-xs transition-all duration-200 hover:bg-muted/40"
-                  >
-                    <IconBrain
-                      size={14}
-                      stroke={1.5}
-                      class="shrink-0 text-primary"
-                    />
-                    <span class="flex-1 font-medium text-foreground">
-                      {record.title}
-                    </span>
-                    <IconChevronDown
-                      size={14}
-                      stroke={1.5}
-                      class="shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/phase:rotate-180"
-                    />
-                  </Collapsible.Trigger>
-                  <Collapsible.Content
-                    class="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down"
-                  >
-                    <div
-                      class="mt-1 rounded-xl border border-border/50 bg-background/50 p-3 text-xs leading-relaxed text-muted-foreground"
-                    >
-                      <ChatMessage
-                        message={{
-                          id: record.id,
-                          role: "assistant",
-                          content: record.detail,
-                          timestamp: record.timestamp,
-                        }}
-                      />
-                    </div>
-                  </Collapsible.Content>
-                </Collapsible.Root>
-              {/each}
-            </div>
+            {#if !collapsedMessages[message.id]}
+              <div
+                class={[
+                  "min-w-0 rounded-2xl p-3 text-sm leading-relaxed wrap-break-word transition-all duration-200",
+                  message.isError
+                    ? "border border-destructive/30 bg-destructive/5 text-destructive"
+                    : "border border-border/50 bg-muted/40 text-foreground",
+                ]}
+              >
+                <ChatMessage {message} />
+              </div>
+            {:else}
+              <div
+                class="flex items-center gap-2 rounded-xl border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground transition-all duration-200"
+              >
+                <IconChevronDown size={14} stroke={1.5} />
+                <span>消息已折叠</span>
+              </div>
+            {/if}
           {/if}
-
-          <div
-            class={[
-              "w-full min-w-0 rounded-2xl p-3 text-sm leading-relaxed wrap-break-word",
-              message.isError
-                ? "border border-destructive/30 bg-destructive/5 text-destructive"
-                : isUser(message.role)
-                  ? "border border-primary/15 bg-primary/8 text-foreground"
-                  : "border border-border/50 bg-muted/40 text-foreground",
-            ]}
-          >
-            <ChatMessage {message} />
-          </div>
         </div>
       {/each}
 
