@@ -1,20 +1,20 @@
 {
     "icon": "IconSquarePlus",
-    "statusText": "工作流工坊",
+    "statusText": "通用任务",
     "chatMode": true,
     "api": [
         "icon"
     ],
     "header": {
-        "title": "工作流工坊",
-        "detail": "用自然语言描述人类工作流，Unigen 自动构建、迭代、导出可执行 AI 工作流"
+        "title": "通用任务",
+        "detail": "聊天窗里说一句话（比如“整理上周销售数据”），配置里细化具体步骤（可填可不填）。两者一起，一键生成干活流程并执行。"
     },
     "hints": {
-        "idle": "在「输入管理」中描述您的工作流，然后点击「运行」开始自动构建。"
+        "idle": "💬 在「聊天窗」随便说想干啥（模糊任务也行）；🛠️ 在「输入管理」精调步骤细节（不填也没事）。点运行，两者合并开干。"
     },
     "checkInput": {
-        "title": "尚未定义工作流",
-        "description": "请先在「输入管理」中添加工作流描述或步骤清单。"
+        "title": "输入管理还没放步骤",
+        "description": "没关系，聊天窗里已经说了要干啥，也能直接运行。如果想控制每一步怎么走，再回来添加步骤就行。"
     },
     "targets": [
         {
@@ -46,14 +46,14 @@
     "activities": [
         {
             "id": "input-manager",
-            "label": "输入管理",
+            "label": "输入管理（精调步骤）",
             "icon": "IconBook2",
             "panel": {
                 "type": "panel",
                 "children": [
                     {
                         "type": "accordion-section",
-                        "title": "工作流描述",
+                        "title": "步骤清单",
                         "icon": "IconScript",
                         "defaultOpen": true,
                         "children": [
@@ -62,15 +62,15 @@
                                 "binding": {
                                     "key": "script"
                                 },
-                                "addLabel": "添加工作流",
-                                "emptyTitle": "还没有工作流",
+                                "addLabel": "加一个工作流",
+                                "emptyTitle": "还没写步骤（空着也行，聊天窗的任务直接搞定）",
                                 "emptyIcon": "IconFileText",
-                                "addDialogTitle": "添加一个工作流的描述",
-                                "editDialogTitle": "编辑工作流",
-                                "editDialogDescription": "用自然语言描述此工作流的步骤、规则、输入输出、异常处理等。",
+                                "addDialogTitle": "新增一个工作流",
+                                "editDialogTitle": "改改这一工作流",
+                                "editDialogDescription": "写清楚做什么、输什么、遇错怎么办。如果聊天窗已说了目标，这里就当补充细节。",
                                 "editAlert": true,
-                                "confirmTitle": "删除工作流",
-                                "confirmMessage": "删除后需重新构建，确定继续吗？"
+                                "confirmTitle": "删掉这步？",
+                                "confirmMessage": "删了可能影响精度，不过聊天窗兜底，确定吗？"
                             },
                             {
                                 "type": "field",
@@ -133,11 +133,11 @@
                             {
                                 "type": "field",
                                 "binding": {
-                                    "key": "maxReactRounds"
+                                    "key": "maxTargetRounds"
                                 },
-                                "label": "转标准格式最大收敛次数",
+                                "label": "主循环最大循环次数",
                                 "editor": "inline",
-                                "placeholder": "4",
+                                "placeholder": "30",
                                 "inputType": "number"
                             },
                             {
@@ -151,40 +151,14 @@
                                 "inputType": "number"
                             },
                             {
-                                "type": "button-group",
+                                "type": "field",
                                 "binding": {
-                                    "key": "config:improvement_strategy"
+                                    "key": "maxReactRounds"
                                 },
-                                "label": "改进策略",
-                                "icon": "IconWand",
-                                "fallback": "refine",
-                                "columns": 2,
-                                "options": [
-                                    {
-                                        "value": "refine",
-                                        "label": "细化",
-                                        "sub": "在现有结构上微调",
-                                        "dot": "bg-blue-500"
-                                    },
-                                    {
-                                        "value": "restructure",
-                                        "label": "重构",
-                                        "sub": "允许调整步骤拓扑",
-                                        "dot": "bg-purple-500"
-                                    },
-                                    {
-                                        "value": "parallel",
-                                        "label": "并行探索",
-                                        "sub": "同时尝试多个变体",
-                                        "dot": "bg-green-500"
-                                    },
-                                    {
-                                        "value": "fallback",
-                                        "label": "回退",
-                                        "sub": "保留稳定版本，回退无效改动",
-                                        "dot": "bg-amber-500"
-                                    }
-                                ]
+                                "label": "转标准格式最大收敛次数",
+                                "editor": "inline",
+                                "placeholder": "4",
+                                "inputType": "number"
                             }
                         ]
                     }

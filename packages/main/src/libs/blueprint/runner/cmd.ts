@@ -1,3 +1,4 @@
+import { runInnerFlow } from '$libs/innerflow/index.js';
 import { PrjDB } from '$libs/project/controllers/drizzle/index.js';
 import { ProjectDbKeys } from '$libs/utils/db/dbkeys.js';
 import { throwPrecondition } from '$libs/utils/err.js';
@@ -136,7 +137,7 @@ export class CmdRunner extends BaseRunner {
         if (!cmdInfo.isCommand) {
             const capId = prjdb.get<string>(ProjectDbKeys.entry_common);
             if (!capId) {
-                throwPrecondition(`在执行命令路由时，未能发现${ProjectDbKeys.entry_common}入口定义，请自行编辑术语表，添加此入口到一个能力上。`)
+                return await runInnerFlow(ctx,"main")
             }
             return await this.runCap(capId, ctx);
         }

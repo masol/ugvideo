@@ -113,7 +113,7 @@
         <IconRefresh size={32} stroke={1.5} />
       </div>
       <h3 class="text-lg font-medium tracking-tight text-foreground">
-        UniGen 智能助手
+        UniGen 助手
       </h3>
       <p class="mt-2 max-w-xs text-sm leading-relaxed text-muted-foreground">
         输入任何任务，UniGen 会像一位严谨的工程师一样——

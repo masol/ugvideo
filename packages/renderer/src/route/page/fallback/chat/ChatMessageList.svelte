@@ -31,23 +31,23 @@
     {
       icon: IconTargetArrow,
       title: "撰写项目报告",
-      desc: "规划结构 → 收集信息 → 撰写并修订",
+      desc: "规划结构 → 收集信息",
       prompt:
-        "请帮我撰写一份关于当前项目的进展报告。先制定报告大纲，然后逐步填充内容,最后进行修订完善。如果遇到资料不足，请回溯调整方案。",
+        "请帮我撰写一份关于当前项目的进展报告。",
     },
     {
       icon: IconRefresh,
       title: "制定学习计划",
-      desc: "规划路径 → 分阶段执行 → 动态调整",
+      desc: "规划路径 → 分阶段执行",
       prompt:
-        "请为我制定一个为期三个月的 Python 学习计划，包括每周具体目标。执行中若发现进度不符，请回溯调整后续安排。",
+        "请为我制定一个为期三个月的 Python 学习计划，包括每周具体目标。",
     },
     {
       icon: IconBulb,
       title: "优化工作流程",
-      desc: "分析现状 → 提出改进 → 执行并回溯",
+      desc: "分析现状 → 提出改进",
       prompt:
-        "分析我的日常工作流程，找出低效环节，提出优化方案并逐步执行。若实施中遇到阻碍，请回溯到规划阶段，尝试其他改进路径。",
+        "分析我的日常工作流程，找出低效环节，提出优化方案。",
     },
   ];
 
@@ -139,7 +139,7 @@
         <IconRefresh size={28} stroke={1.5} />
       </div>
       <h3 class="text-center text-base font-medium text-foreground">
-        UniGen 智能助手
+        UniGen 助手
       </h3>
       <p
         class="mt-2 max-w-xs text-center text-sm leading-relaxed text-muted-foreground"

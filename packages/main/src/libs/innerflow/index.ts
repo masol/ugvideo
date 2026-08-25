@@ -1,6 +1,7 @@
 import { throwNotfound } from "$libs/utils/err.js";
 import { compile } from '$libs/weave/index.js';
 import type { IRunnerContext } from "$types/blueprint/context.js";
+import { run as runMain } from './main/index.js';
 import { run as runProd2adimg } from './prod2adimg/run.js';
 import { run as runVideo } from './video/index.js';
 
@@ -15,6 +16,8 @@ export async function runInnerFlow(ctx: IRunnerContext, name: string) {
             return await runProd2adimg(ctx);
         case 'weave':
             return await compile(ctx);
+        case 'main':
+            return await runMain(ctx);
     }
     throwNotfound(`未支持的内部工作流:${name}`, true)
 }

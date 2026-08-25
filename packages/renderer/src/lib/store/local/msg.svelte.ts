@@ -24,7 +24,7 @@ type StreamEvent =
     | { type: "phase"; phase: ReflectPhase }
     | { type: "text"; text: string };
 
-const RUNCOMMAND_END_TIMEOUT_MS = 15 * 60 * 1000;
+const RUNCOMMAND_END_TIMEOUT_MS = 24 * 60 * 60 * 1000; // default 1 day.
 
 type SeqDeferred = {
     promise: Promise<boolean>;
