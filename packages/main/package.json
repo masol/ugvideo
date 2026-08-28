@@ -52,6 +52,7 @@
     "fuse.js": "^7.5.0",
     "graphology": "^0.26.0",
     "graphology-dag": "^0.4.1",
+    "handlebars": "^4.7.9",
     "hookable": "^6.1.1",
     "lru-cache": "^11.5.1",
     "memoize": "^11.0.0",

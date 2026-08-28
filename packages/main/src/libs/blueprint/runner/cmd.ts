@@ -137,7 +137,7 @@ export class CmdRunner extends BaseRunner {
         if (!cmdInfo.isCommand) {
             const capId = prjdb.get<string>(ProjectDbKeys.entry_common);
             if (!capId) {
-                return await runInnerFlow(ctx,"main")
+                return await runInnerFlow(ctx,"common")
             }
             return await this.runCap(capId, ctx);
         }

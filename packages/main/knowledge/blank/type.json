@@ -143,6 +143,16 @@
                             {
                                 "type": "field",
                                 "binding": {
+                                    "key": "maxUserTimeout"
+                                },
+                                "label": "等待用户澄清最大时长",
+                                "editor": "inline",
+                                "placeholder": "1h",
+                                "inputType": "string"
+                            },
+                            {
+                                "type": "field",
+                                "binding": {
                                     "key": "maxPathsPerNode"
                                 },
                                 "label": "DAG最大路径长度",

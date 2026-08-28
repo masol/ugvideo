@@ -15,6 +15,7 @@ export type Events = {
     "lang:changed": string  // 更新了语言设置。
     "task_finished": { success: boolean, reason?: string, seq: number } // 任务结束，启动时间。
     "task_progess_report": string // 项目主任务进度报告。
+    "clarify": { uuid: string, question: string, options?: string[] }, // 请求用户澄清输入。
     "runcommand-end": { suc: boolean, seq: number }
     "recent:projects": RecentProject[]
     "kv-changed": { key: string, value: unknown }

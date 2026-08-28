@@ -1,4 +1,5 @@
 import SelectProjectTypeDialog from '$lib/components/dialog/project-type/SelectProjectTypeDialog.svelte';
+import TextInputDialog from "$lib/components/dyn/dialog/TextInputDialog.svelte";
 import { loadTwemojiNames, TABLER_ICON_NAMES } from '$lib/components/runtimeicon';
 import { api, procApiError, safeApi } from "$lib/utils/api";
 import evtbus from "$lib/utils/evtbus";
@@ -15,7 +16,6 @@ import { pluginStore } from "./plugin.svelte";
 import { ProjectActivity } from "./ui/activity/activity";
 import { confirmStore } from "./ui/confirm.svelte";
 import { dialogStore } from "./ui/dialog.svelte";
-
 
 type LoadingAction = "open" | "new" | null;
 
@@ -57,6 +57,25 @@ class ProjectStore {
     constructor() {
         evtbus.on("task_finished", () => {
             this.#runState = "idle";
+        })
+
+        evtbus.on("clarify", async ({ question, uuid, options }) => {
+            const extHints = options && options.length > 0 ? "可以从右上方的“插入片段”确定模板，然后修改确定。" : "可以回应“你自行补充一切细节吧。”";
+            const content = await dialogStore.safeShow(
+                TextInputDialog,
+                {
+                    title: "请澄清细节",
+                    description: question,
+                    options,
+                    placeholder: `回答上面的问题，${extHints}`,
+                },
+                { size: "xl" },
+            );
+            await safeApi().project.clarify({
+                uuid,
+                answer: content ?? ""
+            })
+
         })
     }
 

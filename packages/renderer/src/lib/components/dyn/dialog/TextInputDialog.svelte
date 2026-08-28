@@ -21,22 +21,10 @@
     IconDeviceFloppy,
     IconX,
   } from "@tabler/icons-svelte";
+  import OptionSuggestCombobox from "./OptionSuggestCombobox.svelte";
+  import type { TextInputDialogProps } from "./text-input-dialog.types";
 
-  type Props = {
-    title?: string;
-    description?: string;
-    placeholder?: string;
-    initialText?: string;
-    /** 以警示样式展示 description */
-    alert?: boolean;
-    /** 保存/取消按钮文案（中立默认） */
-    confirmLabel?: string;
-    cancelLabel?: string;
-    /** 文本域行数 */
-    rows?: number;
-    /** 是否要求非空才能保存 */
-    requireNonEmpty?: boolean;
-  } & DialogComponentProps<string>;
+  type Props = TextInputDialogProps & DialogComponentProps<string>;
 
   let {
     title = "编辑内容",
@@ -48,13 +36,50 @@
     cancelLabel = "取消",
     rows = 30,
     requireNonEmpty = true,
+    options = [],
     onClose,
     onCancel,
   }: Props = $props();
 
   // svelte-ignore state_referenced_locally
   let text = $state(initialText);
+  let textareaEl = $state<HTMLTextAreaElement | null>(null);
+  // 弹层打开瞬间快照的光标位置；null 表示当时 textarea 未激活 → 应替换全部
+  let lastSelection = $state<{ start: number; end: number } | null>(null);
+
   const isValid = $derived(!requireNonEmpty || text.trim().length > 0);
+  const hasOptions = $derived(options.length > 0);
+
+  function handleComboboxOpenChange(open: boolean) {
+    if (!open) return;
+    // 只在面板"即将打开"的那一刻快照光标
+    if (textareaEl && document.activeElement === textareaEl) {
+      lastSelection = {
+        start: textareaEl.selectionStart ?? 0,
+        end: textareaEl.selectionEnd ?? 0,
+      };
+    } else {
+      lastSelection = null;
+    }
+  }
+
+  function handleOptionSelect(value: string) {
+    if (lastSelection === null) {
+      // textarea 未激活 → 直接替换全部
+      text = value;
+    } else {
+      const { start, end } = lastSelection;
+      text = text.slice(0, start) + value + text.slice(end);
+      const pos = start + value.length;
+      // 让出一帧后聚焦并恢复光标
+      setTimeout(() => {
+        if (!textareaEl) return;
+        textareaEl.focus();
+        textareaEl.setSelectionRange(pos, pos);
+      }, 0);
+    }
+    lastSelection = null;
+  }
 
   function handleSave() {
     if (!isValid) return;
@@ -85,7 +110,18 @@
 </DialogHeader>
 
 <div class="py-4">
+  {#if hasOptions}
+    <div class="mb-3 flex items-center justify-end">
+      <OptionSuggestCombobox
+        {options}
+        onSelect={handleOptionSelect}
+        onOpenChange={handleComboboxOpenChange}
+      />
+    </div>
+  {/if}
+
   <Textarea
+    bind:ref={textareaEl}
     bind:value={text}
     {placeholder}
     {rows}
@@ -95,11 +131,11 @@
 
 <DialogFooter class="mt-4">
   <Button variant="outline" class="rounded-xl" onclick={() => onCancel()}>
-    <IconX class="size-4" />
+    <IconX size={16} stroke={1.5} />
     {cancelLabel}
   </Button>
   <Button class="rounded-xl" onclick={handleSave} disabled={!isValid}>
-    <IconDeviceFloppy class="size-4" />
+    <IconDeviceFloppy size={16} stroke={1.5} />
     {confirmLabel}
   </Button>
 </DialogFooter>

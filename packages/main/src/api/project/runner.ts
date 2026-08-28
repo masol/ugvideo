@@ -1,4 +1,5 @@
 
+import { userClarifyTool } from '$libs/innerflow/common/clarify/index.js';
 import { PrjRunner } from '$libs/project/controllers/runner.js';
 import { os } from "@orpc/server";
 import Logger from 'electron-log/main.js';
@@ -53,7 +54,18 @@ const startTime = os
         return runner.startTime;
     });
 
-
+const clarify = os
+    .input(z.object({
+        uuid: z.string(),
+        answer: z.string()
+    }))
+    .output(z.boolean())
+    .handler(({ input }) => {
+        if (input.answer) {
+            return userClarifyTool.resolveClarification(input.uuid, input.answer);
+        }
+        return userClarifyTool.rejectClarification(input.uuid, input.answer);
+    });
 
 type ReflectPhase = {
     title: string;
@@ -221,5 +233,6 @@ export default {
     waitFinish,
     runState,
     startTime,
-    runCommand
+    runCommand,
+    clarify
 }
